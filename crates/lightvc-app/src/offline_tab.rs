@@ -31,41 +31,65 @@ pub fn render(
 ) {
     let has_converter = state.lock().unwrap().converter_weights.is_some();
 
-    ui.heading("Offline Voice Conversion");
+    crate::theme::heading(ui, "Offline Voice Conversion");
     ui.add_space(8.0);
 
-    // Source file
-    ui.horizontal(|ui| {
-        ui.label("Source:");
-        ui.text_edit_singleline(&mut offline.source_path);
-        if ui.button("Browse").clicked() {
-            offline.pick_target = Some("source".to_string());
-            file_dialog.pick_file();
-        }
-        if ui.button("▶").clicked() && !offline.source_path.is_empty() {
-            let path = std::path::PathBuf::from(&offline.source_path);
-            if let Ok((wav, sr)) = audio_playback::load_wav_mono(&path) {
-                let wav44 = audio_playback::resample_linear(&wav, sr);
-                offline.source_preview = AudioPlayer::play(wav44).ok();
+    // Source file — kawaii card
+    crate::theme::info_card(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Source")
+                    .size(13.0)
+                    .color(crate::theme::colors::TEXT_DIM),
+            );
+            ui.add_sized(
+                [ui.available_width() - 180.0, 20.0],
+                egui::TextEdit::singleline(&mut offline.source_path),
+            );
+            if crate::theme::pill_button(ui, "Browse", false) {
+                offline.pick_target = Some("source".to_string());
+                file_dialog.pick_file();
             }
-        }
+            if crate::theme::pill_button(ui, "Play", !offline.source_path.is_empty())
+                && !offline.source_path.is_empty()
+            {
+                let path = std::path::PathBuf::from(&offline.source_path);
+                if let Ok((wav, sr)) = audio_playback::load_wav_mono(&path) {
+                    let wav44 = audio_playback::resample_linear(&wav, sr);
+                    offline.source_preview = AudioPlayer::play(wav44).ok();
+                }
+            }
+        });
     });
 
-    // Reference file
-    ui.horizontal(|ui| {
-        ui.label("Reference:");
-        ui.text_edit_singleline(&mut offline.reference_path);
-        if ui.button("Browse").clicked() {
-            offline.pick_target = Some("reference".to_string());
-            file_dialog.pick_file();
-        }
-        if ui.button("▶").clicked() && !offline.reference_path.is_empty() {
-            let path = std::path::PathBuf::from(&offline.reference_path);
-            if let Ok((wav, sr)) = audio_playback::load_wav_mono(&path) {
-                let wav44 = audio_playback::resample_linear(&wav, sr);
-                offline.reference_preview = AudioPlayer::play(wav44).ok();
+    ui.add_space(6.0);
+
+    // Reference file — kawaii card
+    crate::theme::info_card(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Reference")
+                    .size(13.0)
+                    .color(crate::theme::colors::TEXT_DIM),
+            );
+            ui.add_sized(
+                [ui.available_width() - 180.0, 20.0],
+                egui::TextEdit::singleline(&mut offline.reference_path),
+            );
+            if crate::theme::pill_button(ui, "Browse", false) {
+                offline.pick_target = Some("reference".to_string());
+                file_dialog.pick_file();
             }
-        }
+            if crate::theme::pill_button(ui, "Play", !offline.reference_path.is_empty())
+                && !offline.reference_path.is_empty()
+            {
+                let path = std::path::PathBuf::from(&offline.reference_path);
+                if let Ok((wav, sr)) = audio_playback::load_wav_mono(&path) {
+                    let wav44 = audio_playback::resample_linear(&wav, sr);
+                    offline.reference_preview = AudioPlayer::play(wav44).ok();
+                }
+            }
+        });
     });
 
     ui.add_space(8.0);
@@ -74,10 +98,14 @@ pub fn render(
     {
         let s = state.lock().unwrap();
         if !s.voices.is_empty() {
-            ui.label("Or pick from Voice Catalog:");
+            ui.label(
+                egui::RichText::new("Or pick from Voice Catalog")
+                    .size(12.0)
+                    .color(crate::theme::colors::CYAN),
+            );
             ui.horizontal_wrapped(|ui| {
                 for voice in &s.voices {
-                    if ui.small_button(&voice.name).clicked() {
+                    if crate::theme::pill_button(ui, &voice.name, false) {
                         offline.reference_path = voice.path.to_string_lossy().into_owned();
                     }
                 }
@@ -85,9 +113,9 @@ pub fn render(
         }
     }
 
-    ui.add_space(8.0);
+    ui.add_space(12.0);
 
-    // Convert button
+    // Convert button — big kawaii CTA
     ui.horizontal(|ui| {
         let can_convert = !offline.source_path.is_empty()
             && !offline.reference_path.is_empty()
@@ -95,7 +123,30 @@ pub fn render(
             && !offline.converting;
 
         ui.add_enabled_ui(can_convert, |ui| {
-            if ui.button("Convert").clicked() {
+            let btn =
+                egui::Button::new(egui::RichText::new("✦ Convert").size(16.0).strong().color(
+                    if can_convert {
+                        crate::theme::colors::TEXT
+                    } else {
+                        crate::theme::colors::TEXT_MUTED
+                    },
+                ))
+                .fill(if can_convert {
+                    crate::theme::colors::PINK
+                } else {
+                    crate::theme::colors::BG_PANEL
+                })
+                .stroke(egui::Stroke::new(
+                    2.0,
+                    if can_convert {
+                        crate::theme::colors::PINK_BRIGHT
+                    } else {
+                        crate::theme::colors::TEXT_MUTED
+                    },
+                ))
+                .min_size(egui::vec2(140.0, 38.0));
+
+            if ui.add(btn).clicked() {
                 offline.converting = true;
                 let state_clone = state.clone();
                 let src = offline.source_path.clone();
@@ -108,36 +159,48 @@ pub fn render(
 
         if offline.converting {
             ui.spinner();
-            ui.label("Converting...");
+            ui.label(
+                egui::RichText::new("Converting...")
+                    .size(13.0)
+                    .color(crate::theme::colors::LAVENDER),
+            );
         }
     });
 
     ui.add_space(8.0);
 
-    // Output
+    // Output section
     if let Some(ref samples) = offline.converted_samples {
-        ui.label(format!(
-            "Output: {} samples ({:.1}s)",
-            samples.len(),
-            samples.len() as f32 / 44100.0
-        ));
-        ui.horizontal(|ui| {
-            if ui.button("▶ Play Output").clicked() {
-                offline.player = AudioPlayer::play(samples.clone()).ok();
-            }
-            if ui.button("Save As...").clicked() {
-                if let Some(path) = rfd::FileDialog::new().save_file() {
-                    let _ = audio_playback::save_wav_mono(&path, samples, 44100);
+        crate::theme::info_card(ui, |ui| {
+            ui.label(
+                egui::RichText::new(format!(
+                    "Output: {} samples ({:.1}s)",
+                    samples.len(),
+                    samples.len() as f32 / 44100.0
+                ))
+                .size(13.0)
+                .color(crate::theme::colors::TEXT),
+            );
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if crate::theme::pill_button(ui, "▶ Play Output", true) {
+                    offline.player = AudioPlayer::play(samples.clone()).ok();
                 }
-            }
+                if crate::theme::pill_button(ui, "Save As...", true) {
+                    if let Some(path) = rfd::FileDialog::new().save_file() {
+                        let _ = audio_playback::save_wav_mono(&path, samples, 44100);
+                    }
+                }
+            });
         });
     }
 
     if !has_converter {
         ui.add_space(8.0);
-        ui.colored_label(
-            egui::Color32::from_rgb(200, 180, 80),
-            "No converter loaded. Set model weights in Realtime tab.",
+        ui.label(
+            egui::RichText::new("⚠ No converter loaded. Set model weights in Realtime tab.")
+                .size(12.0)
+                .color(crate::theme::colors::YELLOW),
         );
     }
 
