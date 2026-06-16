@@ -178,6 +178,18 @@ impl Plugin for LightVcPlugin {
             ready: bool,
         }
 
+        // Kawaii color constants for the plugin editor
+        const BG: egui::Color32 = egui::Color32::from_rgb(28, 22, 38);
+        const PANEL: egui::Color32 = egui::Color32::from_rgb(42, 32, 56);
+        const PINK: egui::Color32 = egui::Color32::from_rgb(255, 130, 190);
+        const PINK_BRIGHT: egui::Color32 = egui::Color32::from_rgb(255, 160, 210);
+        const LAVENDER: egui::Color32 = egui::Color32::from_rgb(170, 140, 255);
+        const CYAN: egui::Color32 = egui::Color32::from_rgb(120, 230, 255);
+        const MINT: egui::Color32 = egui::Color32::from_rgb(130, 255, 200);
+        const YELLOW: egui::Color32 = egui::Color32::from_rgb(255, 220, 130);
+        const TEXT: egui::Color32 = egui::Color32::from_rgb(240, 235, 250);
+        const TEXT_DIM: egui::Color32 = egui::Color32::from_rgb(160, 150, 180);
+
         create_egui_editor(
             self.params.editor_state.clone(),
             EditorUserState {
@@ -186,31 +198,44 @@ impl Plugin for LightVcPlugin {
                 ready,
             },
             nice_plug_egui::EguiSettings::default(),
-            |_ctx, _queue, _state| {},
+            |ctx, _queue, _state| {
+                // Apply dark kawaii background
+                let mut style = (*ctx.style()).clone();
+                style.visuals.dark_mode = true;
+                style.visuals.panel_fill = BG;
+                style.visuals.widgets.inactive.bg_fill = PANEL;
+                style.visuals.widgets.hovered.bg_fill = PINK;
+                style.visuals.widgets.active.bg_fill = LAVENDER;
+                style.spacing.item_spacing = egui::vec2(8.0, 6.0);
+                ctx.set_style(style);
+            },
             move |ui, setter, _queue, state| {
                 let m = state.metrics.lock().unwrap().clone();
                 let params = state.params.clone();
 
-                ui.heading("LightVC-X");
-                ui.add_space(8.0);
+                // Header
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("✦ LightVC-X")
+                            .size(16.0)
+                            .strong()
+                            .color(PINK_BRIGHT),
+                    );
+                });
 
-                let color = if state.ready {
-                    egui::Color32::from_rgb(80, 200, 80)
+                ui.add_space(6.0);
+
+                // Status
+                let (dot_color, status_text) = if state.ready {
+                    (MINT, "● READY")
                 } else {
-                    egui::Color32::from_rgb(160, 160, 160)
+                    (TEXT_DIM, "● NO MODEL")
                 };
-                ui.label(
-                    egui::RichText::new(if state.ready {
-                        "● READY"
-                    } else {
-                        "● NO MODEL"
-                    })
-                    .color(color)
-                    .strong(),
-                );
+                ui.label(egui::RichText::new(status_text).size(13.0).color(dot_color));
 
                 ui.add_space(8.0);
 
+                // Metrics
                 if state.ready {
                     let in_db = if m.input_rms > 0.0 {
                         20.0 * m.input_rms.log10()
@@ -222,38 +247,119 @@ impl Plugin for LightVcPlugin {
                     } else {
                         -99.0
                     };
-                    ui.label(format!(
-                        "In: {in_db:+.0}dB | Out: {out_db:+.0}dB | RTF: {:.2}",
-                        m.rtf
-                    ));
+
+                    // Level bars
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new("In").size(11.0).color(TEXT_DIM));
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(80.0, 10.0), egui::Sense::hover());
+                        let level = (m.input_rms * 10.0).min(1.0).max(0.0);
+                        ui.painter().rect_filled(rect, 4.0, BG);
+                        ui.painter().rect_filled(
+                            egui::Rect::from_min_size(
+                                rect.min,
+                                egui::vec2(rect.width() * level, rect.height()),
+                            ),
+                            4.0,
+                            if level > 0.8 {
+                                PINK
+                            } else if level > 0.5 {
+                                YELLOW
+                            } else {
+                                MINT
+                            },
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new("Out").size(11.0).color(TEXT_DIM));
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(80.0, 10.0), egui::Sense::hover());
+                        let level = (m.output_rms * 10.0).min(1.0).max(0.0);
+                        ui.painter().rect_filled(rect, 4.0, BG);
+                        ui.painter().rect_filled(
+                            egui::Rect::from_min_size(
+                                rect.min,
+                                egui::vec2(rect.width() * level, rect.height()),
+                            ),
+                            4.0,
+                            if level > 0.8 {
+                                PINK
+                            } else if level > 0.5 {
+                                YELLOW
+                            } else {
+                                CYAN
+                            },
+                        );
+                    });
+                    ui.label(
+                        egui::RichText::new(format!("RTF: {:.2}", m.rtf))
+                            .size(10.0)
+                            .color(TEXT_DIM),
+                    );
                 }
 
-                ui.add_space(12.0);
+                ui.add_space(10.0);
 
-                ui.collapsing("Parameters", |ui| {
-                    if ui
-                        .button(if params.bypass.value() {
-                            "Unbypass"
-                        } else {
-                            "Bypass"
-                        })
-                        .clicked()
-                    {
-                        setter.set_parameter(&params.bypass, !params.bypass.value());
-                    }
-                    ui.add_space(4.0);
-                    ui.label(format!("Mix: {:.0}%", params.mix.value()));
-                    ui.label(format!("Gain: {:+.1}dB", params.output_gain.value()));
-                    let mode = params.mode.value();
-                    ui.label(format!(
-                        "Mode: {}",
-                        match mode {
-                            0 => "Strict",
-                            1 => "Balanced",
-                            2 => "Quality",
-                            _ => "?",
+                // Bypass button
+                let bypassed = params.bypass.value();
+                let btn_text = if bypassed { "▶ ENGAGE" } else { "■ BYPASS" };
+                let btn = egui::Button::new(
+                    egui::RichText::new(btn_text)
+                        .size(13.0)
+                        .strong()
+                        .color(TEXT),
+                )
+                .fill(if bypassed { LAVENDER } else { PINK })
+                .stroke(egui::Stroke::new(2.0, CYAN))
+                .min_size(egui::vec2(120.0, 30.0));
+                if ui.add(btn).clicked() {
+                    setter.set_parameter(&params.bypass, !bypassed);
+                }
+
+                ui.add_space(6.0);
+
+                // Mode buttons
+                ui.label(egui::RichText::new("Mode").size(11.0).color(TEXT_DIM));
+                ui.horizontal(|ui| {
+                    let mode_val = params.mode.value();
+                    for (val, name) in [(0, "Strict"), (1, "Balanced"), (2, "Quality")] {
+                        let selected = mode_val == val;
+                        let btn = egui::Button::new(
+                            egui::RichText::new(name).size(11.0).color(if selected {
+                                TEXT
+                            } else {
+                                TEXT_DIM
+                            }),
+                        )
+                        .fill(if selected { PINK } else { PANEL })
+                        .stroke(egui::Stroke::new(
+                            1.0,
+                            if selected { PINK_BRIGHT } else { LAVENDER },
+                        ));
+                        if ui.add(btn).clicked() {
+                            setter.set_parameter(&params.mode, val);
                         }
-                    ));
+                    }
+                });
+
+                ui.add_space(6.0);
+
+                // Mix + Gain sliders
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Mix").size(11.0).color(TEXT_DIM));
+                    let mut mix_val = params.mix.value();
+                    ui.add(egui::Slider::new(&mut mix_val, 0.0..=100.0).suffix("%"));
+                    if mix_val != params.mix.value() {
+                        setter.set_parameter(&params.mix, mix_val);
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Gain").size(11.0).color(TEXT_DIM));
+                    let mut gain_val = params.output_gain.value();
+                    ui.add(egui::Slider::new(&mut gain_val, -24.0..=24.0).suffix(" dB"));
+                    if gain_val != params.output_gain.value() {
+                        setter.set_parameter(&params.output_gain, gain_val);
+                    }
                 });
             },
         )
