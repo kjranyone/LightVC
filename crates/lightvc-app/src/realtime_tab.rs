@@ -11,9 +11,9 @@ use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
 use egui_file_dialog::FileDialog;
 
+use crate::app::AppState;
 use crate::app::{RtControl, RtMetrics};
 use crate::widgets;
-use crate::app::AppState;
 
 /// Render the realtime tab.
 #[allow(clippy::too_many_arguments)]
@@ -39,30 +39,39 @@ pub fn render(
 
     // --- Model Setup Section ---
     if !has_pipeline {
-        ui.group(|ui| {
-            ui.label("Load Model");
-            ui.add_space(4.0);
+        crate::theme::info_card(ui, |ui| {
+            crate::theme::heading(ui, "Load Model");
 
             ui.horizontal(|ui| {
-                ui.label("Converter:");
+                ui.label(
+                    egui::RichText::new("Converter")
+                        .size(13.0)
+                        .color(crate::theme::colors::TEXT_DIM),
+                );
                 ui.text_edit_singleline(conv_path);
-                if ui.button("Browse").clicked() {
+                if crate::theme::pill_button(ui, "Browse", false) {
                     file_dialog.pick_file();
                     ctx.data_mut(|d| d.insert_temp("rt_pick".into(), "converter"));
                 }
             });
 
             ui.horizontal(|ui| {
-                ui.label("Config:");
+                ui.label(
+                    egui::RichText::new("Config")
+                        .size(13.0)
+                        .color(crate::theme::colors::TEXT_DIM),
+                );
                 ui.text_edit_singleline(conv_cfg);
-                if ui.button("Browse").clicked() {
+                if crate::theme::pill_button(ui, "Browse", false) {
                     file_dialog.pick_file();
                     ctx.data_mut(|d| d.insert_temp("rt_pick".into(), "config"));
                 }
             });
 
             ui.add_space(4.0);
-            if ui.button("Load Converter").clicked() && !conv_path.is_empty() {
+            if crate::theme::pill_button(ui, "Load Converter", !conv_path.is_empty())
+                && !conv_path.is_empty()
+            {
                 on_load(conv_path, conv_cfg);
             }
         });
@@ -85,57 +94,67 @@ pub fn render(
 
     // Status
     ui.horizontal(|ui| {
-        widgets::status_dot(ui, *running);
-        let label = if *running {
+        let (dot_color, label) = if *running {
             if *bypass {
-                "BYPASS"
+                (crate::theme::colors::YELLOW, "BYPASS")
             } else {
-                "LIVE"
+                (crate::theme::colors::MINT, "● LIVE")
             }
         } else {
-            "STOPPED"
+            (crate::theme::colors::TEXT_MUTED, "STOPPED")
         };
-        let color = if *running {
-            if *bypass {
-                egui::Color32::from_rgb(200, 200, 80)
-            } else {
-                egui::Color32::from_rgb(80, 200, 80)
-            }
-        } else {
-            egui::Color32::from_rgb(160, 160, 160)
-        };
-        ui.colored_label(color, label);
+        crate::theme::status_dot(ui, *running, dot_color);
+        ui.label(
+            egui::RichText::new(label)
+                .size(16.0)
+                .strong()
+                .color(if *running {
+                    crate::theme::colors::TEXT
+                } else {
+                    crate::theme::colors::TEXT_MUTED
+                }),
+        );
     });
 
-    ui.add_space(8.0);
+    ui.add_space(12.0);
 
     // Level meters
-    widgets::level_meter(ui, metrics.input_rms, "Input");
-    widgets::level_meter(ui, metrics.output_rms, "Output");
+    crate::theme::info_card(ui, |ui| {
+        crate::theme::level_meter(ui, metrics.input_rms, "Input");
+        crate::theme::level_meter(ui, metrics.output_rms, "Output");
 
-    ui.add_space(4.0);
-    ui.label(format!(
-        "Latency: {:.0} ms | RTF: {:.2}",
-        metrics.latency_ms, metrics.rtf
-    ));
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(format!(
+                "Latency: {:.0} ms  |  RTF: {:.2}",
+                metrics.latency_ms, metrics.rtf
+            ))
+            .size(12.0)
+            .color(crate::theme::colors::TEXT_DIM),
+        );
+    });
 
-    ui.add_space(8.0);
+    ui.add_space(12.0);
 
     // Quality mode
     ui.horizontal(|ui| {
-        ui.label("Mode:");
+        ui.label(
+            egui::RichText::new("Mode")
+                .size(13.0)
+                .color(crate::theme::colors::TEXT_DIM),
+        );
         let old = *mode;
-        ui.radio_value(mode, lightvc_core::converter::LatencyMode::Strict, "Strict");
-        ui.radio_value(
-            mode,
-            lightvc_core::converter::LatencyMode::Balanced,
-            "Balanced",
-        );
-        ui.radio_value(
-            mode,
-            lightvc_core::converter::LatencyMode::Quality,
-            "Quality",
-        );
+        let mode_names = [
+            (lightvc_core::converter::LatencyMode::Strict, "Strict"),
+            (lightvc_core::converter::LatencyMode::Balanced, "Balanced"),
+            (lightvc_core::converter::LatencyMode::Quality, "Quality"),
+        ];
+        for (m, name) in &mode_names {
+            let selected = *mode == *m;
+            if crate::theme::pill_button(ui, name, selected) {
+                *mode = *m;
+            }
+        }
         if *mode != old {
             on_control(RtControl::SetMode(*mode));
         }
@@ -145,22 +164,22 @@ pub fn render(
 
     // Bypass
     let old_bp = *bypass;
-    ui.checkbox(bypass, "Bypass (monitor only)");
+    ui.checkbox(bypass, "Bypass");
     if *bypass != old_bp {
         on_control(RtControl::Bypass(*bypass));
     }
 
-    ui.add_space(8.0);
+    ui.add_space(12.0);
 
     // Start/Stop
     ui.horizontal(|ui| {
         if !*running {
-            if ui.button("Start").clicked() {
+            if crate::theme::pill_button(ui, "▶ Start", true) {
                 on_control(RtControl::Start);
                 *running = true;
             }
         } else {
-            if ui.button("Stop").clicked() {
+            if crate::theme::pill_button(ui, "■ Stop", true) {
                 on_control(RtControl::Stop);
                 *running = false;
             }
@@ -170,24 +189,45 @@ pub fn render(
     ui.add_space(12.0);
 
     // Audio devices
-    ui.collapsing("Audio Devices", |ui| {
-        let inputs = lightvc_audio::DuplexStream::list_input_devices().unwrap_or_default();
-        let outputs = lightvc_audio::DuplexStream::list_output_devices().unwrap_or_default();
-        ui.label("Inputs:");
-        for d in &inputs {
-            ui.label(format!(
-                "  {} ({}Hz, {}ch)",
-                d.name, d.sample_rate, d.channels
-            ));
-        }
-        ui.label("Outputs:");
-        for d in &outputs {
-            ui.label(format!(
-                "  {} ({}Hz, {}ch)",
-                d.name, d.sample_rate, d.channels
-            ));
-        }
-    });
+    ui.collapsing(
+        egui::RichText::new("Audio Devices")
+            .size(13.0)
+            .color(crate::theme::colors::CYAN),
+        |ui| {
+            let inputs = lightvc_audio::DuplexStream::list_input_devices().unwrap_or_default();
+            let outputs = lightvc_audio::DuplexStream::list_output_devices().unwrap_or_default();
+            ui.label(
+                egui::RichText::new("Inputs")
+                    .size(12.0)
+                    .color(crate::theme::colors::TEXT_DIM),
+            );
+            for d in &inputs {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "  {} ({}Hz, {}ch)",
+                        d.name, d.sample_rate, d.channels
+                    ))
+                    .size(11.0)
+                    .color(crate::theme::colors::TEXT_MUTED),
+                );
+            }
+            ui.label(
+                egui::RichText::new("Outputs")
+                    .size(12.0)
+                    .color(crate::theme::colors::TEXT_DIM),
+            );
+            for d in &outputs {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "  {} ({}Hz, {}ch)",
+                        d.name, d.sample_rate, d.channels
+                    ))
+                    .size(11.0)
+                    .color(crate::theme::colors::TEXT_MUTED),
+                );
+            }
+        },
+    );
 }
 
 // =========================================================================

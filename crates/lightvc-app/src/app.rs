@@ -185,29 +185,65 @@ impl LightVcApp {
 
 impl LightVcApp {
     pub fn render(&mut self, ctx: &egui::Context) {
-        // Top bar with tabs
-        egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.current_tab, Tab::Offline, "Offline Convert");
-                ui.selectable_value(&mut self.current_tab, Tab::Realtime, "Realtime");
-                ui.selectable_value(&mut self.current_tab, Tab::Catalog, "Voice Catalog");
+        // Apply kawaii theme every frame (cheap, ensures consistency)
+        crate::theme::apply_theme(ctx);
+        crate::theme::gradient_background(ctx);
+
+        // Top bar with kawaii tabs
+        egui::TopBottomPanel::top("tabs")
+            .frame(
+                egui::Frame::NONE
+                    .fill(egui::Color32::from_rgba_premultiplied(42, 32, 56, 200))
+                    .inner_margin(egui::Margin::same(12)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add_space(8.0);
+                    // Logo
+                    ui.label(
+                        egui::RichText::new("✦ LightVC-X")
+                            .size(18.0)
+                            .strong()
+                            .color(crate::theme::colors::PINK_BRIGHT),
+                    );
+                    ui.add_space(24.0);
+
+                    if crate::theme::tab_button(ui, "Offline", self.current_tab == Tab::Offline) {
+                        self.current_tab = Tab::Offline;
+                    }
+                    if crate::theme::tab_button(ui, "Realtime", self.current_tab == Tab::Realtime) {
+                        self.current_tab = Tab::Realtime;
+                    }
+                    if crate::theme::tab_button(ui, "Voices", self.current_tab == Tab::Catalog) {
+                        self.current_tab = Tab::Catalog;
+                    }
+                });
             });
-        });
 
         // Status bar
         {
             let st = self.state.lock().unwrap();
-            egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    let status_color = if st.error.is_some() {
-                        egui::Color32::from_rgb(220, 80, 80)
-                    } else {
-                        egui::Color32::from_rgb(120, 180, 120)
-                    };
-                    let msg = st.error.clone().unwrap_or_else(|| st.status.clone());
-                    ui.colored_label(status_color, &msg);
+            egui::TopBottomPanel::bottom("status")
+                .frame(
+                    egui::Frame::NONE
+                        .fill(egui::Color32::from_rgba_premultiplied(42, 32, 56, 180))
+                        .inner_margin(egui::Margin::same(8)),
+                )
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        let (dot_color, msg) = if let Some(ref err) = st.error {
+                            (egui::Color32::from_rgb(255, 100, 100), err.clone())
+                        } else {
+                            (crate::theme::colors::MINT, st.status.clone())
+                        };
+                        crate::theme::status_dot(ui, true, dot_color);
+                        ui.label(
+                            egui::RichText::new(&msg)
+                                .size(12.0)
+                                .color(crate::theme::colors::TEXT_DIM),
+                        );
+                    });
                 });
-            });
         }
 
         // Tab content

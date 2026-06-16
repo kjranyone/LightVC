@@ -10,6 +10,7 @@ mod audio_playback;
 mod cli;
 mod offline_tab;
 mod realtime_tab;
+mod theme;
 mod voice_catalog;
 mod widgets;
 
