@@ -1,13 +1,4 @@
-//! Custom egui widgets — thin wrappers that delegate to the theme module.
-//!
-//! For the full kawaii-styled widgets, use `crate::theme::*` directly.
-
-use eframe::egui;
-
-/// Draw a kawaii level meter.
-pub fn level_meter(ui: &mut egui::Ui, rms: f32, label: &str) {
-    crate::theme::level_meter(ui, rms, label);
-}
+//! Helper utilities for audio processing.
 
 /// Compute RMS of a sample buffer.
 pub fn rms(samples: &[f32]) -> f32 {

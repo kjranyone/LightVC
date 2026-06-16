@@ -86,41 +86,8 @@ pub fn apply_theme(ctx: &egui::Context) {
 }
 
 // ---------------------------------------------------------------------------
-// Background
+// Widgets
 // ---------------------------------------------------------------------------
-
-/// Draw a gradient-ish background (3 bands).
-pub fn gradient_background(ctx: &egui::Context) {
-    let rect = ctx.screen_rect();
-    let painter = ctx.layer_painter(egui::LayerId::background());
-
-    let h = rect.height();
-    let band = h / 3.0;
-
-    painter.rect_filled(
-        egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), band)),
-        0.0,
-        Color32::from_rgb(30, 24, 42),
-    );
-    painter.rect_filled(
-        egui::Rect::from_min_size(
-            egui::pos2(rect.min.x, rect.min.y + band),
-            egui::vec2(rect.width(), band),
-        ),
-        0.0,
-        Color32::from_rgb(36, 26, 50),
-    );
-    painter.rect_filled(
-        egui::Rect::from_min_size(
-            egui::pos2(rect.min.x, rect.min.y + band * 2.0),
-            egui::vec2(rect.width(), band),
-        ),
-        0.0,
-        Color32::from_rgb(26, 20, 40),
-    );
-}
-
-/// A pill-shaped button with icon image + text.
 pub fn icon_button(
     ui: &mut egui::Ui,
     icon: &egui::TextureHandle,

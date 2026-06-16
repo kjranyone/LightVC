@@ -55,9 +55,7 @@ pub fn render(
                 file_dialog.pick_file();
                 ctx.data_mut(|d| d.insert_temp("catalog_pick".into(), true));
             }
-            if crate::theme::icon_button(ui, icon_folder, "Add", !name_buf.is_empty())
-                && !name_buf.is_empty()
-            {
+            if crate::theme::pill_button(ui, "Add", !name_buf.is_empty()) && !name_buf.is_empty() {
                 let picked =
                     ctx.data_mut(|d| d.get_temp::<std::path::PathBuf>("catalog_picked".into()));
                 if let Some(path) = picked {
@@ -79,81 +77,88 @@ pub fn render(
 
     ui.add_space(10.0);
 
-    // Voice list
-    {
-        let s = state.lock().unwrap();
-        if s.voices.is_empty() {
-            // Empty state with illustration
-            ui.add_space(20.0);
-            ui.vertical_centered(|ui| {
-                ui.add(
-                    egui::Image::from_texture(empty_stars)
-                        .fit_to_exact_size(egui::vec2(120.0, 120.0))
-                        .tint(egui::Color32::from_rgba_premultiplied(170, 140, 255, 180)),
-                );
-                ui.add_space(8.0);
-                ui.label(
-                    egui::RichText::new("No voices registered yet.")
-                        .size(13.0)
-                        .color(crate::theme::colors::TEXT_MUTED),
-                );
-            });
-        } else {
-            ui.label(
-                egui::RichText::new(format!("{} voices", s.voices.len()))
-                    .size(14.0)
-                    .strong()
-                    .color(crate::theme::colors::CYAN),
-            );
-            ui.add_space(4.0);
-
-            let mut to_delete = None;
-            for (i, voice) in s.voices.iter().enumerate() {
-                crate::theme::info_card(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        // Index + name
-                        ui.label(
-                            egui::RichText::new(format!("{}", i + 1))
-                                .size(12.0)
-                                .color(crate::theme::colors::LAVENDER)
-                                .monospace(),
-                        );
-                        ui.label(
-                            egui::RichText::new(&voice.name)
-                                .size(14.0)
-                                .strong()
-                                .color(crate::theme::colors::TEXT),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if crate::theme::icon_button(ui, icon_trash, "Remove", false) {
-                                to_delete = Some(i);
-                            }
-                            if crate::theme::icon_button(ui, icon_play, "Play", true) {
-                                if let Ok((wav, sr)) = audio_playback::load_wav_mono(&voice.path) {
-                                    let wav44 = audio_playback::resample_linear(&wav, sr);
-                                    let _ = audio_playback::AudioPlayer::play(wav44);
-                                }
-                            }
-                        });
-                    });
+    // Voice list (scrollable)
+    egui::ScrollArea::vertical()
+        .max_height(400.0)
+        .show(ui, |ui| {
+            let s = state.lock().unwrap();
+            if s.voices.is_empty() {
+                // Empty state with illustration
+                ui.add_space(20.0);
+                ui.vertical_centered(|ui| {
+                    ui.add(
+                        egui::Image::from_texture(empty_stars)
+                            .fit_to_exact_size(egui::vec2(120.0, 120.0))
+                            .tint(egui::Color32::from_rgba_premultiplied(170, 140, 255, 180)),
+                    );
+                    ui.add_space(8.0);
                     ui.label(
-                        egui::RichText::new(voice.path.to_string_lossy().as_ref())
-                            .size(10.0)
+                        egui::RichText::new("No voices registered yet.")
+                            .size(13.0)
                             .color(crate::theme::colors::TEXT_MUTED),
                     );
                 });
+            } else {
+                ui.label(
+                    egui::RichText::new(format!("{} voices", s.voices.len()))
+                        .size(14.0)
+                        .strong()
+                        .color(crate::theme::colors::CYAN),
+                );
                 ui.add_space(4.0);
-            }
 
-            drop(s);
-            if let Some(idx) = to_delete {
-                let mut s = state.lock().unwrap();
-                let name = s.voices[idx].name.clone();
-                s.voices.remove(idx);
-                s.status = format!("Removed voice: {name}");
+                let mut to_delete = None;
+                for (i, voice) in s.voices.iter().enumerate() {
+                    crate::theme::info_card(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            // Index + name
+                            ui.label(
+                                egui::RichText::new(format!("{}", i + 1))
+                                    .size(12.0)
+                                    .color(crate::theme::colors::LAVENDER)
+                                    .monospace(),
+                            );
+                            ui.label(
+                                egui::RichText::new(&voice.name)
+                                    .size(14.0)
+                                    .strong()
+                                    .color(crate::theme::colors::TEXT),
+                            );
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if crate::theme::icon_button(ui, icon_trash, "Remove", false) {
+                                        to_delete = Some(i);
+                                    }
+                                    if crate::theme::icon_button(ui, icon_play, "Play", true) {
+                                        if let Ok((wav, sr)) =
+                                            audio_playback::load_wav_mono(&voice.path)
+                                        {
+                                            let wav44 = audio_playback::resample_linear(&wav, sr);
+                                            let _ = audio_playback::AudioPlayer::play(wav44);
+                                        }
+                                    }
+                                },
+                            );
+                        });
+                        ui.label(
+                            egui::RichText::new(voice.path.to_string_lossy().as_ref())
+                                .size(10.0)
+                                .color(crate::theme::colors::TEXT_MUTED),
+                        );
+                    });
+                    ui.add_space(4.0);
+                }
+
+                drop(s);
+                if let Some(idx) = to_delete {
+                    let mut s = state.lock().unwrap();
+                    let name = s.voices[idx].name.clone();
+                    s.voices.remove(idx);
+                    s.status = format!("Removed voice: {name}");
+                }
             }
-        }
-    }
+        });
 
     ui.add_space(8.0);
 

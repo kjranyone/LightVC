@@ -29,11 +29,6 @@ impl AudioPlayer {
                 sample_rate: 44100,
                 buffer_size: cpal::BufferSize::Default,
             };
-            let config = cpal::StreamConfig {
-                channels: 1,
-                sample_rate: 44100,
-                buffer_size: cpal::BufferSize::Default,
-            };
 
             let idx = Arc::new(Mutex::new(0usize));
             let idx_clone = idx.clone();

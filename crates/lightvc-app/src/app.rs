@@ -37,6 +37,8 @@ pub struct AppState {
     pub selected_voice: Option<usize>,
     pub error: Option<String>,
     pub status: String,
+    // Offline conversion result
+    pub offline_result: Option<Vec<f32>>,
     // Real-time communication
     pub rt_control_tx: Option<Sender<RtControl>>,
     pub rt_metrics_rx: Option<Receiver<RtMetrics>>,
@@ -82,6 +84,7 @@ impl LightVcApp {
             selected_voice: None,
             error: None,
             status: "Ready".to_string(),
+            offline_result: None,
             rt_control_tx: None,
             rt_metrics_rx: None,
             rt_initialized: false,
@@ -220,17 +223,6 @@ impl LightVcApp {
                                     (alpha * 255.0) as u8,
                                 )),
                         );
-                        ui.add_space(12.0);
-                        ui.label(
-                            egui::RichText::new("Real-time Voice Conversion")
-                                .size(13.0)
-                                .color(egui::Color32::from_rgba_premultiplied(
-                                    160,
-                                    150,
-                                    180,
-                                    (alpha * 200.0) as u8,
-                                )),
-                        );
                         ui.add_space(8.0);
                         ui.spinner();
                     });
@@ -356,7 +348,6 @@ impl LightVcApp {
                 let metrics = self.rt_metrics.clone();
                 let file_dialog = &mut self.file_dialog;
                 let knob_tex = self.asset_cache.knob(ctx);
-                let knob_id = knob_tex.id();
                 let knob_tex_ref = knob_tex.clone();
 
                 egui::CentralPanel::default().show(ctx, |ui| {

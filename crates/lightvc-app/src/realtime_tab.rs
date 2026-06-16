@@ -33,7 +33,7 @@ pub fn render(
     mut on_ensure_thread: impl FnMut(),
     on_control: impl Fn(RtControl),
 ) {
-    ui.heading("Real-time Voice Conversion");
+    crate::theme::heading(ui, "Real-time Voice Conversion");
     ui.add_space(8.0);
 
     let has_pipeline = state.lock().unwrap().pipeline.is_some();
@@ -214,9 +214,11 @@ pub fn render(
 
     ui.add_space(8.0);
 
-    // Bypass
+    // Bypass — styled toggle button
     let old_bp = *bypass;
-    ui.checkbox(bypass, "Bypass");
+    if crate::theme::pill_button(ui, if *bypass { "BYPASS ON" } else { "Bypass" }, *bypass) {
+        *bypass = !*bypass;
+    }
     if *bypass != old_bp {
         on_control(RtControl::Bypass(*bypass));
     }
