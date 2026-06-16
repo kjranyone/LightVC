@@ -1,10 +1,10 @@
-# LightVC-X Design Document
+# LightVC Design Document
 
 > Codec-space one-step streaming voice conversion, designed as a Rust client application.
 
 ## TL;DR
 
-**LightVC-X** is a real-time voice conversion system that transforms audio in a pretrained neural codec's continuous latent space, using a lightweight one-step converter. The entire inference stack runs in **pure Rust** via [Candle](https://github.com/huggingface/candle), with no Python runtime, no ONNX export, and no external service dependency.
+**LightVC** is a real-time voice conversion system that transforms audio in a pretrained neural codec's continuous latent space, using a lightweight one-step converter. The entire inference stack runs in **pure Rust** via [Candle](https://github.com/huggingface/candle), with no Python runtime, no ONNX export, and no external service dependency.
 
 ```
 Mic (cpal) → DAC encoder (frozen) → continuous latent
@@ -162,7 +162,7 @@ Detailed pipeline: [MODEL_TRAINING.md](MODEL_TRAINING.md)
 
 ## Key Research Insights (from literature survey)
 
-| Insight | Source | Application in LightVC-X |
+| Insight | Source | Application in LightVC |
 |---------|--------|--------------------------|
 | VC = codec-space translation, not waveform generation | X-VC concept | Converter operates on DAC latents only |
 | One-step conversion via mean-flow (1-NFE) | MeanVC2 | Single forward pass, no ODE loop |

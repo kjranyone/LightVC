@@ -1,4 +1,4 @@
-//! LightVC-X GUI — 3-tab egui application.
+//! LightVC GUI — 3-tab egui application.
 //!
 //! Tab 1: Offline conversion (file → convert → save)
 //! Tab 2: Real-time conversion (mic → VC → speaker)
@@ -49,7 +49,7 @@ pub struct VoiceEntry {
     pub path: std::path::PathBuf,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Copy, Clone)]
 enum Tab {
     Offline,
     Realtime,
@@ -200,7 +200,7 @@ impl LightVcApp {
                 1.0 - (self.splash_frames - 20) as f32 / 10.0
             };
 
-            let splash = self.asset_cache.logo(ctx); // reuse logo texture for splash
+            let splash = self.asset_cache.splash(ctx);
             let screen = ctx.screen_rect();
             egui::CentralPanel::default()
                 .frame(
@@ -208,8 +208,8 @@ impl LightVcApp {
                 )
                 .show(ctx, |ui| {
                     ui.vertical_centered(|ui| {
-                        ui.add_space(screen.height() * 0.3);
-                        let size = egui::Vec2::new(320.0, 60.0);
+                        ui.add_space(screen.height() * 0.25);
+                        let size = egui::Vec2::new(300.0, 150.0);
                         ui.add(
                             egui::Image::from_texture(splash)
                                 .fit_to_exact_size(size)
@@ -261,20 +261,28 @@ impl LightVcApp {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.add_space(4.0);
-                    // Logo image
+                    // Logo image — responsive: max 140px, scales down on narrow
                     let logo = self.asset_cache.logo(ctx);
-                    let logo_size = egui::Vec2::new(160.0, 30.0);
-                    ui.add(egui::Image::from_texture(logo).fit_to_exact_size(logo_size));
-                    ui.add_space(16.0);
+                    let avail = ui.available_width();
+                    let logo_w = avail.min(140.0).max(80.0);
+                    let logo_h = logo_w * (30.0 / 320.0); // maintain aspect ratio
+                    ui.add(
+                        egui::Image::from_texture(logo)
+                            .fit_to_exact_size(egui::Vec2::new(logo_w, logo_h)),
+                    );
+                    ui.add_space(8.0);
 
-                    if crate::theme::tab_button(ui, "Offline", self.current_tab == Tab::Offline) {
-                        self.current_tab = Tab::Offline;
-                    }
-                    if crate::theme::tab_button(ui, "Realtime", self.current_tab == Tab::Realtime) {
-                        self.current_tab = Tab::Realtime;
-                    }
-                    if crate::theme::tab_button(ui, "Voices", self.current_tab == Tab::Catalog) {
-                        self.current_tab = Tab::Catalog;
+                    // Tabs — distribute remaining width
+                    let tab_labels = [
+                        (Tab::Offline, "Offline"),
+                        (Tab::Realtime, "Realtime"),
+                        (Tab::Catalog, "Voices"),
+                    ];
+                    for (tab, label) in &tab_labels {
+                        let selected = self.current_tab == *tab;
+                        if crate::theme::tab_button(ui, label, selected) {
+                            self.current_tab = *tab;
+                        }
                     }
                 });
             });
@@ -373,6 +381,9 @@ impl LightVcApp {
             }
         }
 
-        ctx.request_repaint();
+        // Only request continuous repaint during realtime mode
+        if self.current_tab == Tab::Realtime {
+            ctx.request_repaint();
+        }
     }
 }

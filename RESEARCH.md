@@ -1,4 +1,4 @@
-# LightVC-X Research Evidence Base
+# LightVC Research Evidence Base
 
 Summary of the literature survey and technology evaluation that informed the design decisions.
 
@@ -21,7 +21,7 @@ Summary of the literature survey and technology evaluation that informed the des
 - **DAC**: Same RVQ issues. No official ONNX.
 - **Mamba/SSM**: ONNX export actively failing (`mamba` #751, #200). Selective scan custom kernel can't be traced.
 
-**Conclusion**: For leveraging frozen pretrained codec weights (core to LightVC-X), Candle is the only viable path. ONNX is viable only for models authored from scratch with export-friendly ops.
+**Conclusion**: For leveraging frozen pretrained codec weights (core to LightVC), Candle is the only viable path. ONNX is viable only for models authored from scratch with export-friendly ops.
 
 ### Candle's Existing Codec Implementations
 
@@ -43,7 +43,7 @@ candle-transformers/src/models/
 - **Paper**: arXiv:2510.09245
 - **Key contribution**: Streaming end-to-end VC via synthetic parallel distillation from Seed-VC teacher. 77.1ms latency, 14.7M params.
 - **Architecture**: AudioDec backbone, latent-to-latent causal conv converter. Two-stage training (mel L1 → GAN).
-- **Relevance to LightVC-X**: Validates the synthetic parallel distillation approach. Converter architecture (causal conv blocks) is directly applicable.
+- **Relevance to LightVC**: Validates the synthetic parallel distillation approach. Converter architecture (causal conv blocks) is directly applicable.
 - **Code**: Anonymous repo (not yet public).
 
 ### MeanVC 2 (Interspeech 2026)
@@ -234,7 +234,7 @@ teacher. **14 of 16 surveyed SOTA zero-shot VC systems are teacher-free.**
 Teacher distillation (SynthVC, FasterVoiceGrad) is a *latency compression*
 trick, not a quality requirement.
 
-This finding eliminated the Seed-VC dependency from LightVC-X's training plan.
+This finding eliminated the Seed-VC dependency from LightVC's training plan.
 
 ### Teacher-Free Paradigm Comparison
 

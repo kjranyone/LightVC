@@ -1,6 +1,6 @@
-# LightVC-X Training Pipeline
+# LightVC Training Pipeline
 
-Python training pipeline for the LightVC-X converter model.
+Python training pipeline for the LightVC converter model.
 Trained via mean-flow matching — no VC teacher needed.
 
 ## Setup

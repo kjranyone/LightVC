@@ -1,5 +1,5 @@
 """
-LightVC-X Converter Models (PyTorch)
+LightVC Converter Models (PyTorch)
 
 Mirrors the Rust `lightvc_core::converter` so exported safetensors weights
 load directly into the Candle implementation.

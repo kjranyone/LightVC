@@ -1,4 +1,4 @@
-//! Kawaii Future Bass theme for LightVC-X.
+//! Kawaii Future Bass theme for LightVC.
 //!
 //! Visual language:
 //! - Pastel colors (pink, lavender, cyan, mint)
@@ -157,7 +157,7 @@ pub fn pill_button(ui: &mut egui::Ui, text: &str, active: bool) -> bool {
     ui.add(btn).clicked()
 }
 
-/// A tab button with kawaii styling.
+/// A tab button with kawaii styling (responsive width).
 pub fn tab_button(ui: &mut egui::Ui, text: &str, selected: bool) -> bool {
     let (bg, fg, stroke) = if selected {
         (colors::PINK, colors::TEXT, colors::PINK_BRIGHT)
@@ -165,10 +165,10 @@ pub fn tab_button(ui: &mut egui::Ui, text: &str, selected: bool) -> bool {
         (colors::BG_PANEL, colors::TEXT_DIM, colors::BG_PANEL_LIGHT)
     };
 
-    let btn = egui::Button::new(egui::RichText::new(text).size(15.0).strong().color(fg))
+    let btn = egui::Button::new(egui::RichText::new(text).size(14.0).strong().color(fg))
         .fill(bg)
         .stroke(egui::Stroke::new(if selected { 2.0 } else { 1.0 }, stroke))
-        .min_size(egui::vec2(100.0, 34.0));
+        .min_size(egui::vec2(70.0, 30.0));
 
     ui.add(btn).clicked()
 }
@@ -201,10 +201,8 @@ pub fn level_meter(ui: &mut egui::Ui, level: f32, label: &str) {
                 .color(colors::TEXT_DIM),
         );
 
-        let (rect, _) = ui.allocate_exact_size(
-            egui::vec2(ui.available_width() - 70.0, 16.0),
-            egui::Sense::hover(),
-        );
+        let meter_width = (ui.available_width() - 70.0).max(40.0);
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(meter_width, 16.0), egui::Sense::hover());
         let painter = ui.painter_at(rect);
 
         painter.rect_filled(rect, 8.0, colors::BG_DARK);
@@ -255,12 +253,12 @@ pub fn level_meter(ui: &mut egui::Ui, level: f32, label: &str) {
     });
 }
 
-/// A kawaii info card (rounded panel with border).
+/// A kawaii info card (rounded panel with border, generous padding).
 pub fn info_card(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::NONE
         .fill(colors::BG_PANEL)
         .stroke(egui::Stroke::new(1.5, colors::LAVENDER))
-        .inner_margin(4)
+        .inner_margin(16)
         .show(ui, add_contents);
 }
 

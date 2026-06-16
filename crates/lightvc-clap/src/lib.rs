@@ -1,4 +1,4 @@
-//! LightVC-X VST3 Plugin
+//! LightVC VST3 Plugin
 //!
 //! Real-time voice conversion as a VST3 audio effect.
 //! Uses nice-plug + nice-plug-egui.
@@ -139,7 +139,7 @@ impl Default for LightVcPlugin {
 }
 
 impl Plugin for LightVcPlugin {
-    const NAME: &'static str = "LightVC-X";
+    const NAME: &'static str = "LightVC";
     const VENDOR: &'static str = "LightVC";
     const URL: &'static str = "https://github.com/kjranyone/LightVC";
     const EMAIL: &'static str = "";
@@ -216,7 +216,7 @@ impl Plugin for LightVcPlugin {
                 // Header
                 ui.horizontal(|ui| {
                     ui.label(
-                        egui::RichText::new("✦ LightVC-X")
+                        egui::RichText::new("✦ LightVC")
                             .size(16.0)
                             .strong()
                             .color(PINK_BRIGHT),
@@ -713,7 +713,7 @@ fn egui_knob(
 // ---------------------------------------------------------------------------
 
 impl ClapPlugin for LightVcPlugin {
-    const CLAP_ID: &'static str = "com.lightvc.lightvc-x";
+    const CLAP_ID: &'static str = "com.lightvc.lightvc";
     const CLAP_DESCRIPTION: Option<&'static str> = Some("Real-time voice conversion");
     const CLAP_MANUAL_URL: Option<&'static str> = Some(Self::URL);
     const CLAP_SUPPORT_URL: Option<&'static str> = None;

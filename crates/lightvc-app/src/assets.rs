@@ -33,6 +33,7 @@ pub struct AssetCache {
     pub bg_texture: Option<egui::TextureHandle>,
     pub logo_texture: Option<egui::TextureHandle>,
     pub knob_texture: Option<egui::TextureHandle>,
+    pub splash_texture: Option<egui::TextureHandle>,
 }
 
 impl Default for AssetCache {
@@ -41,6 +42,7 @@ impl Default for AssetCache {
             bg_texture: None,
             logo_texture: None,
             knob_texture: None,
+            splash_texture: None,
         }
     }
 }
@@ -76,5 +78,10 @@ impl AssetCache {
     pub fn knob(&mut self, ctx: &egui::Context) -> &egui::TextureHandle {
         self.knob_texture
             .get_or_insert_with(|| Self::make_texture(ctx, "knob_frames", KNOB_FRAMES_PNG))
+    }
+
+    pub fn splash(&mut self, ctx: &egui::Context) -> &egui::TextureHandle {
+        self.splash_texture
+            .get_or_insert_with(|| Self::make_texture(ctx, "splash", SPLASH_PNG))
     }
 }

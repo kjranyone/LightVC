@@ -1,4 +1,4 @@
-# LightVC-X Visual Assets Specification
+# LightVC Visual Assets Specification
 
 ## Design Direction
 
@@ -58,7 +58,7 @@ YELLOW      #FFDC82   (警告/バイパス)
 | `logo_header@2x.png` | 640×160 | Retina用 |
 
 **デザイン内容:**
-- テキスト「LightVC-X」または「✦ LightVC-X」
+- テキスト「LightVC」または「✦ LightVC」
 - フォント：丸ゴシック、太め（例: Nunito Bold, Quicksand Bold, M PLUS Rounded 1c）
 - 「LightVC」部分：白〜シアンのグラデーション
 - 「-X」部分：ピンク〜ラベンダーのグラデーション
@@ -117,7 +117,7 @@ YELLOW      #FFDC82   (警告/バイパス)
 
 **デザイン内容:**
 - 中央にロゴ + スパンクル
-- 「LightVC-X」と「Real-time Voice Conversion」のキャッチコピー
+- 「LightVC」と「Real-time Voice Conversion」のキャッチコピー
 - 背景は深紫の円形グラデーション
 - 周囲にパーティクル（ピンク/シアンの光の粒）
 - アニメーションは不可（静止画）
@@ -161,7 +161,7 @@ crates/lightvc-app/assets/
 
 VST3/CLAPバンドルにもコピーされます:
 ```
-LightVC-X.vst3/Contents/Resources/
+LightVC.vst3/Contents/Resources/
 ├── plugin_icon.png  (= icon_256.png)
 └── logo_header.png
 ```

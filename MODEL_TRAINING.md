@@ -1,11 +1,11 @@
-# LightVC-X Model Training & Data Creation
+# LightVC Model Training & Data Creation
 
 Complete pipeline for creating the converter model — **trained from scratch, no VC teacher**.
 
 > **Design revision (2026-06):** Dropped the Seed-VC teacher-distillation plan after
 > surveying 16 SOTA zero-shot VC systems. 14 of them (Seed-VC included) are trained
 > *without any VC teacher*. Teacher distillation (SynthVC, FasterVoiceGrad) is a
-> *latency compression* trick, not a quality requirement. LightVC-X now trains
+> *latency compression* trick, not a quality requirement. LightVC now trains
 > directly via **mean-flow / shortcut flow matching in DAC continuous latent space**,
 > with a bottleneck-autoencoder warm-start. This removes the teacher dependency
 > entirely and unlocks the novel progressive RVQ-depth factorized FM heads.
@@ -40,7 +40,7 @@ Complete pipeline for creating the converter model — **trained from scratch, n
 ├─────────────────────────────────────────────────────────────┤
 │                  DEPLOY (Rust / Candle)                     │
 │    converter.safetensors + dac_44khz.safetensors            │
-│    → LightVC-X desktop client (one-step inference)          │
+│    → LightVC desktop client (one-step inference)          │
 └─────────────────────────────────────────────────────────────┘
 ```
 

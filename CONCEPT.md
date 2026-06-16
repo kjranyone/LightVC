@@ -241,7 +241,7 @@ t + small delay:
 
 名前をつけるなら、
 
-## LightVC-X: Codec-Space One-Step Streaming VC
+## LightVC: Codec-Space One-Step Streaming VC
 
 ```text
 Input waveform 44.1kHz/24kHz
@@ -312,7 +312,7 @@ Converter:
 Astrape:
   continuous latent + CFM 4〜8 step + full custom encoder/decoder
 
-LightVC-X:
+LightVC:
   pretrained codec + one-step codec-space converter + factorized token control
 ```
 

@@ -3,7 +3,7 @@ name = "lightvc-clap"
 version.workspace = true
 edition.workspace = true
 license = "MIT"
-description = "LightVC-X CLAP/VST3 voice conversion plugin"
+description = "LightVC CLAP/VST3 voice conversion plugin"
 build = "build.rs"
 
 [lib]

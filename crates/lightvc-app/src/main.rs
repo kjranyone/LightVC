@@ -1,4 +1,4 @@
-//! LightVC-X desktop application.
+//! LightVC desktop application.
 //!
 //! Subcommands:
 //!   - `roundtrip`: Validate DAC encode/decode on a WAV file

@@ -1,4 +1,4 @@
-# LightVC-X Architecture
+# LightVC Architecture
 
 Detailed system architecture for the Rust client and model components.
 
@@ -10,7 +10,7 @@ Detailed system architecture for the Rust client and model components.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                         LightVC-X Process                           │
+│                         LightVC Process                           │
 │                                                                     │
 │  Thread 1: Audio Capture (cpal callback)                           │
 │    mic callback → ringbuf_capture (lock-free SPSC)                 │
@@ -171,7 +171,7 @@ The Candle `dac.rs` implementation has three gaps for our use case:
 
 ### 3.2 Solution: Continuous Latent Pipeline (no quantization)
 
-**Key insight**: For LightVC-X, the converter operates on **continuous latents**, not discrete tokens. We **skip the quantizer entirely**:
+**Key insight**: For LightVC, the converter operates on **continuous latents**, not discrete tokens. We **skip the quantizer entirely**:
 
 ```
                     ┌─────────────────────────────┐

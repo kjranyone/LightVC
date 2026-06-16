@@ -1,10 +1,10 @@
-# LightVC-X
+# LightVC
 
 Real-time voice conversion as a Rust desktop application and CLAP/VST3 plugin.
 
 ## Overview
 
-LightVC-X transforms audio in a pretrained neural codec's (DAC) continuous latent space using a lightweight mean-flow matching converter. No VC teacher — trained from scratch via flow matching on real speaker data.
+LightVC transforms audio in a pretrained neural codec's (DAC) continuous latent space using a lightweight mean-flow matching converter. No VC teacher — trained from scratch via flow matching on real speaker data.
 
 ```
 Mic input → DAC encode → one-step converter → DAC decode → output
@@ -39,7 +39,7 @@ cargo build --release -p lightvc-app
 
 # CLAP + VST3 plugin bundle
 cargo xtask bundle
-# Output: target/bundled/LightVC-X.vst3 and LightVC-X.clap
+# Output: target/bundled/LightVC.vst3 and LightVC.clap
 
 # Install to system plugin directories
 cargo xtask install

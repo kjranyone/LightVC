@@ -16,7 +16,7 @@ use lightvc_core::{
 #[command(
     name = "lightvc",
     version,
-    about = "LightVC-X real-time voice conversion"
+    about = "LightVC real-time voice conversion"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -102,7 +102,7 @@ pub fn select_device(cuda: bool, metal: bool) -> Result<Device> {
 }
 
 pub fn run_roundtrip(cmd: RoundtripCmd) -> Result<()> {
-    println!("LightVC-X Phase 0: DAC Round-Trip Test");
+    println!("LightVC Phase 0: DAC Round-Trip Test");
     println!("  Input:  {}", cmd.input.display());
     println!("  Output: {}", cmd.output.display());
 
@@ -162,7 +162,7 @@ pub fn run_roundtrip(cmd: RoundtripCmd) -> Result<()> {
 }
 
 pub fn run_convert(cmd: ConvertCmd) -> Result<()> {
-    println!("LightVC-X Offline Conversion");
+    println!("LightVC Offline Conversion");
 
     let device = select_device(cmd.cuda, cmd.metal)?;
 
@@ -240,14 +240,14 @@ pub fn run_convert(cmd: ConvertCmd) -> Result<()> {
 }
 
 pub fn run_gui(cmd: GuiCmd) -> Result<()> {
-    println!("LightVC-X GUI starting...");
+    println!("LightVC GUI starting...");
 
     let icon = crate::assets::load_icon();
 
     let mut app = crate::app::LightVcApp::new(cmd.dac_weights);
     let mut viewport = eframe::egui::ViewportBuilder::default()
         .with_inner_size([800.0, 600.0])
-        .with_title("LightVC-X");
+        .with_title("LightVC");
     if let Some(icon_data) = icon {
         viewport = viewport.with_icon(std::sync::Arc::new(icon_data));
     }
@@ -255,7 +255,7 @@ pub fn run_gui(cmd: GuiCmd) -> Result<()> {
         viewport,
         ..Default::default()
     };
-    eframe::run_simple_native("LightVC-X", opts, move |ctx, _frame| {
+    eframe::run_simple_native("LightVC", opts, move |ctx, _frame| {
         app.render(ctx);
     })?;
 

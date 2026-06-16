@@ -1,4 +1,4 @@
-//! LightVC-X core inference library.
+//! LightVC core inference library.
 //!
 //! Provides the DAC codec wrapper, converter model, streaming pipeline,
 //! and weight loading for real-time voice conversion.

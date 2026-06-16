@@ -1,4 +1,4 @@
-//! LightVC-X build tasks.
+//! LightVC build tasks.
 //!
 //! Usage:
 //!   cargo xtask bundle         — Build release + create .clap and .vst3 bundles
@@ -9,7 +9,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const PLUGIN_NAME: &str = "LightVC-X";
+const PLUGIN_NAME: &str = "LightVC";
 const DLL_NAME: &str = "lightvc_clap";
 
 fn main() -> anyhow::Result<()> {
@@ -238,7 +238,7 @@ fn clean() -> anyhow::Result<()> {
 
 fn print_help() {
     eprintln!(
-        "LightVC-X build tasks
+        "LightVC build tasks
 
 Usage: cargo xtask <COMMAND>
 

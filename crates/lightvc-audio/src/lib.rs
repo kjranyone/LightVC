@@ -1,4 +1,4 @@
-//! LightVC-X audio I/O library.
+//! LightVC audio I/O library.
 //!
 //! Cross-platform real-time audio capture/playback via cpal,
 //! lock-free ring buffers, and real-time-safe resampling.
