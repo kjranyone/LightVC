@@ -68,6 +68,7 @@ pub struct LightVcApp {
     conv_path_buf: String,
     conv_cfg_buf: String,
     asset_cache: crate::assets::AssetCache,
+    splash_frames: u32, // 0 = showing splash, >0 = finished
 }
 
 impl LightVcApp {
@@ -98,6 +99,7 @@ impl LightVcApp {
             conv_path_buf: String::new(),
             conv_cfg_buf: String::new(),
             asset_cache: Default::default(),
+            splash_frames: 0,
         }
     }
 
@@ -188,6 +190,54 @@ impl LightVcApp {
     pub fn render(&mut self, ctx: &egui::Context) {
         // Apply kawaii theme
         crate::theme::apply_theme(ctx);
+
+        // Splash screen — show for ~30 frames (~0.5s at 60fps)
+        if self.splash_frames < 30 {
+            self.splash_frames += 1;
+            let alpha = if self.splash_frames < 20 {
+                1.0
+            } else {
+                1.0 - (self.splash_frames - 20) as f32 / 10.0
+            };
+
+            let splash = self.asset_cache.logo(ctx); // reuse logo texture for splash
+            let screen = ctx.screen_rect();
+            egui::CentralPanel::default()
+                .frame(
+                    egui::Frame::NONE.fill(egui::Color32::from_rgba_premultiplied(28, 22, 38, 255)),
+                )
+                .show(ctx, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(screen.height() * 0.3);
+                        let size = egui::Vec2::new(320.0, 60.0);
+                        ui.add(
+                            egui::Image::from_texture(splash)
+                                .fit_to_exact_size(size)
+                                .tint(egui::Color32::from_rgba_premultiplied(
+                                    255,
+                                    255,
+                                    255,
+                                    (alpha * 255.0) as u8,
+                                )),
+                        );
+                        ui.add_space(12.0);
+                        ui.label(
+                            egui::RichText::new("Real-time Voice Conversion")
+                                .size(13.0)
+                                .color(egui::Color32::from_rgba_premultiplied(
+                                    160,
+                                    150,
+                                    180,
+                                    (alpha * 200.0) as u8,
+                                )),
+                        );
+                        ui.add_space(8.0);
+                        ui.spinner();
+                    });
+                });
+            ctx.request_repaint();
+            return;
+        }
 
         // Draw background texture
         {
