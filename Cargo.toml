@@ -4,6 +4,7 @@ members = [
     "crates/lightvc-core",
     "crates/lightvc-audio",
     "crates/lightvc-app",
+    "crates/lightvc-vst",
 ]
 
 [workspace.package]
