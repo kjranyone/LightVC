@@ -242,11 +242,17 @@ pub fn run_convert(cmd: ConvertCmd) -> Result<()> {
 pub fn run_gui(cmd: GuiCmd) -> Result<()> {
     println!("LightVC-X GUI starting...");
 
+    let icon = crate::assets::load_icon();
+
     let mut app = crate::app::LightVcApp::new(cmd.dac_weights);
+    let mut viewport = eframe::egui::ViewportBuilder::default()
+        .with_inner_size([800.0, 600.0])
+        .with_title("LightVC-X");
+    if let Some(icon_data) = icon {
+        viewport = viewport.with_icon(std::sync::Arc::new(icon_data));
+    }
     let opts = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([800.0, 600.0])
-            .with_title("LightVC-X"),
+        viewport,
         ..Default::default()
     };
     eframe::run_simple_native("LightVC-X", opts, move |ctx, _frame| {

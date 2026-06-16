@@ -6,6 +6,7 @@
 //!   - `gui`:       Launch the desktop GUI (3 tabs: offline/realtime/catalog)
 
 mod app;
+mod assets;
 mod audio_playback;
 mod cli;
 mod offline_tab;

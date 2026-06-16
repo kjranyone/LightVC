@@ -19,6 +19,7 @@ rfd = "0.15"
 crossbeam-channel.workspace = true
 rtrb.workspace = true
 cpal = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [features]
 default = []

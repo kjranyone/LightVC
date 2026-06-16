@@ -65,9 +65,9 @@ pub struct LightVcApp {
     rt_bypass: bool,
     rt_mode: lightvc_core::converter::LatencyMode,
     rt_metrics: RtMetrics,
-    // Converter load UI fields
     conv_path_buf: String,
     conv_cfg_buf: String,
+    asset_cache: crate::assets::AssetCache,
 }
 
 impl LightVcApp {
@@ -97,6 +97,7 @@ impl LightVcApp {
             rt_metrics: RtMetrics::default(),
             conv_path_buf: String::new(),
             conv_cfg_buf: String::new(),
+            asset_cache: Default::default(),
         }
     }
 
@@ -185,28 +186,36 @@ impl LightVcApp {
 
 impl LightVcApp {
     pub fn render(&mut self, ctx: &egui::Context) {
-        // Apply kawaii theme every frame (cheap, ensures consistency)
+        // Apply kawaii theme
         crate::theme::apply_theme(ctx);
-        crate::theme::gradient_background(ctx);
 
-        // Top bar with kawaii tabs
+        // Draw background texture
+        {
+            let bg = self.asset_cache.bg(ctx);
+            let screen = ctx.screen_rect();
+            ctx.layer_painter(egui::LayerId::background()).image(
+                bg.id(),
+                screen,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                egui::Color32::WHITE,
+            );
+        }
+
+        // Top bar with logo image + kawaii tabs
         egui::TopBottomPanel::top("tabs")
             .frame(
                 egui::Frame::NONE
-                    .fill(egui::Color32::from_rgba_premultiplied(42, 32, 56, 200))
+                    .fill(egui::Color32::from_rgba_premultiplied(28, 22, 38, 220))
                     .inner_margin(egui::Margin::same(12)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.add_space(8.0);
-                    // Logo
-                    ui.label(
-                        egui::RichText::new("✦ LightVC-X")
-                            .size(18.0)
-                            .strong()
-                            .color(crate::theme::colors::PINK_BRIGHT),
-                    );
-                    ui.add_space(24.0);
+                    ui.add_space(4.0);
+                    // Logo image
+                    let logo = self.asset_cache.logo(ctx);
+                    let logo_size = egui::Vec2::new(160.0, 30.0);
+                    ui.add(egui::Image::from_texture(logo).fit_to_exact_size(logo_size));
+                    ui.add_space(16.0);
 
                     if crate::theme::tab_button(ui, "Offline", self.current_tab == Tab::Offline) {
                         self.current_tab = Tab::Offline;

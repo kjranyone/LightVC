@@ -3094,6 +3094,7 @@ dependencies = [
  "eframe",
  "egui-file-dialog",
  "hound",
+ "image",
  "lightvc-audio",
  "lightvc-core",
  "rfd",
