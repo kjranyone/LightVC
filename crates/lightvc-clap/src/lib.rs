@@ -487,3 +487,10 @@ impl ClapPlugin for LightVcPlugin {
 }
 
 nice_export_clap!(LightVcPlugin);
+
+// ---------------------------------------------------------------------------
+// VST3 wrapper export (via clap-wrapper, Steinberg VST3 SDK is MIT as of 2025)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "vst3")]
+clap_wrapper::export_vst3!();

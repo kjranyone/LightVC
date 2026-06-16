@@ -3,7 +3,8 @@ name = "lightvc-clap"
 version.workspace = true
 edition.workspace = true
 license = "MIT"
-description = "LightVC-X CLAP voice conversion plugin"
+description = "LightVC-X CLAP/VST3 voice conversion plugin"
+build = "build.rs"
 
 [lib]
 crate-type = ["cdylib"]
@@ -19,7 +20,13 @@ rtrb.workspace = true
 nice-plug = "0.1"
 nice-plug-egui = "0.1"
 egui = "0.34"
+clap-wrapper = "0.3"
 
 [features]
-default = []
+default = ["vst3"]
+vst3 = ["clap-wrapper/vst3"]
+auv2 = ["clap-wrapper/auv2"]
 cuda = ["lightvc-core/cuda"]
+
+[build-dependencies]
+clap-wrapper = "0.3"
