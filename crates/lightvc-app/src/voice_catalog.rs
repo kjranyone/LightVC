@@ -15,6 +15,10 @@ pub fn render(
     ctx: &egui::Context,
     file_dialog: &mut FileDialog,
     state: &Arc<Mutex<AppState>>,
+    icon_folder: &egui::TextureHandle,
+    icon_play: &egui::TextureHandle,
+    icon_trash: &egui::TextureHandle,
+    empty_stars: &egui::TextureHandle,
 ) {
     crate::theme::heading(ui, "Voice Catalog");
     ui.add_space(4.0);
@@ -47,11 +51,12 @@ pub fn render(
                     .color(crate::theme::colors::TEXT_DIM),
             );
             ui.add_sized([120.0, 20.0], egui::TextEdit::singleline(&mut name_buf));
-            if crate::theme::pill_button(ui, "Browse WAV", false) {
+            if crate::theme::icon_button(ui, icon_folder, "Browse", false) {
                 file_dialog.pick_file();
                 ctx.data_mut(|d| d.insert_temp("catalog_pick".into(), true));
             }
-            if crate::theme::pill_button(ui, "✦ Add", !name_buf.is_empty()) && !name_buf.is_empty()
+            if crate::theme::icon_button(ui, icon_folder, "Add", !name_buf.is_empty())
+                && !name_buf.is_empty()
             {
                 let picked =
                     ctx.data_mut(|d| d.get_temp::<std::path::PathBuf>("catalog_picked".into()));
@@ -78,11 +83,21 @@ pub fn render(
     {
         let s = state.lock().unwrap();
         if s.voices.is_empty() {
-            ui.label(
-                egui::RichText::new("No voices registered yet.")
-                    .size(13.0)
-                    .color(crate::theme::colors::TEXT_MUTED),
-            );
+            // Empty state with illustration
+            ui.add_space(20.0);
+            ui.vertical_centered(|ui| {
+                ui.add(
+                    egui::Image::from_texture(empty_stars)
+                        .fit_to_exact_size(egui::vec2(120.0, 120.0))
+                        .tint(egui::Color32::from_rgba_premultiplied(170, 140, 255, 180)),
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new("No voices registered yet.")
+                        .size(13.0)
+                        .color(crate::theme::colors::TEXT_MUTED),
+                );
+            });
         } else {
             ui.label(
                 egui::RichText::new(format!("{} voices", s.voices.len()))
@@ -110,10 +125,10 @@ pub fn render(
                                 .color(crate::theme::colors::TEXT),
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if crate::theme::pill_button(ui, "✕", false) {
+                            if crate::theme::icon_button(ui, icon_trash, "Remove", false) {
                                 to_delete = Some(i);
                             }
-                            if crate::theme::pill_button(ui, "▶", true) {
+                            if crate::theme::icon_button(ui, icon_play, "Play", true) {
                                 if let Ok((wav, sr)) = audio_playback::load_wav_mono(&voice.path) {
                                     let wav44 = audio_playback::resample_linear(&wav, sr);
                                     let _ = audio_playback::AudioPlayer::play(wav44);
@@ -149,7 +164,7 @@ pub fn render(
             .color(crate::theme::colors::CYAN),
         |ui| {
             ui.horizontal(|ui| {
-                if crate::theme::pill_button(ui, "Export JSON", true) {
+                if crate::theme::icon_button(ui, icon_folder, "Export", true) {
                     let s = state.lock().unwrap();
                     let catalog: Vec<_> = s
                         .voices
@@ -161,7 +176,7 @@ pub fn render(
                         let _ = std::fs::write(path, json);
                     }
                 }
-                if crate::theme::pill_button(ui, "Import JSON", true) {
+                if crate::theme::icon_button(ui, icon_folder, "Import", true) {
                     file_dialog.pick_file();
                     ctx.data_mut(|d| d.insert_temp("catalog_import".into(), true));
                 }

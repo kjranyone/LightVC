@@ -120,6 +120,33 @@ pub fn gradient_background(ctx: &egui::Context) {
     );
 }
 
+/// A pill-shaped button with icon image + text.
+pub fn icon_button(
+    ui: &mut egui::Ui,
+    icon: &egui::TextureHandle,
+    text: &str,
+    active: bool,
+) -> bool {
+    let (fill, stroke_color) = if active {
+        (colors::LAVENDER, colors::CYAN)
+    } else {
+        (colors::BG_PANEL_LIGHT, colors::PINK)
+    };
+
+    let btn = egui::Button::image_and_text(
+        egui::Image::from_texture(icon).fit_to_exact_size(egui::vec2(16.0, 16.0)),
+        egui::RichText::new(text)
+            .size(13.0)
+            .strong()
+            .color(colors::TEXT),
+    )
+    .fill(fill)
+    .stroke(egui::Stroke::new(2.0, stroke_color))
+    .min_size(egui::vec2(80.0, 30.0));
+
+    ui.add(btn).clicked()
+}
+
 // ---------------------------------------------------------------------------
 // Custom widgets
 // ---------------------------------------------------------------------------

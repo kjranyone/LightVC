@@ -317,12 +317,22 @@ impl LightVcApp {
         match self.current_tab {
             Tab::Offline => {
                 egui::CentralPanel::default().show(ctx, |ui| {
+                    let folder = self.asset_cache.icon_folder(ctx).clone();
+                    let play = self.asset_cache.icon_play(ctx).clone();
+                    let convert = self.asset_cache.icon_convert(ctx).clone();
+                    let speaker = self.asset_cache.icon_speaker(ctx).clone();
+                    let mic = self.asset_cache.icon_mic(ctx).clone();
                     crate::offline_tab::render(
                         ui,
                         ctx,
                         &mut self.file_dialog,
                         &self.state,
                         &mut self.offline,
+                        &folder,
+                        &play,
+                        &convert,
+                        &speaker,
+                        &mic,
                     );
                 });
             }
@@ -376,7 +386,20 @@ impl LightVcApp {
             }
             Tab::Catalog => {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    crate::voice_catalog::render(ui, ctx, &mut self.file_dialog, &self.state);
+                    let folder = self.asset_cache.icon_folder(ctx).clone();
+                    let play = self.asset_cache.icon_play(ctx).clone();
+                    let trash = self.asset_cache.icon_trash(ctx).clone();
+                    let empty = self.asset_cache.empty_stars(ctx).clone();
+                    crate::voice_catalog::render(
+                        ui,
+                        ctx,
+                        &mut self.file_dialog,
+                        &self.state,
+                        &folder,
+                        &play,
+                        &trash,
+                        &empty,
+                    );
                 });
             }
         }
