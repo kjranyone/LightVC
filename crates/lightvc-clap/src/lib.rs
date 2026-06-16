@@ -342,23 +342,32 @@ impl Plugin for LightVcPlugin {
                     }
                 });
 
-                ui.add_space(6.0);
+                ui.add_space(8.0);
 
-                // Mix + Gain sliders
+                // Mix + Gain knobs (pure egui, no image assets)
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Mix").size(11.0).color(TEXT_DIM));
-                    let mut mix_val = params.mix.value();
-                    ui.add(egui::Slider::new(&mut mix_val, 0.0..=100.0).suffix("%"));
-                    if mix_val != params.mix.value() {
-                        setter.set_parameter(&params.mix, mix_val);
+                    // Mix knob
+                    let mix_val = params.mix.value();
+                    let mix_norm = mix_val / 100.0;
+                    if let Some(new) =
+                        egui_knob(ui, "mix_knob", mix_norm, "Mix", &format!("{:.0}%", mix_val))
+                    {
+                        setter.set_parameter(&params.mix, new * 100.0);
                     }
-                });
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Gain").size(11.0).color(TEXT_DIM));
-                    let mut gain_val = params.output_gain.value();
-                    ui.add(egui::Slider::new(&mut gain_val, -24.0..=24.0).suffix(" dB"));
-                    if gain_val != params.output_gain.value() {
-                        setter.set_parameter(&params.output_gain, gain_val);
+
+                    ui.add_space(12.0);
+
+                    // Gain knob
+                    let gain_val = params.output_gain.value();
+                    let gain_norm = (gain_val + 24.0) / 48.0;
+                    if let Some(new) = egui_knob(
+                        ui,
+                        "gain_knob",
+                        gain_norm,
+                        "Gain",
+                        &format!("{:+.1}dB", gain_val),
+                    ) {
+                        setter.set_parameter(&params.output_gain, new * 48.0 - 24.0);
                     }
                 });
             },
@@ -573,6 +582,130 @@ fn load_pipeline(
         lightvc_core::converter::LatencyMode::Balanced,
         device,
     )
+}
+
+// ---------------------------------------------------------------------------
+// Pure-egui knob widget (no image assets needed)
+// ---------------------------------------------------------------------------
+
+/// Draw an interactive knob using egui primitives only.
+///
+/// - `value`: normalized 0.0..=1.0
+/// - `label`: text below the knob
+/// - `min`/`max`/`display`: for value formatting
+/// Returns: new normalized value if dragged, or None
+fn egui_knob(
+    ui: &mut egui::Ui,
+    id_str: &str,
+    value: f32,
+    label: &str,
+    display_text: &str,
+) -> Option<f32> {
+    let knob_size = 52.0;
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(knob_size + 20.0, knob_size + 30.0),
+        egui::Sense::drag(),
+    );
+
+    let center = egui::pos2(rect.center().x, rect.min.y + knob_size / 2.0 + 4.0);
+    let radius = knob_size / 2.0;
+
+    let mut new_val = None;
+
+    if response.dragged() {
+        let drag = response.drag_delta().y;
+        new_val = Some((value - drag * 0.005).clamp(0.0, 1.0));
+    }
+    if response.double_clicked() {
+        new_val = Some(0.5);
+    }
+
+    let shown = new_val.unwrap_or(value);
+    let painter = ui.painter();
+
+    // Background circle
+    painter.circle_filled(center, radius + 2.0, egui::Color32::from_rgb(28, 22, 38));
+
+    // Arc background (270° span from -135° to +135°)
+    let start_angle = -135.0_f32.to_radians();
+    let end_angle = 135.0_f32.to_radians();
+    let bg_points = (0..40)
+        .map(|i| {
+            let t = i as f32 / 39.0;
+            let a = start_angle + (end_angle - start_angle) * t;
+            center + egui::vec2(a.cos() * radius, a.sin() * radius)
+        })
+        .collect::<Vec<_>>();
+    painter.add(egui::Shape::line(
+        bg_points,
+        egui::Stroke::new(3.0, egui::Color32::from_rgb(52, 40, 68)),
+    ));
+
+    // Value arc
+    let val_end = start_angle + (end_angle - start_angle) * shown;
+    let val_points = (0..40)
+        .take({ ((shown * 39.0).round() as usize).max(1) })
+        .map(|i| {
+            let t = i as f32 / 39.0;
+            let a = start_angle + (val_end - start_angle) * t.min(1.0);
+            center + egui::vec2(a.cos() * radius, a.sin() * radius)
+        })
+        .collect::<Vec<_>>();
+
+    let arc_color = if response.dragged() {
+        egui::Color32::from_rgb(255, 160, 210)
+    } else if response.hovered() {
+        egui::Color32::from_rgb(170, 140, 255)
+    } else {
+        egui::Color32::from_rgb(255, 130, 190)
+    };
+    if val_points.len() >= 2 {
+        painter.add(egui::Shape::line(
+            val_points,
+            egui::Stroke::new(3.0, arc_color),
+        ));
+    }
+
+    // Indicator line
+    let ind_a = start_angle + (end_angle - start_angle) * shown;
+    let ind_start = center + egui::vec2(ind_a.cos() * (radius - 8.0), ind_a.sin() * (radius - 8.0));
+    let ind_end = center + egui::vec2(ind_a.cos() * radius, ind_a.sin() * radius);
+    painter.line_segment([ind_start, ind_end], egui::Stroke::new(2.5, arc_color));
+
+    // Inner circle
+    painter.circle_filled(center, radius - 6.0, egui::Color32::from_rgb(42, 32, 56));
+
+    // Glow when active
+    if response.dragged() {
+        painter.circle_stroke(
+            center,
+            radius + 4.0,
+            egui::Stroke::new(
+                2.0,
+                egui::Color32::from_rgba_premultiplied(255, 130, 190, 60),
+            ),
+        );
+    }
+
+    // Value text in center
+    painter.text(
+        center,
+        egui::Align2::CENTER_CENTER,
+        display_text,
+        egui::FontId::proportional(10.0),
+        egui::Color32::from_rgb(240, 235, 250),
+    );
+
+    // Label below
+    painter.text(
+        egui::pos2(center.x, rect.min.y + knob_size + 12.0),
+        egui::Align2::CENTER_TOP,
+        label,
+        egui::FontId::proportional(11.0),
+        egui::Color32::from_rgb(160, 150, 180),
+    );
+
+    new_val
 }
 
 // ---------------------------------------------------------------------------
