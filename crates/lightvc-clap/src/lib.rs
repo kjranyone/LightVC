@@ -470,13 +470,20 @@ fn load_pipeline(
 }
 
 // ---------------------------------------------------------------------------
-// VST3 export
+// CLAP export
 // ---------------------------------------------------------------------------
 
-impl Vst3Plugin for LightVcPlugin {
-    const VST3_CLASS_ID: [u8; 16] = *b"LightVCXPluginID";
-    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
-        &[Vst3SubCategory::Fx, Vst3SubCategory::Tools];
+impl ClapPlugin for LightVcPlugin {
+    const CLAP_ID: &'static str = "com.lightvc.lightvc-x";
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("Real-time voice conversion");
+    const CLAP_MANUAL_URL: Option<&'static str> = Some(Self::URL);
+    const CLAP_SUPPORT_URL: Option<&'static str> = None;
+    const CLAP_FEATURES: &'static [ClapFeature] = &[
+        ClapFeature::AudioEffect,
+        ClapFeature::Stereo,
+        ClapFeature::Mono,
+        ClapFeature::Utility,
+    ];
 }
 
-nice_export_vst3!(LightVcPlugin);
+nice_export_clap!(LightVcPlugin);

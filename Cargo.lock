@@ -3104,19 +3104,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "lightvc-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "candle-core",
- "candle-nn",
- "candle-transformers",
- "hf-hub",
- "serde",
-]
-
-[[package]]
-name = "lightvc-vst"
+name = "lightvc-clap"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -3129,6 +3117,18 @@ dependencies = [
  "rtrb",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "lightvc-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "candle-core",
+ "candle-nn",
+ "candle-transformers",
+ "hf-hub",
+ "serde",
 ]
 
 [[package]]
