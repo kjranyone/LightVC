@@ -263,3 +263,123 @@ pub fn info_card(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
         .inner_margin(4)
         .show(ui, add_contents);
 }
+
+// ---------------------------------------------------------------------------
+// Knob widget (sprite-sheet based)
+// ---------------------------------------------------------------------------
+
+/// Knob sprite sheet: 12 frames, each 64×64px, stacked vertically (768px total).
+/// Frame 0 = minimum (7 o'clock), Frame 11 = maximum (5 o'clock).
+const KNOB_FRAMES: usize = 12;
+const KNOB_SIZE: f32 = 64.0;
+
+/// Draw an interactive knob from the sprite sheet.
+///
+/// - `value`: normalized 0.0..=1.0
+/// - `label`: text below the knob
+/// - Returns: new value if the knob was dragged, or None
+pub fn knob(
+    ui: &mut egui::Ui,
+    knob_tex: &egui::TextureHandle,
+    id: egui::Id,
+    value: f32,
+    label: &str,
+) -> Option<f32> {
+    let size = egui::vec2(KNOB_SIZE, KNOB_SIZE);
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(KNOB_SIZE, KNOB_SIZE + 20.0), egui::Sense::drag());
+
+    let knob_rect = egui::Rect::from_min_size(rect.min, size);
+
+    // Handle drag interaction
+    let mut new_value = None;
+    if response.dragged() {
+        let drag_delta = response.drag_delta().y;
+        let sensitivity = 0.005; // 200px for full range
+        let delta = -drag_delta * sensitivity;
+        new_value = Some((value + delta).clamp(0.0, 1.0));
+    }
+
+    // Double-click resets to center
+    if response.double_clicked() {
+        new_value = Some(0.5);
+    }
+
+    // Select frame from value
+    let display_value = new_value.unwrap_or(value);
+    let frame_idx =
+        ((display_value * (KNOB_FRAMES - 1) as f32).round() as usize).min(KNOB_FRAMES - 1);
+
+    // Draw the knob frame
+    let frame_h = 1.0 / KNOB_FRAMES as f32;
+    let frame_top = frame_idx as f32 / KNOB_FRAMES as f32;
+    let uv = egui::Rect::from_min_max(
+        egui::pos2(0.0, frame_top),
+        egui::pos2(1.0, frame_top + frame_h),
+    );
+
+    let painter = ui.painter_at(knob_rect);
+    painter.image(
+        knob_tex.id(),
+        knob_rect,
+        uv,
+        if response.dragged() {
+            egui::Color32::from_rgba_premultiplied(255, 200, 240, 255)
+        } else if response.hovered() {
+            egui::Color32::from_rgba_premultiplied(255, 180, 220, 255)
+        } else {
+            egui::Color32::WHITE
+        },
+    );
+
+    // Glow ring when active
+    if response.dragged() {
+        painter.circle_stroke(
+            knob_rect.center(),
+            KNOB_SIZE * 0.48,
+            egui::Stroke::new(2.0, colors::PINK),
+        );
+    }
+
+    // Label below
+    let label_pos = egui::pos2(knob_rect.center().x, knob_rect.max.y + 6.0);
+    painter.text(
+        label_pos,
+        egui::Align2::CENTER_TOP,
+        label,
+        egui::FontId::proportional(11.0),
+        colors::TEXT_DIM,
+    );
+
+    new_value
+}
+
+/// A labeled knob row: [Knob] [Label + value text]
+pub fn knob_labeled(
+    ui: &mut egui::Ui,
+    knob_tex: &egui::TextureHandle,
+    id_str: &str,
+    value: f32,
+    label: &str,
+    value_text: &str,
+) -> Option<f32> {
+    ui.horizontal(|ui| {
+        let id = ui.make_persistent_id(id_str);
+        let result = knob(ui, knob_tex, id, value, label);
+        ui.vertical(|ui| {
+            ui.label(
+                egui::RichText::new(label)
+                    .size(12.0)
+                    .color(colors::TEXT_DIM),
+            );
+            ui.label(
+                egui::RichText::new(value_text)
+                    .size(14.0)
+                    .strong()
+                    .color(colors::PINK_BRIGHT),
+            );
+        });
+        result
+    })
+    .inner
+}

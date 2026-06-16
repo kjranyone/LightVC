@@ -28,6 +28,7 @@ pub fn render(
     bypass: &mut bool,
     mode: &mut lightvc_core::converter::LatencyMode,
     metrics: &RtMetrics,
+    knob_tex: Option<&egui::TextureHandle>,
     mut on_load: impl FnMut(&str, &str),
     mut on_ensure_thread: impl FnMut(),
     on_control: impl Fn(RtControl),
@@ -136,27 +137,78 @@ pub fn render(
 
     ui.add_space(12.0);
 
-    // Quality mode
+    // Quality mode — knob or pill buttons
     ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new("Mode")
-                .size(13.0)
-                .color(crate::theme::colors::TEXT_DIM),
-        );
-        let old = *mode;
-        let mode_names = [
-            (lightvc_core::converter::LatencyMode::Strict, "Strict"),
-            (lightvc_core::converter::LatencyMode::Balanced, "Balanced"),
-            (lightvc_core::converter::LatencyMode::Quality, "Quality"),
-        ];
-        for (m, name) in &mode_names {
-            let selected = *mode == *m;
-            if crate::theme::pill_button(ui, name, selected) {
-                *mode = *m;
+        if let Some(tex) = knob_tex {
+            // Knob: Strict=0.0, Balanced=0.5, Quality=1.0
+            let mode_val = match *mode {
+                lightvc_core::converter::LatencyMode::Strict => 0.0,
+                lightvc_core::converter::LatencyMode::Balanced => 0.5,
+                lightvc_core::converter::LatencyMode::Quality => 1.0,
+            };
+            let mode_name = match *mode {
+                lightvc_core::converter::LatencyMode::Strict => "Strict",
+                lightvc_core::converter::LatencyMode::Balanced => "Balanced",
+                lightvc_core::converter::LatencyMode::Quality => "Quality",
+            };
+
+            let id = ui.make_persistent_id("rt_mode_knob");
+            if let Some(new_val) = crate::theme::knob(ui, tex, id, mode_val, "Mode") {
+                let old_mode = *mode;
+                *mode = if new_val < 0.33 {
+                    lightvc_core::converter::LatencyMode::Strict
+                } else if new_val < 0.67 {
+                    lightvc_core::converter::LatencyMode::Balanced
+                } else {
+                    lightvc_core::converter::LatencyMode::Quality
+                };
+                if *mode != old_mode {
+                    on_control(RtControl::SetMode(*mode));
+                }
             }
-        }
-        if *mode != old {
-            on_control(RtControl::SetMode(*mode));
+
+            ui.vertical(|ui| {
+                ui.label(
+                    egui::RichText::new("Mode")
+                        .size(13.0)
+                        .color(crate::theme::colors::TEXT_DIM),
+                );
+                ui.label(
+                    egui::RichText::new(mode_name)
+                        .size(16.0)
+                        .strong()
+                        .color(crate::theme::colors::PINK_BRIGHT),
+                );
+                ui.label(
+                    egui::RichText::new(match *mode {
+                        lightvc_core::converter::LatencyMode::Strict => "0ms lookahead",
+                        lightvc_core::converter::LatencyMode::Balanced => "~40ms lookahead",
+                        lightvc_core::converter::LatencyMode::Quality => "~80ms lookahead",
+                    })
+                    .size(10.0)
+                    .color(crate::theme::colors::TEXT_MUTED),
+                );
+            });
+        } else {
+            // Fallback: pill buttons
+            ui.label(
+                egui::RichText::new("Mode")
+                    .size(13.0)
+                    .color(crate::theme::colors::TEXT_DIM),
+            );
+            let old = *mode;
+            for (m, name) in [
+                (lightvc_core::converter::LatencyMode::Strict, "Strict"),
+                (lightvc_core::converter::LatencyMode::Balanced, "Balanced"),
+                (lightvc_core::converter::LatencyMode::Quality, "Quality"),
+            ] {
+                if crate::theme::pill_button(ui, name, *mode == m) {
+                    *mode = m;
+                }
+            }
+            if *mode != old {
+                on_control(RtControl::SetMode(*mode));
+            }
         }
     });
 

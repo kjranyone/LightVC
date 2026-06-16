@@ -287,6 +287,9 @@ impl LightVcApp {
                 let mut rt_mode = self.rt_mode;
                 let metrics = self.rt_metrics.clone();
                 let file_dialog = &mut self.file_dialog;
+                let knob_tex = self.asset_cache.knob(ctx);
+                let knob_id = knob_tex.id();
+                let knob_tex_ref = knob_tex.clone();
 
                 egui::CentralPanel::default().show(ctx, |ui| {
                     crate::realtime_tab::render(
@@ -300,6 +303,7 @@ impl LightVcApp {
                         &mut rt_bypass,
                         &mut rt_mode,
                         &metrics,
+                        Some(&knob_tex_ref),
                         |c, cfg| Self::load_converter_static(&state, c, cfg),
                         || Self::ensure_rt_thread_static(&state),
                         |ctrl| Self::send_control(&state, ctrl),
