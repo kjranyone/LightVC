@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/lightvc-core",
+    "crates/lightvc-audio",
+    "crates/lightvc-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/kjranyone/LightVC"
+
+[workspace.dependencies]
+candle-core = "0.10"
+candle-nn = "0.10"
+candle-transformers = "0.10"
+cpal = "0.18"
+rubato = "0.16"
+rtrb = "0.3"
+crossbeam-channel = "0.5"
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+hound = "3.5"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1

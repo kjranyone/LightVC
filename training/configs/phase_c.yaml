@@ -1,0 +1,38 @@
+# Phase C: Flow matching on TTS corpus
+model:
+  latent_dim: 1024
+  hidden_dim: 256
+  n_conv_blocks: 4
+  speaker_embed_dim: 256
+  enable_timbre: false
+  bottleneck_dim: 256
+  time_embed_dim: 128
+
+training:
+  init_from: checkpoints/phase_b/best.pt
+  batch_size: 4
+  learning_rate: 1.5e-4
+  optimizer_betas: [0.8, 0.99]
+  weight_decay: 0.01
+  lr_scheduler_gamma: 0.9999
+  gradient_clip: 1.0
+  max_steps: 30000
+
+losses:
+  fm_velocity: 1.0
+  latent_l1: 2.0
+  speaker_sim: 1.0
+  content_inv: 0.5
+
+data:
+  sample_rate: 44100
+  latent_frame_rate: 86
+  max_utterance_frames: 400
+  min_utterance_frames: 30
+
+checkpoint:
+  save_every_steps: 5000
+
+hardware:
+  device: auto
+  mixed_precision: none

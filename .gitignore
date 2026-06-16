@@ -1,0 +1,39 @@
+# ===== Build artifacts =====
+/target/
+**/*.rs.bk
+
+# ===== Model weights (large, not for git) =====
+models/*
+!models/.gitkeep
+
+# ===== Training data (generated, not for git) =====
+data/
+training/data/
+training/checkpoints/
+*.npz
+
+# ===== Audio samples (binary, not for git) =====
+samples/**/*.wav
+samples/**/*.flac
+
+# ===== Temporary files =====
+*.log
+*.tmp
+nul
+
+# ===== Python =====
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.ruff_cache/
+*.egg-info/
+
+# ===== IDE / OS =====
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

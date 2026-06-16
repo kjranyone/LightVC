@@ -1,0 +1,11 @@
+[package]
+name = "lightvc-audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cpal.workspace = true
+rubato.workspace = true
+rtrb.workspace = true
+anyhow.workspace = true

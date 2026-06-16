@@ -1,0 +1,19 @@
+[package]
+name = "lightvc-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+candle-core.workspace = true
+candle-nn.workspace = true
+candle-transformers.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+hf-hub = { version = "0.3", optional = true }
+
+[features]
+default = []
+cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
+metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal"]
+hf-hub = ["dep:hf-hub"]
