@@ -1,206 +1,383 @@
 //! Tab 2: Real-time voice conversion.
 //! Mic input → DAC encode → converter → DAC decode → speaker output.
+//!
+//! Contains both UI rendering and the inference thread loop.
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
+use egui_file_dialog::FileDialog;
 
+use crate::app::{RtControl, RtMetrics};
 use crate::widgets;
 use crate::app::AppState;
 
-#[derive(Clone, Debug, Default)]
-struct Metrics {
-    input_rms: f32,
-    output_rms: f32,
-    latency_ms: f32,
-    rtf: f32,
-}
-
-enum ControlMsg {
-    Start,
-    Stop,
-    SetMode(lightvc_core::converter::LatencyMode),
-    Bypass(bool),
-}
-
-pub fn render(ui: &mut egui::Ui, ctx: &egui::Context, state: &Arc<Mutex<AppState>>) {
-    let metrics_rx = ctx.data_mut(|d| {
-        d.get_temp_mut_or_insert_with::<Option<Receiver<Metrics>>>("rt_metrics_rx".into(), || None)
-            .clone()
-    });
-
-    let control_tx = ctx.data_mut(|d| {
-        d.get_temp_mut_or_insert_with::<Option<Sender<ControlMsg>>>("rt_control_tx".into(), || None)
-            .clone()
-    });
-
-    let running = ctx.data_mut(|d| {
-        d.get_temp_mut_or_insert_with("rt_running".into(), || false)
-            .clone()
-    });
-
-    let bypass = ctx.data_mut(|d| {
-        d.get_temp_mut_or_insert_with("rt_bypass".into(), || false)
-            .clone()
-    });
-
-    let selected_mode = ctx.data_mut(|d| {
-        d.get_temp_mut_or_insert_with("rt_mode".into(), || {
-            lightvc_core::converter::LatencyMode::Balanced
-        })
-        .clone()
-    });
-
-    let mut metrics = Metrics::default();
-    if let Some(ref rx) = metrics_rx {
-        while let Ok(m) = rx.try_recv() {
-            metrics = m;
-        }
-    }
-
+/// Render the realtime tab.
+#[allow(clippy::too_many_arguments)]
+pub fn render(
+    ui: &mut egui::Ui,
+    ctx: &egui::Context,
+    file_dialog: &mut FileDialog,
+    state: &Arc<Mutex<AppState>>,
+    conv_path: &mut String,
+    conv_cfg: &mut String,
+    running: &mut bool,
+    bypass: &mut bool,
+    mode: &mut lightvc_core::converter::LatencyMode,
+    metrics: &RtMetrics,
+    mut on_load: impl FnMut(&str, &str),
+    mut on_ensure_thread: impl FnMut(),
+    on_control: impl Fn(RtControl),
+) {
     ui.heading("Real-time Voice Conversion");
     ui.add_space(8.0);
 
-    // Model setup
-    let (has_converter, has_pipeline) = {
-        let s = state.lock().unwrap();
-        (s.converter_weights.is_some(), s.pipeline.is_some())
-    };
+    let has_pipeline = state.lock().unwrap().pipeline.is_some();
 
-    if !has_converter {
-        ui.horizontal(|ui| {
-            ui.label("Converter weights:");
-            if ui.button("Browse...").clicked() {
-                // TODO: file dialog for converter weights
-            }
-        });
-        ui.colored_label(
-            egui::Color32::from_rgb(200, 180, 80),
-            "Load converter weights to enable VC.",
-        );
-    } else {
-        // Status
-        ui.horizontal(|ui| {
-            widgets::status_dot(ui, running);
-            let label = if running {
-                if bypass {
-                    "BYPASS"
-                } else {
-                    "LIVE"
+    // --- Model Setup Section ---
+    if !has_pipeline {
+        ui.group(|ui| {
+            ui.label("Load Model");
+            ui.add_space(4.0);
+
+            ui.horizontal(|ui| {
+                ui.label("Converter:");
+                ui.text_edit_singleline(conv_path);
+                if ui.button("Browse").clicked() {
+                    file_dialog.pick_file();
+                    ctx.data_mut(|d| d.insert_temp("rt_pick".into(), "converter"));
                 }
-            } else {
-                "STOPPED"
-            };
-            let color = if running {
-                if bypass {
-                    egui::Color32::from_rgb(200, 200, 80)
-                } else {
-                    egui::Color32::from_rgb(80, 200, 80)
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Config:");
+                ui.text_edit_singleline(conv_cfg);
+                if ui.button("Browse").clicked() {
+                    file_dialog.pick_file();
+                    ctx.data_mut(|d| d.insert_temp("rt_pick".into(), "config"));
                 }
-            } else {
-                egui::Color32::from_rgb(160, 160, 160)
-            };
-            ui.colored_label(color, label);
-        });
+            });
 
-        ui.add_space(8.0);
-
-        // Level meters
-        widgets::level_meter(ui, metrics.input_rms, "Input");
-        widgets::level_meter(ui, metrics.output_rms, "Output");
-
-        ui.add_space(4.0);
-        ui.label(format!(
-            "Latency: {:.0} ms | RTF: {:.2}",
-            metrics.latency_ms, metrics.rtf
-        ));
-
-        ui.add_space(8.0);
-
-        // Quality mode
-        ui.horizontal(|ui| {
-            ui.label("Mode:");
-            let mut mode = selected_mode;
-            ui.radio_value(
-                &mut mode,
-                lightvc_core::converter::LatencyMode::Strict,
-                "Strict",
-            );
-            ui.radio_value(
-                &mut mode,
-                lightvc_core::converter::LatencyMode::Balanced,
-                "Balanced",
-            );
-            ui.radio_value(
-                &mut mode,
-                lightvc_core::converter::LatencyMode::Quality,
-                "Quality",
-            );
-            if mode != selected_mode {
-                let _ = control_tx
-                    .as_ref()
-                    .map(|tx| tx.send(ControlMsg::SetMode(mode)));
+            ui.add_space(4.0);
+            if ui.button("Load Converter").clicked() && !conv_path.is_empty() {
+                on_load(conv_path, conv_cfg);
             }
         });
 
-        ui.add_space(8.0);
-
-        // Bypass + Start/Stop
-        let mut bp = bypass;
-        ui.checkbox(&mut bp, "Bypass (monitor only)");
-        if bp != bypass {
-            let _ = control_tx
-                .as_ref()
-                .map(|tx| tx.send(ControlMsg::Bypass(bp)));
+        // Handle file dialog
+        if let Some(path) = file_dialog.take_picked() {
+            let pick = ctx.data_mut(|d| d.get_temp::<String>("rt_pick".into()).unwrap_or_default());
+            match pick.as_str() {
+                "converter" => *conv_path = path.to_string_lossy().into_owned(),
+                "config" => *conv_cfg = path.to_string_lossy().into_owned(),
+                _ => {}
+            }
         }
-
-        ui.add_space(8.0);
-
-        ui.horizontal(|ui| {
-            if !running {
-                ui.add_enabled_ui(has_pipeline, |ui| {
-                    if ui.button("▶ Start").clicked() {
-                        let _ = control_tx.as_ref().map(|tx| tx.send(ControlMsg::Start));
-                    }
-                });
-            } else {
-                if ui.button("■ Stop").clicked() {
-                    let _ = control_tx.as_ref().map(|tx| tx.send(ControlMsg::Stop));
-                }
-            }
-        });
-
-        // Audio devices
-        ui.add_space(12.0);
-        ui.collapsing("Audio Devices", |ui| {
-            let inputs = lightvc_audio::DuplexStream::list_input_devices().unwrap_or_default();
-            let outputs = lightvc_audio::DuplexStream::list_output_devices().unwrap_or_default();
-            ui.label("Inputs:");
-            for d in &inputs {
-                ui.label(format!(
-                    "  {} ({}Hz, {}ch)",
-                    d.name, d.sample_rate, d.channels
-                ));
-            }
-            ui.label("Outputs:");
-            for d in &outputs {
-                ui.label(format!(
-                    "  {} ({}Hz, {}ch)",
-                    d.name, d.sample_rate, d.channels
-                ));
-            }
-            // Show ASIO availability
-            let host = cpal::default_host();
-            ui.label(format!("Host: {}", host.id().name()));
-        });
+        return;
     }
 
-    // Persist state
-    ctx.data_mut(|d| {
-        d.insert_temp("rt_running".into(), running);
-        d.insert_temp("rt_bypass".into(), bypass);
-        d.insert_temp("rt_mode".into(), selected_mode);
+    // --- Pipeline loaded: realtime UI ---
+
+    on_ensure_thread();
+
+    // Status
+    ui.horizontal(|ui| {
+        widgets::status_dot(ui, *running);
+        let label = if *running {
+            if *bypass {
+                "BYPASS"
+            } else {
+                "LIVE"
+            }
+        } else {
+            "STOPPED"
+        };
+        let color = if *running {
+            if *bypass {
+                egui::Color32::from_rgb(200, 200, 80)
+            } else {
+                egui::Color32::from_rgb(80, 200, 80)
+            }
+        } else {
+            egui::Color32::from_rgb(160, 160, 160)
+        };
+        ui.colored_label(color, label);
     });
+
+    ui.add_space(8.0);
+
+    // Level meters
+    widgets::level_meter(ui, metrics.input_rms, "Input");
+    widgets::level_meter(ui, metrics.output_rms, "Output");
+
+    ui.add_space(4.0);
+    ui.label(format!(
+        "Latency: {:.0} ms | RTF: {:.2}",
+        metrics.latency_ms, metrics.rtf
+    ));
+
+    ui.add_space(8.0);
+
+    // Quality mode
+    ui.horizontal(|ui| {
+        ui.label("Mode:");
+        let old = *mode;
+        ui.radio_value(mode, lightvc_core::converter::LatencyMode::Strict, "Strict");
+        ui.radio_value(
+            mode,
+            lightvc_core::converter::LatencyMode::Balanced,
+            "Balanced",
+        );
+        ui.radio_value(
+            mode,
+            lightvc_core::converter::LatencyMode::Quality,
+            "Quality",
+        );
+        if *mode != old {
+            on_control(RtControl::SetMode(*mode));
+        }
+    });
+
+    ui.add_space(8.0);
+
+    // Bypass
+    let old_bp = *bypass;
+    ui.checkbox(bypass, "Bypass (monitor only)");
+    if *bypass != old_bp {
+        on_control(RtControl::Bypass(*bypass));
+    }
+
+    ui.add_space(8.0);
+
+    // Start/Stop
+    ui.horizontal(|ui| {
+        if !*running {
+            if ui.button("Start").clicked() {
+                on_control(RtControl::Start);
+                *running = true;
+            }
+        } else {
+            if ui.button("Stop").clicked() {
+                on_control(RtControl::Stop);
+                *running = false;
+            }
+        }
+    });
+
+    ui.add_space(12.0);
+
+    // Audio devices
+    ui.collapsing("Audio Devices", |ui| {
+        let inputs = lightvc_audio::DuplexStream::list_input_devices().unwrap_or_default();
+        let outputs = lightvc_audio::DuplexStream::list_output_devices().unwrap_or_default();
+        ui.label("Inputs:");
+        for d in &inputs {
+            ui.label(format!(
+                "  {} ({}Hz, {}ch)",
+                d.name, d.sample_rate, d.channels
+            ));
+        }
+        ui.label("Outputs:");
+        for d in &outputs {
+            ui.label(format!(
+                "  {} ({}Hz, {}ch)",
+                d.name, d.sample_rate, d.channels
+            ));
+        }
+    });
+}
+
+// =========================================================================
+// Inference thread
+// =========================================================================
+
+pub fn inference_loop(
+    pipeline: Arc<Mutex<lightvc_core::pipeline::VcPipeline>>,
+    control_rx: Receiver<RtControl>,
+    metrics_tx: Sender<RtMetrics>,
+) {
+    let mut running = false;
+    let mut bypass = false;
+    let mut duplex: Option<lightvc_audio::DuplexStream> = None;
+    let mut capture_consumer: Option<rtrb::Consumer<f32>> = None;
+    let mut playback_producer: Option<rtrb::Producer<f32>> = None;
+    let mut resampler_up: Option<lightvc_audio::Resampler> = None;
+    let mut resampler_down: Option<lightvc_audio::Resampler> = None;
+    let mut device_sr: u32 = 44_100;
+
+    loop {
+        while let Ok(msg) = control_rx.try_recv() {
+            match msg {
+                RtControl::Start => {
+                    if running {
+                        continue;
+                    }
+                    match start_audio(
+                        &mut capture_consumer,
+                        &mut playback_producer,
+                        &mut device_sr,
+                    ) {
+                        Ok(d) => {
+                            if let Ok(r1) = lightvc_audio::Resampler::new(device_sr as usize, 4096)
+                            {
+                                resampler_up = Some(r1);
+                            }
+                            if let Ok(r2) = lightvc_audio::Resampler::new(device_sr as usize, 4096)
+                            {
+                                resampler_down = Some(r2);
+                            }
+                            duplex = Some(d);
+                            running = true;
+                        }
+                        Err(e) => eprintln!("Audio: {e}"),
+                    }
+                }
+                RtControl::Stop => {
+                    running = false;
+                    duplex = None;
+                    capture_consumer = None;
+                    playback_producer = None;
+                    resampler_up = None;
+                    resampler_down = None;
+                }
+                RtControl::SetMode(mode) => {
+                    if let Ok(mut p) = pipeline.lock() {
+                        p.codec_mut().set_chunk_mode(match mode {
+                            lightvc_core::converter::LatencyMode::Strict => {
+                                lightvc_core::streaming::ChunkMode::Strict
+                            }
+                            lightvc_core::converter::LatencyMode::Balanced => {
+                                lightvc_core::streaming::ChunkMode::Balanced
+                            }
+                            lightvc_core::converter::LatencyMode::Quality => {
+                                lightvc_core::streaming::ChunkMode::Quality
+                            }
+                        });
+                    }
+                }
+                RtControl::Bypass(b) => bypass = b,
+                RtControl::LoadReference(pcm) => {
+                    if let Ok(mut p) = pipeline.lock() {
+                        let _ = p.set_target(&pcm);
+                    }
+                }
+            }
+        }
+
+        if !running {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            continue;
+        }
+
+        let Some(cap_rx) = capture_consumer.as_mut() else {
+            continue;
+        };
+        let Some(pb_tx) = playback_producer.as_mut() else {
+            continue;
+        };
+
+        let chunk_sz = pipeline.lock().map(|p| p.chunk_samples()).unwrap_or(2048);
+        let needed = resampler_up
+            .as_ref()
+            .map(|r| r.input_frames_needed_up())
+            .unwrap_or(chunk_sz);
+
+        let mut cap = Vec::with_capacity(needed);
+        while cap.len() < needed {
+            match cap_rx.pop() {
+                Ok(s) => cap.push(s),
+                Err(_) => break,
+            }
+        }
+        if cap.len() < needed.min(512) {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            continue;
+        }
+        if cap.len() < needed {
+            cap.resize(needed, 0.0);
+        }
+
+        let t0 = Instant::now();
+
+        let pcm_44k = if device_sr != 44_100 {
+            resampler_up
+                .as_mut()
+                .and_then(|r| r.process_up(&cap).ok())
+                .unwrap_or_else(|| cap.clone())
+        } else {
+            cap.clone()
+        };
+
+        let mut chunk = pcm_44k;
+        if chunk.len() < chunk_sz {
+            chunk.resize(chunk_sz, 0.0);
+        } else if chunk.len() > chunk_sz {
+            chunk.truncate(chunk_sz);
+        }
+
+        let out_44k = if bypass {
+            chunk
+        } else {
+            match pipeline.lock() {
+                Ok(mut p) => p.process_chunk(&chunk).unwrap_or_else(|e| {
+                    eprintln!("VC: {e}");
+                    chunk
+                }),
+                Err(_) => chunk,
+            }
+        };
+
+        let in_rms = widgets::rms(&cap);
+        let out_rms = widgets::rms(&out_44k);
+        let elapsed = t0.elapsed();
+
+        let out_dev = if device_sr != 44_100 {
+            resampler_down
+                .as_mut()
+                .and_then(|r| r.process_down(&out_44k).ok())
+                .unwrap_or(out_44k)
+        } else {
+            out_44k
+        };
+
+        for s in &out_dev {
+            let _ = pb_tx.push(*s);
+        }
+
+        let dur_ms = (out_dev.len() as f32 / device_sr as f32) * 1000.0;
+        let rtf = if dur_ms > 0.0 {
+            elapsed.as_secs_f32() / (dur_ms / 1000.0)
+        } else {
+            0.0
+        };
+        let _ = metrics_tx.send(RtMetrics {
+            input_rms: in_rms,
+            output_rms: out_rms,
+            latency_ms: dur_ms,
+            rtf,
+        });
+    }
+}
+
+fn start_audio(
+    cap: &mut Option<rtrb::Consumer<f32>>,
+    pb: &mut Option<rtrb::Producer<f32>>,
+    sr: &mut u32,
+) -> anyhow::Result<lightvc_audio::DuplexStream> {
+    let input = lightvc_audio::DuplexStream::default_input()?;
+    let output = lightvc_audio::DuplexStream::default_output()?;
+    *sr = input
+        .default_input_config()
+        .map(|c| c.sample_rate())
+        .unwrap_or(44_100);
+
+    let (tx, rx1) = rtrb::RingBuffer::new(1 << 16);
+    let (tx2, rx2) = rtrb::RingBuffer::new(1 << 16);
+    let d = lightvc_audio::DuplexStream::start(&input, &output, tx, rx2)?;
+    *cap = Some(rx1);
+    *pb = Some(tx2);
+    Ok(d)
 }
