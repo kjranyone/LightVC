@@ -29,8 +29,18 @@ pub enum Command {
     Roundtrip(RoundtripCmd),
     /// Apply converter to a WAV file (offline processing).
     Convert(ConvertCmd),
-    /// Real-time streaming VC with GUI.
-    Live(LiveCmd),
+    /// Launch desktop GUI (3 tabs: offline/realtime/catalog).
+    Gui(GuiCmd),
+}
+
+#[derive(Parser)]
+pub struct GuiCmd {
+    #[arg(long, env = "LIGHTVC_DAC_WEIGHTS")]
+    pub dac_weights: PathBuf,
+    #[arg(long)]
+    pub cuda: bool,
+    #[arg(long)]
+    pub metal: bool,
 }
 
 #[derive(Parser)]
@@ -73,27 +83,6 @@ pub struct ConvertCmd {
 
     #[arg(long, default_value = "balanced")]
     pub mode: String,
-
-    #[arg(long)]
-    pub cuda: bool,
-
-    #[arg(long)]
-    pub metal: bool,
-}
-
-#[derive(Parser)]
-pub struct LiveCmd {
-    #[arg(long, env = "LIGHTVC_DAC_WEIGHTS")]
-    pub dac_weights: PathBuf,
-
-    #[arg(long, env = "LIGHTVC_CONVERTER_WEIGHTS")]
-    pub converter_weights: Option<PathBuf>,
-
-    #[arg(long)]
-    pub converter_config: Option<PathBuf>,
-
-    #[arg(long)]
-    pub reference: Option<PathBuf>,
 
     #[arg(long)]
     pub cuda: bool,
@@ -250,74 +239,17 @@ pub fn run_convert(cmd: ConvertCmd) -> Result<()> {
     Ok(())
 }
 
-pub fn run_live(cmd: LiveCmd) -> Result<()> {
-    println!("LightVC-X Live Mode");
+pub fn run_gui(cmd: GuiCmd) -> Result<()> {
+    println!("LightVC-X GUI starting...");
 
-    let device = select_device(cmd.cuda, cmd.metal)?;
-
-    println!("\nInput devices:");
-    for d in lightvc_audio::DuplexStream::list_input_devices()? {
-        println!("  {} ({} Hz, {}ch)", d.name, d.sample_rate, d.channels);
-    }
-    println!("\nOutput devices:");
-    for d in lightvc_audio::DuplexStream::list_output_devices()? {
-        println!("  {} ({} Hz, {}ch)", d.name, d.sample_rate, d.channels);
-    }
-
-    let dac_config = DacConfig::default();
-
-    let converter = if let Some(conv_path) = &cmd.converter_weights {
-        if conv_path.exists() {
-            let converter_config = if let Some(cfg_path) = &cmd.converter_config {
-                let cfg_str = std::fs::read_to_string(cfg_path)?;
-                serde_json::from_str(&cfg_str)?
-            } else {
-                ConverterConfig::default()
-            };
-            let vb = lightvc_core::weights::load_varbuilder(conv_path, DType::F32, &device)?;
-            Some(AnyConverter::new(converter_config, vb)?)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    let converter = converter.ok_or_else(|| {
-        anyhow!(
-            "Converter weights not found. For Phase 0 DAC-only testing, use 'roundtrip' subcommand."
-        )
-    })?;
-
-    let mut pipeline = VcPipeline::new(
-        &cmd.dac_weights,
-        &dac_config,
-        converter,
-        LatencyMode::Balanced,
-        device,
-    )?;
-
-    if let Some(ref_path) = &cmd.reference {
-        let (ref_pcm, ref_sr) = load_wav_mono(ref_path)?;
-        let ref_44k = if ref_sr != 44_100 {
-            resample_to_44100(&ref_pcm, ref_sr)?
-        } else {
-            ref_pcm
-        };
-        pipeline.set_target(&ref_44k)?;
-        println!("Target voice loaded from {}", ref_path.display());
-    } else {
-        println!("No reference provided. Running in bypass mode.");
-    }
-
-    let mut app = crate::app::LightVcApp::new(pipeline)?;
+    let mut app = crate::app::LightVcApp::new(cmd.dac_weights);
     let opts = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([600.0, 400.0])
+            .with_inner_size([800.0, 600.0])
             .with_title("LightVC-X"),
         ..Default::default()
     };
-    eframe::run_simple_native("LightVC-X", opts, move |ctx, _ui| {
+    eframe::run_simple_native("LightVC-X", opts, move |ctx, _frame| {
         app.render(ctx);
     })?;
 

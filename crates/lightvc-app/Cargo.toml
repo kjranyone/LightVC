@@ -14,11 +14,14 @@ serde_json = "1.0"
 hound.workspace = true
 clap = { version = "4.5", features = ["derive", "env"] }
 eframe = "0.34"
+egui-file-dialog = "0.10"
+rfd = "0.15"
 crossbeam-channel.workspace = true
 rtrb.workspace = true
-cpal.workspace = true
+cpal = { workspace = true }
 
 [features]
 default = []
 cuda = ["lightvc-core/cuda"]
 metal = ["lightvc-core/metal"]
+asio = ["cpal/asio"]
