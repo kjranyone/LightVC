@@ -104,6 +104,11 @@ struct LightVcPlugin {
     metrics_rx: Receiver<Metrics>,
     pipeline_ready: Arc<AtomicBool>,
     metrics: Arc<Mutex<Metrics>>,
+    // Ring buffer handles for process() (host audio thread)
+    capture_tx: Option<rtrb::Producer<f32>>,
+    playback_rx: Option<rtrb::Consumer<f32>>,
+    // Latency in samples (reported to host)
+    latency_samples: u32,
 }
 
 impl Default for LightVcPlugin {
@@ -126,6 +131,9 @@ impl Default for LightVcPlugin {
             metrics_rx,
             pipeline_ready,
             metrics,
+            capture_tx: None,
+            playback_rx: None,
+            latency_samples: 0,
         }
     }
 }
@@ -161,126 +169,124 @@ impl Plugin for LightVcPlugin {
 
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
         let params = self.params.clone();
+        let metrics = self.metrics.clone();
+        let ready = self.pipeline_ready.load(Ordering::Relaxed);
 
-        struct EditorState {
+        struct EditorUserState {
             metrics: Arc<Mutex<Metrics>>,
+            params: Arc<LightVcParams>,
             ready: bool,
         }
 
-        let state = EditorState {
-            metrics: self.metrics.clone(),
-            ready: self.pipeline_ready.load(Ordering::Relaxed),
-        };
-
         create_egui_editor(
             self.params.editor_state.clone(),
-            state,
+            EditorUserState {
+                metrics,
+                params,
+                ready,
+            },
             nice_plug_egui::EguiSettings::default(),
             |_ctx, _queue, _state| {},
             move |ui, setter, _queue, state| {
                 let m = state.metrics.lock().unwrap().clone();
-                let params = params.clone();
+                let params = state.params.clone();
 
                 ui.heading("LightVC-X");
                 ui.add_space(8.0);
 
-                let status_color = if state.ready {
+                let color = if state.ready {
                     egui::Color32::from_rgb(80, 200, 80)
                 } else {
                     egui::Color32::from_rgb(160, 160, 160)
                 };
-                ui.colored_label(status_color, if state.ready { "● READY" } else { "● NO MODEL" });
+                ui.label(
+                    egui::RichText::new(if state.ready {
+                        "● READY"
+                    } else {
+                        "● NO MODEL"
+                    })
+                    .color(color)
+                    .strong(),
+                );
 
                 ui.add_space(8.0);
 
                 if state.ready {
-                    let in_db = if m.input_rms > 0.0 { 20.0 * m.input_rms.log10() } else { -99.0 };
-                    let out_db = if m.output_rms > 0.0 { 20.0 * m.output_rms.log10() } else { -99.0 };
-                    ui.label(format!("In: {in_db:+.0}dB | Out: {out_db:+.0}dB | RTF: {:.2}", m.rtf));
+                    let in_db = if m.input_rms > 0.0 {
+                        20.0 * m.input_rms.log10()
+                    } else {
+                        -99.0
+                    };
+                    let out_db = if m.output_rms > 0.0 {
+                        20.0 * m.output_rms.log10()
+                    } else {
+                        -99.0
+                    };
+                    ui.label(format!(
+                        "In: {in_db:+.0}dB | Out: {out_db:+.0}dB | RTF: {:.2}",
+                        m.rtf
+                    ));
                 }
 
                 ui.add_space(12.0);
 
                 ui.collapsing("Parameters", |ui| {
-                    if ui.button(if params.bypass.value() { "Unbypass" } else { "Bypass" }).clicked() {
+                    if ui
+                        .button(if params.bypass.value() {
+                            "Unbypass"
+                        } else {
+                            "Bypass"
+                        })
+                        .clicked()
+                    {
                         setter.set_parameter(&params.bypass, !params.bypass.value());
                     }
                     ui.add_space(4.0);
                     ui.label(format!("Mix: {:.0}%", params.mix.value()));
                     ui.label(format!("Gain: {:+.1}dB", params.output_gain.value()));
                     let mode = params.mode.value();
-                    ui.label(format!("Mode: {}", match mode { 0 => "Strict", 1 => "Balanced", 2 => "Quality", _ => "?" }));
-                });
-            },
-        )
-    }
-
-                    ui.add_space(12.0);
-
-                    ui.collapsing("Parameters", |ui| {
-                        ui.label("Mode:");
-                        ui.radio_value(&mut 0, 0, "Strict");
-                        ui.radio_value(&mut 1, 1, "Balanced");
-                        ui.radio_value(&mut 2, 2, "Quality");
-                        ui.add_space(4.0);
-                        ui.label(format!("Mix: {:.0}%", params.mix.value()));
-                        ui.label(format!("Gain: {:+.1}dB", params.output_gain.value()));
-                        if ui
-                            .button(if params.bypass.value() {
-                                "Unbypass"
-                            } else {
-                                "Bypass"
-                            })
-                            .clicked()
-                        {
-                            setter.set_parameter(&params.bypass, !params.bypass.value());
+                    ui.label(format!(
+                        "Mode: {}",
+                        match mode {
+                            0 => "Strict",
+                            1 => "Balanced",
+                            2 => "Quality",
+                            _ => "?",
                         }
-                    });
-
-                    ui.add_space(8.0);
-
-                    ui.collapsing("Model Info", |ui| {
-                        let model = params.model_path.lock().unwrap().clone();
-                        let dac = params.dac_path.lock().unwrap().clone();
-                        ui.label(format!(
-                            "DAC: {}",
-                            if dac.is_empty() { "(not set)" } else { &dac }
-                        ));
-                        ui.label(format!(
-                            "Converter: {}",
-                            if model.is_empty() {
-                                "(not set)"
-                            } else {
-                                &model
-                            }
-                        ));
-                    });
+                    ));
                 });
-
-                egui_ctx.request_repaint();
             },
         )
-        .into()
     }
 
     fn initialize(
         &mut self,
         _audio_io_layout: &AudioIOLayout,
         buffer_config: &BufferConfig,
-        _context: &mut impl InitContext<Self>,
+        context: &mut impl InitContext<Self>,
     ) -> bool {
         let sr = buffer_config.sample_rate;
         let cap = (sr as usize / 5).max(16384);
         let (capture_tx, capture_rx) = rtrb::RingBuffer::new(cap);
         let (playback_tx, playback_rx) = rtrb::RingBuffer::new(cap);
 
-        // Store capture_tx and playback_rx in a thread-safe shared location
-        // that process() can access. We'll use a shared Arc<Mutex<Option<>>>.
-        // For now, pass ring buffer ends to inference thread.
+        // Keep write/playback ends in plugin for process()
+        self.capture_tx = Some(capture_tx);
+        self.playback_rx = Some(playback_rx);
+
+        // Send read/playback-write ends to inference thread
         let _ = self.task_tx.send(Task::SetRingBuffers {
             capture_rx,
             playback_tx,
         });
+
+        // Report initial latency (balanced mode: ~4 chunks at 44100Hz)
+        // chunk = 4 * 512 = 2048 samples at 44100Hz
+        // Rescaled to host sample rate
+        let chunk_44k = 2048.0_f32;
+        let latency_44k = chunk_44k * 3.0; // 3 chunks of buffer + processing
+        self.latency_samples = (latency_44k * sr / 44100.0) as u32;
+        context.set_latency_samples(self.latency_samples);
 
         let model = self.params.model_path.lock().unwrap().clone();
         let dac = self.params.dac_path.lock().unwrap().clone();
@@ -309,10 +315,12 @@ impl Plugin for LightVcPlugin {
         }
 
         let bypass = self.params.bypass.value();
+        let mix = self.params.mix.smoothed.next() / 100.0;
         let gain_db = self.params.output_gain.smoothed.next();
         let gain_linear = 10.0f32.powf(gain_db / 20.0);
 
         if bypass || !self.pipeline_ready.load(Ordering::Relaxed) {
+            // Bypass: dry pass-through with gain
             for channel_samples in buffer.iter_samples() {
                 for sample in channel_samples {
                     *sample *= gain_linear;
@@ -321,14 +329,18 @@ impl Plugin for LightVcPlugin {
             return ProcessStatus::Normal;
         }
 
-        // TODO: ring buffer push/pop
-        // The ring buffer handles are owned by the inference thread now.
-        // Need a different approach: keep tx/rx in the Plugin, only share
-        // via Arc. This is a design limitation to address.
-        // For now, pass through with gain.
+        let (Some(tx), Some(rx)) = (self.capture_tx.as_mut(), self.playback_rx.as_mut()) else {
+            return ProcessStatus::Normal;
+        };
+
+        // Push input samples to capture ring buffer, pop from playback ring buffer
         for channel_samples in buffer.iter_samples() {
             for sample in channel_samples {
-                *sample *= gain_linear;
+                let input = *sample;
+                let _ = tx.push(input);
+                let processed = rx.pop().unwrap_or(0.0);
+                // Dry/wet mix + output gain
+                *sample = (input * (1.0 - mix) + processed * mix) * gain_linear;
             }
         }
 
