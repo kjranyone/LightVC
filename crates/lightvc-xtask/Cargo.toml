@@ -1,0 +1,10 @@
+[package]
+name = "lightvc-xtask"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Build tasks: bundle CLAP/VST3, install plugins"
+publish = false
+
+[dependencies]
+anyhow.workspace = true

@@ -5,6 +5,13 @@ members = [
     "crates/lightvc-audio",
     "crates/lightvc-app",
     "crates/lightvc-clap",
+    "crates/lightvc-xtask",
+]
+default-members = [
+    "crates/lightvc-core",
+    "crates/lightvc-audio",
+    "crates/lightvc-app",
+    "crates/lightvc-clap",
 ]
 
 [workspace.package]
