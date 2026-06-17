@@ -1,6 +1,23 @@
-# LightVC
+<p align="center">
+  <img src="crates/lightvc-app/assets/splash/splash.png" alt="LightVC" width="600">
+</p>
 
-Real-time voice conversion as a Rust desktop application and CLAP/VST3 plugin.
+<h1 align="center">LightVC</h1>
+
+<p align="center">
+  Real-time voice conversion as a Rust desktop application and CLAP/VST3 plugin.<br>
+  Zero-shot, teacher-free, flow-matching in DAC latent space.
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#features">Features</a> ·
+  <a href="docs/MANUAL.md">Manual</a> ·
+  <a href="ARCHITECTURE.md">Architecture</a> ·
+  <a href="training/README.md">Training</a>
+</p>
+
+---
 
 ## Overview
 
