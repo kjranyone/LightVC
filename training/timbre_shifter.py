@@ -5,6 +5,10 @@ This is borrowed from Seed-VC's training recipe. It is NOT a neural VC teacher â
 it's a deterministic perturbation of pitch and formants that prevents the
 converter from lazily copying the source speaker's timbre.
 
+Uses pyworld for pitch-synchronous overlap-add (PSOLA) pitch shifting and
+spectral envelope warping for formant shifting â€” the same approach as
+Seed-VC's original recipe.
+
 Reference: Seed-VC (arXiv:2411.09943) uses this to force the model to rely on
 the reference embedding for speaker identity.
 """
@@ -12,62 +16,72 @@ the reference embedding for speaker identity.
 from __future__ import annotations
 
 import numpy as np
+import pyworld as pw
 import torch
 
 
-def psola_pitch_shift(
-    wav: np.ndarray, sr: int, ratio: float, frame_size_ms: float = 40.0
-) -> np.ndarray:
-    """Simple PSOLA-style pitch shifting via resampling + duration correction.
+def _ensure_double(wav: np.ndarray) -> np.ndarray:
+    return wav.astype(np.double)
 
-    Uses WORLD-free approximation: resample to change pitch, then
-    overlap-add with linear interpolation to restore duration.
+
+def psola_pitch_shift(
+    wav: np.ndarray, sr: int, ratio: float, frame_period: float = 5.0
+) -> np.ndarray:
+    """True PSOLA pitch shifting via pyworld.
+
+    Decomposes the signal into F0, spectral envelope, and aperiodicity,
+    scales F0 by ``ratio``, then resynthesises. Duration is preserved.
     """
     if abs(ratio - 1.0) < 0.01:
         return wav
 
-    # Resample (changes both pitch and duration)
-    new_len = int(len(wav) / ratio)
-    indices = np.linspace(0, len(wav) - 1, new_len)
-    shifted = np.interp(indices, np.arange(len(wav)), wav).astype(np.float32)
+    wav_d = _ensure_double(wav)
 
-    # Restore duration via overlap-add
-    if len(shifted) >= len(wav):
-        return shifted[: len(wav)]
-    else:
-        return np.pad(shifted, (0, len(wav) - len(shifted)))
+    f0, t = pw.dio(wav_d, sr, frame_period=frame_period)
+    f0 = pw.stonemask(wav_d, f0, t, sr)
+    sp = pw.cheaptrick(wav_d, f0, t, sr)
+    ap = pw.d4c(wav_d, f0, t, sr)
+
+    f0_shifted = f0 * ratio
+    f0_shifted[np.isnan(f0_shifted)] = 0.0
+
+    shifted = pw.synthesize(f0_shifted, sp, ap, sr, frame_period=frame_period)
+    return shifted[: len(wav)].astype(np.float32)
 
 
-def formant_filter(
-    wav: np.ndarray, sr: int, shift_ratio: float, order: int = 2
+def formant_shift(
+    wav: np.ndarray, sr: int, shift_ratio: float, frame_period: float = 5.0
 ) -> np.ndarray:
-    """Approximate formant shifting via spectral envelope warping.
+    """Formant shifting via spectral envelope warping in log-frequency space.
 
-    Uses a simple approach: high-shelf / low-shelf filtering to shift the
-    perceived formant center frequencies. Not as accurate as true cepstral
-    warping, but fast and sufficient for augmentation.
+    Decomposes with pyworld, warps the spectral envelope on the
+    mel-frequency axis, then resynthesises.
     """
     if abs(shift_ratio - 1.0) < 0.02:
         return wav
 
-    from scipy.signal import butter, sosfilt
+    wav_d = _ensure_double(wav)
 
-    # Split into low and high bands at ~2kHz, amplify/shrink differently
-    crossover = int(2000 * shift_ratio)
-    crossover = max(200, min(sr // 2 - 200, crossover))
+    f0, t = pw.dio(wav_d, sr, frame_period=frame_period)
+    f0 = pw.stonemask(wav_d, f0, t, sr)
+    sp = pw.cheaptrick(wav_d, f0, t, sr)
+    ap = pw.d4c(wav_d, f0, t, sr)
 
-    nyq = sr / 2
-    low_sos = butter(order, crossover / nyq, btype="low", output="sos")
-    high_sos = butter(order, crossover / nyq, btype="high", output="sos")
+    fft_size = sp.shape[1]
+    freqs = np.arange(fft_size) * (sr / (2.0 * (fft_size - 1)))
+    mel_freqs = 1127.0 * np.log1p(freqs / 700.0)
+    shifted_mel = mel_freqs / shift_ratio
+    shifted_hz = 700.0 * (np.expm1(shifted_mel / 1127.0))
 
-    low = sosfilt(low_sos, wav)
-    high = sosfilt(high_sos, wav)
+    indices = np.clip(
+        (shifted_hz / (sr / 2.0) * (fft_size - 1)).astype(int),
+        0,
+        fft_size - 1,
+    )
+    sp_warped = np.ascontiguousarray(sp[:, indices])
 
-    # Scale bands to approximate formant shift
-    low_gain = 1.0 / shift_ratio if shift_ratio > 1 else shift_ratio
-    high_gain = shift_ratio if shift_ratio > 1 else 1.0 / shift_ratio
-
-    return (low * low_gain + high * high_gain).astype(np.float32)
+    shifted = pw.synthesize(f0, sp_warped, ap, sr, frame_period=frame_period)
+    return shifted[: len(wav)].astype(np.float32)
 
 
 def timbre_shift(
@@ -99,15 +113,12 @@ def timbre_shift(
 
     orig_len = len(wav_np)
 
-    # Pitch shift
     pitch_ratio = np.random.uniform(*pitch_ratio_range)
     wav_np = psola_pitch_shift(wav_np, sr, pitch_ratio)
 
-    # Formant shift
     formant_ratio = np.random.uniform(*formant_shift_range)
-    wav_np = formant_filter(wav_np, sr, formant_ratio)
+    wav_np = formant_shift(wav_np, sr, formant_ratio)
 
-    # Ensure same length
     if len(wav_np) != orig_len:
         if len(wav_np) > orig_len:
             wav_np = wav_np[:orig_len]

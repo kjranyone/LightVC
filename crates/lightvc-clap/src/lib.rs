@@ -90,6 +90,8 @@ struct Metrics {
     output_rms: f32,
     rtf: f32,
     pipeline_ready: bool,
+    /// Algorithmic + buffer latency estimate in ms ([06-8]).
+    latency_ms: f32,
     /// "default" | "explicit" | "sidecar" — how the converter config was loaded.
     config_source: String,
     /// Human-readable summary of the active converter config.
@@ -106,6 +108,10 @@ enum Task {
         capture_rx: rtrb::Consumer<f32>,
         playback_tx: rtrb::Producer<f32>,
     },
+    /// Switch latency/quality mode ([06-6]). 0=Strict, 1=Balanced, 2=Quality.
+    SetMode(u8),
+    /// Set host sample rate for resampling ([06-5]).
+    SetSampleRate(u32),
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +129,8 @@ struct LightVcPlugin {
     playback_rx: Option<rtrb::Consumer<f32>>,
     // Latency in samples (reported to host)
     latency_samples: u32,
+    /// Last mode value sent to inference thread ([06-6]).
+    last_mode: u8,
 }
 
 impl Default for LightVcPlugin {
@@ -148,6 +156,7 @@ impl Default for LightVcPlugin {
             capture_tx: None,
             playback_rx: None,
             latency_samples: 0,
+            last_mode: 1, // Balanced
         }
     }
 }
@@ -185,11 +194,13 @@ impl Plugin for LightVcPlugin {
         let params = self.params.clone();
         let metrics = self.metrics.clone();
         let ready = self.pipeline_ready.load(Ordering::Relaxed);
+        let task_tx = self.task_tx.clone();
 
         struct EditorUserState {
             metrics: Arc<Mutex<Metrics>>,
             params: Arc<LightVcParams>,
             ready: bool,
+            task_tx: Sender<Task>,
         }
 
         // Kawaii color constants for the plugin editor
@@ -210,6 +221,7 @@ impl Plugin for LightVcPlugin {
                 metrics,
                 params,
                 ready,
+                task_tx,
             },
             nice_plug_egui::EguiSettings::default(),
             |ctx, _queue, _state| {
@@ -319,6 +331,11 @@ impl Plugin for LightVcPlugin {
                             .size(10.0)
                             .color(TEXT_DIM),
                     );
+                    ui.label(
+                        egui::RichText::new(format!("Latency: {:.0} ms", m.latency_ms))
+                            .size(10.0)
+                            .color(TEXT_DIM),
+                    );
                 }
 
                 ui.add_space(10.0);
@@ -393,6 +410,59 @@ impl Plugin for LightVcPlugin {
                         setter.set_parameter(&params.output_gain, new * 48.0 - 24.0);
                     }
                 });
+
+                ui.add_space(8.0);
+
+                // ---- Model paths ([06-7]) ----
+                ui.collapsing("Model Paths", |ui| {
+                    let mut model = params.model_path.lock().unwrap().clone();
+                    let mut dac = params.dac_path.lock().unwrap().clone();
+                    let mut config = params.config_path.lock().unwrap().clone();
+
+                    ui.label(
+                        egui::RichText::new("Converter (.safetensors)")
+                            .size(9.0)
+                            .color(TEXT_DIM),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut model)
+                            .desired_width(360.0)
+                            .text_color(TEXT),
+                    );
+                    ui.label(
+                        egui::RichText::new("DAC (.safetensors)")
+                            .size(9.0)
+                            .color(TEXT_DIM),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut dac)
+                            .desired_width(360.0)
+                            .text_color(TEXT),
+                    );
+                    ui.label(
+                        egui::RichText::new("Config JSON (optional — auto-detected if empty)")
+                            .size(9.0)
+                            .color(TEXT_DIM),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut config)
+                            .desired_width(360.0)
+                            .text_color(TEXT),
+                    );
+
+                    if ui.button("Load Models").clicked() {
+                        *params.model_path.lock().unwrap() = model.clone();
+                        *params.dac_path.lock().unwrap() = dac.clone();
+                        *params.config_path.lock().unwrap() = config.clone();
+                        if !model.is_empty() && !dac.is_empty() {
+                            let _ = state.task_tx.send(Task::LoadModels {
+                                dac_path: dac,
+                                converter_path: model,
+                                config_path: config,
+                            });
+                        }
+                    }
+                });
             },
         )
     }
@@ -417,6 +487,8 @@ impl Plugin for LightVcPlugin {
             capture_rx,
             playback_tx,
         });
+        // Inform inference thread of host sample rate for resampling ([06-5]).
+        let _ = self.task_tx.send(Task::SetSampleRate(sr as u32));
 
         // Report initial latency (balanced mode: ~4 chunks at 44100Hz)
         // chunk = 4 * 512 = 2048 samples at 44100Hz
@@ -459,6 +531,13 @@ impl Plugin for LightVcPlugin {
         let gain_db = self.params.output_gain.smoothed.next();
         let gain_linear = 10.0f32.powf(gain_db / 20.0);
 
+        // Propagate mode changes to the inference thread ([06-6]).
+        let mode_val = self.params.mode.value() as u8;
+        if mode_val != self.last_mode {
+            self.last_mode = mode_val;
+            let _ = self.task_tx.send(Task::SetMode(mode_val));
+        }
+
         if bypass || !self.pipeline_ready.load(Ordering::Relaxed) {
             // Bypass: dry pass-through with gain
             for channel_samples in buffer.iter_samples() {
@@ -489,6 +568,77 @@ impl Plugin for LightVcPlugin {
 }
 
 // ---------------------------------------------------------------------------
+// Resampler (host SR ↔ 44.1 kHz)  [06-5]
+// ---------------------------------------------------------------------------
+
+use rubato::{
+    audioadapter_buffers::direct::SequentialSlice, Async, FixedAsync, Resampler as _,
+    SincInterpolationParameters, SincInterpolationType, WindowFunction,
+};
+
+struct ClapResampler {
+    up: Async<f32>,
+    down: Async<f32>,
+    up_out: Vec<f32>,
+    down_out: Vec<f32>,
+}
+
+impl ClapResampler {
+    fn new(host_sr: usize, chunk_size: usize) -> anyhow::Result<Self> {
+        let params = SincInterpolationParameters {
+            sinc_len: 256,
+            f_cutoff: 0.95,
+            interpolation: SincInterpolationType::Linear,
+            oversampling_factor: 256,
+            window: WindowFunction::BlackmanHarris2,
+        };
+        let ratio_up = 44_100.0 / host_sr as f64;
+        let ratio_down = host_sr as f64 / 44_100.0;
+        let up = Async::<f32>::new_sinc(ratio_up, 2.0, &params, chunk_size, 1, FixedAsync::Input)?;
+        let down_chunk = (chunk_size as f64 * ratio_down).round().max(1.0) as usize;
+        let down = Async::<f32>::new_sinc(ratio_down, 2.0, &params, down_chunk, 1, FixedAsync::Output)?;
+        Ok(Self {
+            up_out: vec![0.0; up.output_frames_max()],
+            down_out: vec![0.0; down.output_frames_max()],
+            up,
+            down,
+        })
+    }
+
+    fn process_up(&mut self, input: &[f32]) -> anyhow::Result<&[f32]> {
+        let needed = self.up.input_frames_next();
+        if input.len() < needed {
+            return Err(anyhow::anyhow!("process_up: need {needed}, got {}", input.len()));
+        }
+        let frames_out = self.up.output_frames_next();
+        let in_adapter = SequentialSlice::new(input, 1, needed)?;
+        let mut out_adapter = SequentialSlice::new_mut(&mut self.up_out, 1, frames_out)?;
+        let (_used, written) = self.up.process_into_buffer(&in_adapter, &mut out_adapter, None)?;
+        Ok(&self.up_out[..written])
+    }
+
+    fn process_down(&mut self, input: &[f32]) -> anyhow::Result<&[f32]> {
+        let needed = self.down.input_frames_next();
+        if input.len() < needed {
+            return Err(anyhow::anyhow!("process_down: need {needed}, got {}", input.len()));
+        }
+        let frames_out = self.down.output_frames_next();
+        let in_adapter = SequentialSlice::new(input, 1, needed)?;
+        let mut out_adapter = SequentialSlice::new_mut(&mut self.down_out, 1, frames_out)?;
+        let (_used, written) = self.down.process_into_buffer(&in_adapter, &mut out_adapter, None)?;
+        Ok(&self.down_out[..written])
+    }
+
+    fn input_frames_needed_up(&self) -> usize {
+        self.up.input_frames_next()
+    }
+
+    fn input_frames_needed_down(&self) -> usize {
+        self.down.input_frames_next()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Inference thread
 // ---------------------------------------------------------------------------
 
@@ -501,6 +651,16 @@ fn inference_thread(
     let mut pipeline: Option<Arc<Mutex<lightvc_core::pipeline::VcPipeline>>> = None;
     let mut capture_rx: Option<rtrb::Consumer<f32>> = None;
     let mut playback_tx: Option<rtrb::Producer<f32>> = None;
+
+    // Resampling state ([06-5]).
+    let mut host_sr: u32 = 44_100;
+    let mut resampler: Option<ClapResampler> = None;
+
+    // 3-stage accumulation buffers ([06-5], mirroring realtime_tab.rs [05-4]).
+    let mut in_accum: Vec<f32> = Vec::new(); // host-SR samples from capture ring
+    let mut pcm_44k_accum: Vec<f32> = Vec::new(); // 44.1k samples ready for VC
+    let mut out_44k_accum: Vec<f32> = Vec::new(); // 44.1k VC output
+    let mut out_host_accum: Vec<f32> = Vec::new(); // host-SR output ready for playback
 
     loop {
         while let Ok(task) = task_rx.try_recv() {
@@ -531,68 +691,166 @@ fn inference_thread(
                         pipeline_ready.store(false, Ordering::Relaxed);
                     }
                 },
+                Task::SetMode(val) => {
+                    if let Some(p) = &pipeline {
+                        let mode = match val {
+                            0 => lightvc_core::converter::LatencyMode::Strict,
+                            2 => lightvc_core::converter::LatencyMode::Quality,
+                            _ => lightvc_core::converter::LatencyMode::Balanced,
+                        };
+                        if let Ok(mut pl) = p.lock() {
+                            pl.set_mode(mode);
+                            // Mode change resets streaming state; clear buffers.
+                            in_accum.clear();
+                            pcm_44k_accum.clear();
+                            out_44k_accum.clear();
+                            out_host_accum.clear();
+                            nice_log!("Mode switched: {mode:?}");
+                        }
+                    }
+                }
+                Task::SetSampleRate(sr) => {
+                    host_sr = sr;
+                    if sr != 44_100 {
+                        match ClapResampler::new(sr as usize, 2048) {
+                            Ok(r) => {
+                                resampler = Some(r);
+                                nice_log!("Resampler active: {sr} Hz ↔ 44100 Hz");
+                            }
+                            Err(e) => {
+                                nice_log!("Resampler init failed ({e}), assuming 44100 Hz");
+                                resampler = None;
+                            }
+                        }
+                    } else {
+                        resampler = None;
+                        nice_log!("Host SR = 44100 Hz, no resampling needed");
+                    }
+                    // Clear all buffers on SR change.
+                    in_accum.clear();
+                    pcm_44k_accum.clear();
+                    out_44k_accum.clear();
+                    out_host_accum.clear();
+                }
             }
         }
 
-        let (Some(p), Some(crx), Some(ptx)) = (&pipeline, &mut capture_rx, &mut playback_tx) else {
+        let (Some(p), Some(crx), Some(ptx)) = (&pipeline, &mut capture_rx, &mut playback_tx)
+        else {
             std::thread::sleep(std::time::Duration::from_millis(50));
             continue;
         };
 
-        // Run inference loop
         let chunk_sz = p.lock().map(|pl| pl.chunk_samples()).unwrap_or(2048);
-        let needed = chunk_sz;
 
-        let mut cap = Vec::with_capacity(needed);
-        while cap.len() < needed {
-            match crx.pop() {
-                Ok(s) => cap.push(s),
-                Err(_) => break,
+        // ---- Stage 1: drain capture ring into in_accum ----
+        while let Ok(s) = crx.pop() {
+            in_accum.push(s);
+        }
+
+        // ---- Stage 2: resample host-SR → 44.1k (or bypass) ----
+        if let Some(rsm) = &mut resampler {
+            let needed_up = rsm.input_frames_needed_up();
+            while in_accum.len() >= needed_up {
+                let (chunk, rest) = in_accum.split_at(needed_up);
+                match rsm.process_up(chunk) {
+                    Ok(out44) => pcm_44k_accum.extend_from_slice(out44),
+                    Err(e) => nice_log!("process_up: {e}"),
+                }
+                in_accum = rest.to_vec();
             }
-        }
-        if cap.len() < needed.min(512) {
-            std::thread::sleep(std::time::Duration::from_millis(2));
-            continue;
-        }
-        if cap.len() < needed {
-            cap.resize(needed, 0.0);
-        }
-
-        let in_rms = rms(&cap);
-        let t0 = Instant::now();
-        let out = match p.lock() {
-            Ok(mut pl) => pl.process_chunk(&cap).unwrap_or_else(|e| {
-                nice_log!("VC: {e}");
-                cap.clone()
-            }),
-            Err(_) => continue,
-        };
-        let elapsed = t0.elapsed();
-
-        let out_rms = rms(&out);
-        for s in &out {
-            let _ = ptx.push(*s);
-        }
-        // RTF = process_time / audio_duration. <1.0 means realtime-safe.
-        let audio_dur_s = out.len() as f32 / 44_100.0;
-        let rtf = if audio_dur_s > 0.0 {
-            elapsed.as_secs_f32() / audio_dur_s
         } else {
-            0.0
-        };
-        // Preserve config_source/summary from the shared metrics (set on load).
-        let (cfg_src, cfg_sum) = {
-            let m = metrics.lock().unwrap();
-            (m.config_source.clone(), m.config_summary.clone())
-        };
-        let _ = metrics_tx.send(Metrics {
-            input_rms: in_rms,
-            output_rms: out_rms,
-            rtf,
-            pipeline_ready: true,
-            config_source: cfg_src,
-            config_summary: cfg_sum,
-        });
+            // No resampling: move directly.
+            pcm_44k_accum.append(&mut in_accum);
+        }
+
+        // ---- Stage 3: process VC chunks at 44.1k ----
+        let mut did_process = false;
+        let mut in_rms = 0.0f32;
+        let mut process_elapsed = std::time::Duration::ZERO;
+        let mut out_samples_total = 0usize;
+
+        while pcm_44k_accum.len() >= chunk_sz {
+            let (chunk, rest) = pcm_44k_accum.split_at(chunk_sz);
+            let chunk_owned = chunk.to_vec();
+            pcm_44k_accum = rest.to_vec();
+
+            in_rms = rms(&chunk_owned);
+            let t0 = Instant::now();
+            let out = match p.lock() {
+                Ok(mut pl) => pl.process_chunk(&chunk_owned).unwrap_or_else(|e| {
+                    nice_log!("VC: {e}");
+                    chunk_owned.clone()
+                }),
+                Err(_) => break,
+            };
+            process_elapsed += t0.elapsed();
+            out_samples_total += out.len();
+            out_44k_accum.extend_from_slice(&out);
+            did_process = true;
+        }
+
+        // ---- Stage 4: resample 44.1k → host-SR (or bypass) → playback ----
+        if let Some(rsm) = &mut resampler {
+            let needed_down = rsm.input_frames_needed_down();
+            while out_44k_accum.len() >= needed_down {
+                let (chunk, rest) = out_44k_accum.split_at(needed_down);
+                match rsm.process_down(chunk) {
+                    Ok(out_host) => {
+                        for &s in out_host {
+                            let _ = ptx.push(s);
+                        }
+                    }
+                    Err(e) => nice_log!("process_down: {e}"),
+                }
+                out_44k_accum = rest.to_vec();
+            }
+        } else {
+            for &s in &out_44k_accum {
+                let _ = ptx.push(s);
+            }
+            out_44k_accum.clear();
+        }
+
+        // ---- Metrics ----
+        if did_process {
+            let out_rms_val = if out_samples_total > 0 {
+                // Approximate: use last chunk's output via the accumulator tail.
+                let tail_start = out_host_accum.len().saturating_sub(out_samples_total);
+                rms(&out_host_accum[tail_start.min(out_host_accum.len())..])
+            } else {
+                0.0
+            };
+            let audio_dur_s = out_samples_total as f32 / 44_100.0;
+            let rtf = if audio_dur_s > 0.0 {
+                process_elapsed.as_secs_f32() / audio_dur_s
+            } else {
+                0.0
+            };
+            // Latency estimate: algorithmic + cpal buffers + resample ([06-8]).
+            let algo_ms = p
+                .lock()
+                .map(|pl| pl.algorithmic_latency_ms())
+                .unwrap_or(0.0);
+            let latency_ms = 10.0 + 3.0 + algo_ms + 3.0 + 10.0;
+            let (cfg_src, cfg_sum) = {
+                let m = metrics.lock().unwrap();
+                (m.config_source.clone(), m.config_summary.clone())
+            };
+            let _ = metrics_tx.send(Metrics {
+                input_rms: in_rms,
+                output_rms: out_rms_val,
+                rtf,
+                pipeline_ready: true,
+                latency_ms,
+                config_source: cfg_src,
+                config_summary: cfg_sum,
+            });
+        }
+
+        if !did_process {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
     }
 }
 

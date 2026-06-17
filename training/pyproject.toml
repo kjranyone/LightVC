@@ -6,7 +6,6 @@ requires-python = ">=3.10,<3.13"
 dependencies = [
     "torch==2.10.0",
     "torchaudio==2.10.0",
-    "triton-xpu==3.6.0",
     "transformers>=4.40.0",
     "safetensors>=0.4.0",
     "numpy>=1.24.0",
@@ -20,6 +19,8 @@ dependencies = [
     "huggingface-hub>=1.19.0",
     "edge-tts>=7.2.8",
     "asyncio>=4.0.0",
+    "pyworld>=0.3.5",
+    "setuptools<70",
 ]
 
 [project.optional-dependencies]
@@ -31,11 +32,10 @@ eval = [
 ]
 
 [[tool.uv.index]]
-name = "pytorch-xpu"
-url = "https://download.pytorch.org/whl/xpu"
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
 [tool.uv.sources]
-torch = { index = "pytorch-xpu" }
-torchaudio = { index = "pytorch-xpu" }
-triton-xpu = { index = "pytorch-xpu" }
+torch = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }

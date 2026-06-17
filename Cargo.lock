@@ -3163,6 +3163,7 @@ dependencies = [
  "nice-plug",
  "nice-plug-egui",
  "rtrb",
+ "rubato",
  "serde",
  "serde_json",
 ]

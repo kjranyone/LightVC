@@ -321,19 +321,10 @@ fn run_offline_conversion(state: Arc<Mutex<AppState>>, source_path: &str, refere
         p.reset();
         p.set_target(&ref_padded)?;
 
-        let chunk_size = p.chunk_samples();
-        let mut output = Vec::with_capacity(src_padded.len());
-        let mut i = 0;
-        while i < src_padded.len() {
-            let end = (i + chunk_size).min(src_padded.len());
-            let mut chunk = src_padded[i..end].to_vec();
-            if chunk.len() < chunk_size {
-                chunk.resize(chunk_size, 0.0);
-            }
-            let out = p.process_chunk(&chunk)?;
-            output.extend_from_slice(&out[..end - i]);
-            i = end;
-        }
+        // [06-10]: Use process_full for exact offline conversion (no chunk
+        // boundary artifacts, no last-chunk zero-padding). This matches
+        // cli.rs --mode full and achieves Python parity (wave_corr > 0.997).
+        let output = p.process_full(&src_padded)?;
         Ok(output)
     })();
 

@@ -15,6 +15,12 @@ training/checkpoints/
 # ===== Audio samples (binary, not for git) =====
 samples/**/*.wav
 samples/**/*.flac
+training/samples/
+training/hf_models/
+
+# ===== Evaluation outputs (generated) =====
+training/eval_manifest.json
+training/eval_results.json
 
 # ===== Temporary files =====
 *.log

@@ -1,27 +1,30 @@
-# Phase B: Warm-start on TTS corpus (17 speakers, 170 utterances)
+# Phase B warm-start with UTTE (enable_timbre: true) for [03-2].
+# Trains the TimbreTokenBank + CrossAttnBlock alongside the bottleneck AE.
 model:
   latent_dim: 1024
   hidden_dim: 256
   n_conv_blocks: 4
   speaker_embed_dim: 256
-  enable_timbre: false
+  enable_timbre: true
+  n_timbre_tokens: 32
+  n_attn_heads: 8
   bottleneck_dim: 256
   time_embed_dim: 128
 
 training:
-  batch_size: 4
+  batch_size: 8
   learning_rate: 3.0e-4
   optimizer_betas: [0.8, 0.99]
   weight_decay: 0.01
   lr_scheduler_gamma: 0.9998
   gradient_clip: 1.0
-  max_steps: 10000
+  max_steps: 15000
 
 losses:
   reconstruction_l1: 1.0
-  speaker_consistency: 0.5   # pred speaker ≈ reference speaker ([04-8])
-  content_preservation: 0.3  # content_code(pred) ≈ content_code(src) ([04-9])
-  speaker_classify: 0.5      # auxiliary CE on ref_embed, prevents collapse ([04-11])
+  speaker_consistency: 0.5
+  content_preservation: 0.3
+  speaker_classify: 0.5
 
 role_assignment:
   cross_speaker: 0.0
@@ -29,11 +32,11 @@ role_assignment:
 data:
   sample_rate: 44100
   latent_frame_rate: 86
-  max_utterance_frames: 300
+  max_utterance_frames: 200
   min_utterance_frames: 30
 
 checkpoint:
-  save_every_steps: 2000
+  save_every_steps: 5000
 
 hardware:
   device: auto

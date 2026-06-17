@@ -76,6 +76,45 @@
   - リスニング体験を著しく損なう
 - **作業**: [05-4] のリファクタリングで解消。`chunk_sz` と device buffer size の最小公倍数調整、または必要量溜まるまで待機。
 - **関連**: `crates/lightvc-app/src/realtime_tab.rs:382-395`, [05_audio_io.md](05_audio_io.md) [05-4]
+- **注記**: realtime_tab のみ解消。CLAP 側 `lib.rs:553-559` は残存 → [06-9] で対応。
+
+### [08-8] (P2) ✅ ドキュメント内部矛盾・虚構型名（5 件）
+- **現状**: 設計資料自体が実装と合わない、または内部で矛盾する項目:
+
+  1. **rubato 型名が虚構** (`ARCHITECTURE.md:631-633`, plan/05 line 14,28):
+     - 文書: `AsyncFixedIn<f32>` / `AsyncFixedOut<f32>`
+     - 実体: rubato 3.0 にはこれらの型は**存在しない**。正しくは `Async<T>` + `FixedAsync::{Input,Output}` enum（`rubato-3.0.0/src/asynchro.rs:96`, `lib.rs:57` で確認）
+     - コードは正しい、ドキュメントが誤り
+
+  2. **ARCH §1.3 と §3.5 のレイテンシ数値矛盾**:
+     - §1.3: Quality「Algorithmic lookahead (mode) ~80 ms」「Total (quality mode, 80ms) ~141 ms」
+     - §3.5: Quality「Total algorithmic latency ~186 ms」（chunk 4096 + lookahead 93ms）
+     - 実装（`pipeline.rs:218-220`）は §3.5 に従い、`realtime_tab.rs:518` は ~212ms を表示
+     - §1.3 の 141ms は古い、または lookahead を chunk 含まずに算出した古い設計
+
+  3. **モードノブラベルが lookahead を過小表示** (`realtime_tab.rs:194-198`):
+     - 表示: 「Balanced = ~40ms lookahead」「Quality = ~80ms lookahead」
+     - 実装（ARCH §3.5）: Balanced 2048 sample ≈ 46ms、Quality 4096 sample ≈ 93ms
+     - ~13-14% 過小表示。同一タブ内の `latency_ms` 表示（正確）とも不一致
+
+  4. **`widgets.rs` 構造が ARCH §2 と不一致**:
+     - ARCH §2（105-110行）: `widgets/{level_meter.rs, device_combo.rs, param_knob.rs}` を約束
+     - 実体: 単一 `widgets.rs`（`pub fn rms(...)` のみ 4 行）。`device_combo` はリポジトリ全体に存在しない（[05-6] のデバイス選択 UI 欠如と一致）
+
+  5. **CLAP bypass のレイテンシ補償不整合** (`lib.rs:462-470`):
+     - bypass 時は即時ドライパススルー（リング遅延ゼロ）
+     - ウェット経路は ring buffer + 報告レイテンシ `chunk_44k*3`（~6144 sample）
+     - bypass トグルで可聴ジャンプ（ドライが ~6144 sample 早く到着）
+     - ほとんどの DAW は bypass でも報告レイテンシを維持することを期待
+
+- **作業**:
+  1. ARCH §5.2 と plan/05 を `Async<T>` + `FixedAsync` に修正
+  2. ARCH §1.3 を §3.5 と整合（Quality ~186ms algorithmic / ~212ms total）に修正、または §1.3 削除
+  3. `realtime_tab.rs:194-198` のラベルを「~46ms」「~93ms」に修正
+  4. ARCH §2 の `widgets/` サブモジュール記載を実態（単一 `widgets.rs`）に合わせる、または [05-6] で `device_combo` を実装してから整合
+  5. CLAP bypass を遅延一致型（ドライにも報告レイテンシ分の遅延を挿入）に変更
+- **受け入れ基準**: ARCHITECTURE / plan の記述が実装と完全一致。ラベルと実測値が一致。
+- **関連**: `ARCHITECTURE.md:52-67,105-110,367-383,631-633`, `crates/lightvc-app/src/realtime_tab.rs:194-198`, `crates/lightvc-app/src/widgets.rs`, `crates/lightvc-clap/src/lib.rs:462-470`, `plan/05_audio_io.md`
 
 ## AGENTS.md 既知問題（参考、対応不要）
 

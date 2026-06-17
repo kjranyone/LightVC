@@ -107,6 +107,12 @@ def main():
         default=30.0,
         help="Truncate utterances longer than this (seconds)",
     )
+    parser.add_argument(
+        "--timbre-shift",
+        action="store_true",
+        help="Also encode timbre-shifted versions (MODEL_TRAINING C.3 augmentation). "
+        "Creates {utt_id}_ts.npy alongside each latent.",
+    )
     args = parser.parse_args()
 
     os.makedirs(args.output, exist_ok=True)
@@ -149,6 +155,16 @@ def main():
                 if len(wav) > max_samples:
                     wav = wav[:max_samples]
 
+                # Skip near-silent utterances (RMS gate)
+                rms = np.sqrt(np.mean(wav ** 2))
+                if rms < 1e-4:
+                    continue
+
+                # Peak-normalize to [-1, 1] — DAC was trained on normalized audio
+                peak = np.max(np.abs(wav))
+                if peak > 1e-6:
+                    wav = wav / peak
+
                 # Pad to hop length
                 rem = len(wav) % 512
                 if rem > 0:
@@ -161,6 +177,19 @@ def main():
                 np.save(out_path, latent.astype(np.float32))
 
                 writer.writerow([spk, utt_id, latent.shape[1], out_path])
+
+                if args.timbre_shift:
+                    from timbre_shifter import timbre_shift as _ts
+
+                    # apply_prob=1.0: every _ts.npy must be actually shifted
+                    # ([04-12]). Default 0.5 would leave half un-shifted.
+                    wav_ts = _ts(wav, 44100, apply_prob=1.0)
+                    rem_ts = len(wav_ts) % 512
+                    if rem_ts > 0:
+                        wav_ts = np.pad(wav_ts, (0, 512 - rem_ts))
+                    latent_ts = encode_audio(dac, wav_ts, device)
+                    ts_path = os.path.join(spk_dir, f"{utt_id}_ts.npy")
+                    np.save(ts_path, latent_ts.astype(np.float32))
 
     print(f"\nDone. Index: {index_path}")
 

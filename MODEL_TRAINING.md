@@ -152,7 +152,7 @@ encode speaker identity, forcing the model to take speaker info from the referen
 ### B.3 Training Config
 
 ```yaml
-# configs/phase_b_warmstart.yaml
+# configs/phase_b.yaml
 model:
   latent_dim: 1024
   bottleneck_dim: 256        # force speaker info out
@@ -168,17 +168,19 @@ training:
 
 losses:
   reconstruction_l1: 1.0
-  speaker_consistency: 0.5   # pred speaker ≈ ref speaker
-  content_preservation: 0.3  # content_code should be speaker-invariant
+  speaker_consistency: 0.5   # pred speaker ≈ ref speaker ([04-8])
+  content_preservation: 0.3  # content_code(pred) ≈ content_code(src) ([04-9])
+  speaker_classify: 0.5      # auxiliary CE, prevents encoder collapse ([04-11])
 
+# Role assignment ([04-10]): teacher-free paradigm.
+# cross_speaker is a REGULARIZER, not a target producer.
 role_assignment:
-  reconstruction: 0.6        # z_src → z_src (autoencode)
-  cross_speaker: 0.4         # z_src(A) + ref(B) → z_src(A) with B's timbre
+  cross_speaker: 0.0         # 0 = pure AutoVC reconstruction (recommended)
 ```
 
 ---
 
-## Phase C: Mean-Flow Matching (Core Training)
+## Phase C: Flow Matching (Core Training)
 
 ### C.1 The Key Insight
 
@@ -191,29 +193,37 @@ z_ref  = DAC.encode(target_speaker_saying_anything_else) # reference for speaker
 z_tgt  = DAC.encode(target_speaker_saying_yet_another)   # ← REAL target latent
 
 # The flow-matching objective:
-# Learn velocity field v(z_t, t | z_src_content, speaker(z_ref))
-# such that integrating from z_0 = noise arrives at z_1 ≈ z_tgt.
+# Learn velocity field v(z_t, t | content(z_src), speaker(z_ref))
+# such that integrating from z_0 = z_src arrives at z_1 ≈ z_tgt.
 ```
 
 **Critical difference from old plan:** `z_tgt` is the DAC encoding of a real
 target-speaker utterance. No VC teacher generated it. The model learns the
 *actual distribution* of target-speaker latents, not a teacher's approximation.
 
-### C.2 Mean-Flow (1-NFE) Formulation
+### C.2 Rectified Flow Matching (1-NFE)
 
-Following MeanVC2 (arXiv:2606.09050), we use **mean-flow** which collapses the
-ODE into a single forward pass at inference:
+> **Note ([04-7] revision):** The implementation uses **rectified / linear flow
+> matching** (Lipman 2023, Liu 2022), not MeanVC2's mean-flow formulation.
+> The 1-NFE property arises from the flow being *linear* (constant velocity),
+> so a single forward pass at `t=1` recovers the endpoint. MeanVC2 is credited
+> for FRC (future-receptive chunking) and UTTE (universal timbre token
+> encoder), which LightVC adopts, but the velocity-matching formulation is
+> standard rectified flow.
+
+A **linear** (rectified) flow has constant velocity, so a single forward pass
+at `t=1` gives the endpoint — no ODE loop, no multi-step distillation:
 
 **Training:**
 ```python
 # Sample time t ~ U[0, 1]
 t = torch.rand(B, 1, 1)
 
-# Interpolation between noise and target
-z_t = (1 - t) * z_noise + t * z_tgt    # linear interp
+# Source-conditioned interpolation (z_0 = z_src, NOT noise — see C.3)
+z_t = (1 - t) * z_src + t * z_tgt    # linear interp
 
-# Target velocity (constant, since linear)
-v_target = z_tgt - z_noise              # = dz/dt
+# Target velocity (constant for a linear flow)
+v_target = z_tgt - z_src              # = dz/dt, independent of t
 
 # Predict velocity from (z_t, t, content, speaker)
 v_pred = converter(z_t, t, content_code, speaker_embedding)
@@ -224,8 +234,8 @@ loss = F.mse_loss(v_pred, v_target)
 
 **Inference (1-step, no ODE loop):**
 ```python
-# Mean-flow: the model learns the mean velocity over [0,1]
-# So z_1 ≈ z_0 + v_mean, and we can use z_0 = z_src (not noise!)
+# Linear flow → constant velocity → single step suffices.
+# z_converted = z_src + v_pred(z_src, t=1, ref)
 z_converted = converter.one_step(z_src, content_code, speaker_embedding)
 ```
 
@@ -285,7 +295,7 @@ def compute_losses(v_pred, v_target, z_converted, z_tgt,
 ### C.5 Training Config
 
 ```yaml
-# configs/phase_c_flow.yaml
+# configs/phase_c.yaml
 model:
   latent_dim: 1024
   bottleneck_dim: 256
@@ -296,31 +306,33 @@ model:
   enable_timbre: true
 
 training:
-  init_from: checkpoints/phase_b_warmstart/best.pt
-  batch_size: 4              # flow matching needs more memory
-  learning_rate: 1.0e-4
+  init_from: checkpoints/phase_b/best.pt
+  batch_size: 8
+  learning_rate: 1.5e-4
+  optimizer_betas: [0.8, 0.99]
+  weight_decay: 0.01
+  lr_scheduler_gamma: 0.9999
   max_steps: 200000
   gradient_clip: 1.0
 
   # Timbre shifter augmentation (signal processing, NOT a teacher)
   timbre_shift_prob: 0.5
-  pitch_ratio_range: [0.8, 1.25]
-  formant_shift_range: [0.85, 1.18]
 
 losses:
   fm_velocity: 1.0
   latent_l1: 2.0
   speaker_sim: 1.0
   content_inv: 0.5
+  content_mi: 0.1            # GRL disentanglement ([04-4])
 
 data:
   sample_rate: 44100
   latent_frame_rate: 86
-  max_utterance_frames: 400
-  min_utterance_frames: 50
+  max_utterance_frames: 600
+  min_utterance_frames: 30
 
 hardware:
-  device: xpu
+  device: auto               # resolves to xpu on B580 ([04-13])
   mixed_precision: bf16      # B580 supports BF16
 ```
 
@@ -420,13 +432,13 @@ uv run python encode_corpus.py \
 
 # 3. Phase B: Warm-start (~2 hours)
 uv run python train_warmstart.py \
-    --config configs/phase_b_warmstart.yaml \
+    --config configs/phase_b.yaml \
     --data data/latents/ \
     --output checkpoints/phase_b/
 
 # 4. Phase C: Flow matching training (~5-7 days)
 uv run python train_flow.py \
-    --config configs/phase_c_flow.yaml \
+    --config configs/phase_c.yaml \
     --data data/latents/ \
     --output checkpoints/phase_c/
 
@@ -470,5 +482,5 @@ cd ..
 | R-VC | 2506.01014 | SSL + shortcut FM | 2-step, HuBERT content |
 | EZ-VC | 2505.16691 | SSL + NAR FM | "Purely self-supervised" |
 | REF-VC | 2508.04996 | SSL + random erase | Matches Seed-VC from scratch |
-| MeanVC 2 | 2606.09050 | Mean-flow (1-NFE) | FRC + UTTE |
+| MeanVC 2 | 2606.09050 | FRC + UTTE | Future-receptive chunking + universal timbre tokens (LightVC adopts FRC/UTTE; the flow formulation is rectified FM, not mean-flow — see §C.2) |
 | DiFlow-TTS | 2509.09631 | Discrete FM, factorized heads | Progressive depth pattern |

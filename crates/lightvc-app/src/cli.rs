@@ -81,8 +81,11 @@ pub struct ConvertCmd {
     #[arg(long)]
     pub converter_config: Option<PathBuf>,
 
-    #[arg(long, default_value = "balanced")]
+    #[arg(long, default_value = "balanced", help = "strict | balanced | quality | full")]
     pub mode: String,
+
+    #[arg(long, default_value = "1.0", help = "Velocity scale (guidance). 1.0 = training-matched, >1 amplifies conversion")]
+    pub velocity_scale: f64,
 
     #[arg(long)]
     pub cuda: bool,
@@ -181,12 +184,14 @@ pub fn run_convert(cmd: ConvertCmd) -> Result<()> {
         "quality" => LatencyMode::Quality,
         _ => LatencyMode::Balanced,
     };
+    let use_full = cmd.mode == "full";
 
     println!("Loading converter...");
     let vb = lightvc_core::weights::load_varbuilder(&cmd.converter_weights, DType::F32, &device)?;
     let converter = AnyConverter::new(converter_config, vb)?;
 
     let mut pipeline = VcPipeline::new(&cmd.dac_weights, &dac_config, converter, mode, device)?;
+    pipeline.velocity_scale = cmd.velocity_scale;
 
     println!("Loading reference: {}", cmd.reference.display());
     let (ref_pcm, ref_sr) = load_wav_mono(&cmd.reference)?;
@@ -205,6 +210,15 @@ pub fn run_convert(cmd: ConvertCmd) -> Result<()> {
         src_pcm
     };
     let padded = lightvc_core::codec::pad_to_hop(src_44k);
+
+    if use_full {
+        println!("Mode: full (offline, no chunking) — SOTA quality");
+        println!("Processing...");
+        let output = pipeline.process_full(&padded)?;
+        save_wav_mono(&cmd.output, &output, 44_100)?;
+        println!("Saved: {}", cmd.output.display());
+        return Ok(());
+    }
 
     let chunk_size = pipeline.chunk_samples();
     println!(
