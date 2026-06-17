@@ -274,6 +274,43 @@ impl StreamingDacEncoder {
 }
 ```
 
+#### 3.4.1 Decoder overlap-add details
+
+The encoder side (FRC + `input_tail`) was described above. The decoder
+side mirrors it with a **linear cross-fade** over the boundary region,
+implemented in `StreamingCodec::decode_step`:
+
+```
+chunk N-1 PCM :  [...=====tail=====]
+chunk N   PCM :  [==overlap==|new===]
+                            ↕ linear cross-fade, w = i/overlap_len
+merged output :  [...=====faded=====|new===]
+```
+
+- **Cross-fade length** = `min(prev.len, cur.len, DAC_HOP_LENGTH)` =
+  one latent frame (512 samples ≈ 11.6 ms at 44.1 kHz). This is a
+  deliberate constant: the DAC decoder's receptive field radius is on
+  the order of one hop, so a single-hop blend is sufficient to hide
+  the discontinuity at the chunk seam.
+- **Tail cache** = last `DAC_HOP_LENGTH` samples of the merged output,
+  stored in `prev_output` and consumed by the next `decode_step`.
+- **Returned PCM** = only the newly produced portion
+  (`new_len = frames * DAC_HOP_LENGTH`), trimmed from the tail of the
+  merged buffer so the caller receives exactly one chunk's worth of
+  samples.
+- **Empty-latent guard**: during FRC warmup `encode_step` returns a
+  0-frame tensor; `decode_step` short-circuits to an empty `Vec`, so
+  the realtime loop simply pushes nothing (silence) for that period.
+
+> **Why not scale the cross-fade with chunk size?** The plan ([02-3])
+> considered making the fade proportional to `samples_per_chunk` (e.g.
+> longer for Quality's 8-frame chunks). The current single-hop fade is
+  already inaudible in practice because FRC lookahead removes the
+  boundary artefact at its source (the encoder), so the decoder only
+  needs to smooth residual sample-level discontinuities. Scaling up
+  the fade would increase latency without audible benefit; left as a
+  tuning knob if future ABX tests ([02-4] acceptance) reveal issues.
+
 ### 3.5 Latency / Quality Modes
 
 | Mode | Lookahead | Chunk Size | Total algorithmic latency | Use Case |
@@ -325,6 +362,77 @@ Parameters: ~8-12M
 - **Causal Conv1d**: left-pad only, no future context needed in converter (DAC handles lookahead separately).
 - **Snake1d activation**: matches DAC's internal activation, ensures latent-space compatibility.
 - **FiLM speaker injection**: AdaLN-style normalization per speaker. Cheap, effective (X-VC approach).
+
+> Phase 1 `Converter` is selected by `model_type: "converter"` in the
+> JSON config. It is the warm-start baseline and is kept for ABI smoke
+> tests; production checkpoints use Phase C `FlowConverter` below.
+
+### 4.1b Phase C: FlowConverter (mean-flow, 1-NFE)
+
+`FlowConverter` (`converter.rs`, `model_type: "flow"`) is the core inference
+model. It is a **mean-flow** network: trained to predict the *average*
+velocity field of the linear flow `z_t = (1-t)·z_src + t·z_tgt`, so that a
+single forward pass at `t=1` produces the target latent (1-NFE inference,
+no teacher distillation).
+
+```
+Inputs : z_src   [B, 1024, T]    source latent (from DAC encode)
+         z_ref   [B, 1024, T_ref] reference latent (target speaker)
+         t       [B]              flow time ∈ [0,1]  (1.0 at inference)
+
+┌──────────────────────────────────────────────────────────┐
+│ BottleneckEncoder  Conv1d(1024→256)  content projection   │
+│   content = bottleneck(z_src or z_t)                     │
+├──────────────────────────────────────────────────────────┤
+│ Conditioning (FiLM γ, β)                                  │
+│   speaker_embed = SpeakerEncoder(z_ref)  [B, 256]         │
+│   time_embed    = TimeEmbed(t)           [B, 128]         │
+│   γ, β = CondMlp([speaker_embed ‖ time_embed])  ×2·1024   │
+│   z = γ · content + β                                     │
+├──────────────────────────────────────────────────────────┤
+│ CausalResBlock × N (default N=4)                          │
+│   Snake1d → Conv1d(1024→hidden, k=7, d=1, causal)         │
+│   Snake1d → Conv1d(hidden→1024, k=7, d=3, causal)         │
+│   + residual                                              │
+│   (optional) CrossAttnBlock with TimbreTokenBank keys     │
+├──────────────────────────────────────────────────────────┤
+│ vel_proj  CausalConv1d(1024→1024, k=1)                    │
+│   zero-initialized at training start (identity init)      │
+└──────────────────────────────────────────────────────────┘
+
+Training (Python `converter.py::FlowConverter`):
+    v_pred = forward_velocity(z_t, t, z_ref)
+    loss   = MSE(v_pred, z_tgt - z_src)   # flow-matching target
+           + L1(z_src + v_pred, z_tgt)    # endpoint
+           + (1 - cos(spk(z_src+v), spk(z_tgt)))   # speaker sim
+           + L1(bottleneck(z_src+v).detach(),
+                  bottleneck(z_src))      # content invariance
+
+Inference (Rust `FlowConverter::convert`, 1-NFE):
+    v   = forward_velocity(z_src, t=1, z_ref)
+    z_out = z_src + v
+```
+
+`AnyConverter::new(config, vb)` dispatches on `config.model_type`:
+`"flow"` → `FlowConverter`, anything else → Phase 1 `Converter`.
+`export_weights.py` writes a sidecar `<model>_config.json` recording
+`model_type`, `hidden_dim`, `enable_timbre`, etc., which the CLAP/app
+loaders consume (see [06-1] config fallback chain).
+
+**Design rationale** (additional):
+- **Mean-flow / 1-NFE**: avoids the O(N) cost of Euler integration at
+  inference. The network regresses the *time-averaged* velocity, so a
+  single evaluation at `t=1` recovers the endpoint. Training is still
+  plain flow-matching (no teacher).
+- **TimeEmbed**: sinusoidal `exp(-log(10000)·i/d)` frequencies computed
+  in f64 then cast to f32, matching PyTorch ([08-5]).
+- **Zero-init `vel_proj`**: at step 0 the model is the identity
+  (`z_out = z_src`), which stabilises early flow-matching training.
+- **Optional UTTE cross-attention**: when `enable_timbre: true`, a
+  `TimbreTokenBank` (K=32 learnable tokens) is queried by the speaker
+  embedding and the resulting keys/values are injected via
+  `CrossAttnBlock` after each residual block. Disabled by default
+  ([03-2] pending validation).
 
 ### 4.2 Phase 2: Universal Timbre Token Encoder
 
