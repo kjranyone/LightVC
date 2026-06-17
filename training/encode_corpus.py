@@ -43,19 +43,19 @@ def find_audio_files(root: str, extensions=(".wav", ".flac", ".mp3")):
     Falls back to treating each filename's first underscore-separated token
     as speaker_id if no subdirectory structure exists.
     """
-    root = Path(root)
+    root_path = Path(root)
     files = []
     for ext in extensions:
-        files.extend(root.rglob(f"*{ext}"))
-        files.extend(root.rglob(f"*{ext.upper()}"))
+        files.extend(root_path.rglob(f"*{ext}"))
+        files.extend(root_path.rglob(f"*{ext.upper()}"))
     files = sorted(set(files))
 
     # Detect structure
     sample = files[0] if files else None
-    if sample and sample.parent != root:
+    if sample and sample.parent != root_path:
         # Subdirectory structure: use parent folder name as speaker_id
         def speaker_of(p: Path) -> str:
-            return p.parent.relative_to(root).parts[0]
+            return p.parent.relative_to(root_path).parts[0]
     else:
         # Flat: use filename prefix (e.g., "spk_001_utt000.wav" → "spk_001")
         def speaker_of(p: Path) -> str:
