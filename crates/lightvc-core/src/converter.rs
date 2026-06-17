@@ -66,7 +66,9 @@ impl Snake1d {
         let xs_flat = xs.flatten_from(2)?;
         let sin = self.alpha.broadcast_mul(&xs_flat)?.sin()?;
         let sin_sq = (&sin * &sin)?;
-        let out = (&xs_flat + self.alpha.recip()?.broadcast_mul(&sin_sq)?)?;
+        // Matches Python: 1.0 / (alpha + 1e-9). affined = alpha * 1.0 + 1e-9.
+        let alpha_safe = self.alpha.affine(1.0, 1e-9)?;
+        let out = (&xs_flat + alpha_safe.recip()?.broadcast_mul(&sin_sq)?)?;
         out.reshape(shape).map_err(Into::into)
     }
 }
@@ -426,7 +428,8 @@ impl Converter {
 
         let mut blocks = Vec::with_capacity(config.n_conv_blocks);
         for i in 0..config.n_conv_blocks {
-            let blk = CausalResBlock::new(latent_dim, config.hidden_dim, vb.pp(&format!("blocks.{i}")))?;
+            let blk =
+                CausalResBlock::new(latent_dim, config.hidden_dim, vb.pp(&format!("blocks.{i}")))?;
             blocks.push(blk);
         }
         let out_proj = CausalConv1d::new(latent_dim, latent_dim, 1, 1, vb.pp("out_proj"))?;
@@ -631,7 +634,8 @@ impl FlowConverter {
 
         let mut blocks = Vec::with_capacity(config.n_conv_blocks);
         for i in 0..config.n_conv_blocks {
-            let blk = CausalResBlock::new(latent_dim, config.hidden_dim, vb.pp(&format!("blocks.{i}")))?;
+            let blk =
+                CausalResBlock::new(latent_dim, config.hidden_dim, vb.pp(&format!("blocks.{i}")))?;
             blocks.push(blk);
         }
         let vel_proj = CausalConv1d::new(latent_dim, latent_dim, 1, 1, vb.pp("vel_proj"))?;

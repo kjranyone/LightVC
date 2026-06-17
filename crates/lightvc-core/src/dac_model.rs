@@ -25,7 +25,9 @@ impl Snake1d {
         let xs_flat = xs.flatten_from(2)?;
         let sin = self.alpha.broadcast_mul(&xs_flat)?.sin()?;
         let sin_sq = (&sin * &sin)?;
-        let out = (&xs_flat + self.alpha.recip()?.broadcast_mul(&sin_sq)?)?;
+        // Matches Python: 1.0 / (alpha + 1e-9). affined = alpha * 1.0 + 1e-9.
+        let alpha_safe = self.alpha.affine(1.0, 1e-9)?;
+        let out = (&xs_flat + alpha_safe.recip()?.broadcast_mul(&sin_sq)?)?;
         out.reshape(shape)
     }
 }
