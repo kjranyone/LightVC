@@ -38,11 +38,11 @@ cargo build --release -p lightvc-app
 ./target/release/lightvc-app gui --dac-weights models/dac_44khz.safetensors
 
 # CLAP + VST3 plugin bundle
-cargo xtask bundle
+cargo run -p lightvc-xtask -- bundle
 # Output: target/bundled/LightVC.vst3 and LightVC.clap
 
 # Install to system plugin directories
-cargo xtask install
+cargo run -p lightvc-xtask -- install
 ```
 
 ### CLI subcommands
