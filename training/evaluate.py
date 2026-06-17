@@ -240,6 +240,7 @@ def evaluate(args):
     utmos_scores: list[float] = []
     wer_src_vs_conv: list[float] = []
     wer_text_vs_conv: list[float] = []
+    wer_text_vs_src: list[float] = []
     per_pair: list[dict] = []
 
     for i, pair in enumerate(pairs):
@@ -285,6 +286,13 @@ def evaluate(args):
                 if w is not None:
                     wer_text_vs_conv.append(w)
                     entry["wer_text_vs_converted"] = w
+                # [04-6] Content preservation: also WER(text, source) so
+                # we can measure degradation caused by conversion.
+                if hyp_src is not None:
+                    ws = wer.wer(gt_text, hyp_src)
+                    if ws is not None:
+                        wer_text_vs_src.append(ws)
+                        entry["wer_text_vs_source"] = ws
 
         print(
             f"[{i + 1}/{len(pairs)}] {os.path.basename(src_path)} "
@@ -306,6 +314,16 @@ def evaluate(args):
         ),
         "wer_text_vs_converted_mean": (
             float(np.mean(wer_text_vs_conv)) if wer_text_vs_conv else None
+        ),
+        "wer_text_vs_source_mean": (
+            float(np.mean(wer_text_vs_src)) if wer_text_vs_src else None
+        ),
+        # [04-6] Content preservation degradation:
+        # how much worse is WER after conversion vs before?
+        "wer_degradation_mean": (
+            float(np.mean(wer_text_vs_conv) - np.mean(wer_text_vs_src))
+            if wer_text_vs_conv and wer_text_vs_src
+            else None
         ),
         "targets": {"secs_gt": 0.70, "utmos_gt": 3.5, "wer_lt": 0.05},
         "pairs": per_pair,
@@ -333,6 +351,13 @@ def evaluate(args):
         f"(target degradation < 0.02)" if wc is not None else "",
         flush=True,
     )
+    wd = summary["wer_degradation_mean"]
+    if wd is not None:
+        print(
+            f"WER degradation (text baseline): {wd:.4f}",
+            "(target < 0.02)" if wd < 0.02 else "(EXCEEDS target)",
+            flush=True,
+        )
     print(f"\nResults saved: {args.output}", flush=True)
 
 

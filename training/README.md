@@ -110,6 +110,28 @@ Targets (MODEL_TRAINING.md §Validation Protocol): SECS > 0.70, UTMOS > 3.5,
 WER < 5%, WER degradation (src vs converted) < 2%. Any metric whose model
 fails to load is reported as `null` and skipped without aborting the run.
 
+### VCTK parallel validation
+
+VCTK has same-text utterances across speakers, enabling a strict content
+preservation test. Build a manifest from a local VCTK corpus, then run
+evaluate.py with the `text` field populated:
+
+```bash
+uv run python build_vctk_manifest.py \
+    --vctk-root /path/to/VCTK-Corpus \
+    --output vctk_manifest.json \
+    --max-pairs 100
+
+uv run python evaluate.py \
+    --converter checkpoints/phase_c/best.pt \
+    --manifest vctk_manifest.json \
+    --output vctk_results.json
+```
+
+The results include `wer_degradation_mean`: the difference between
+WER(text, converted) and WER(text, source). Values close to zero indicate
+the conversion preserves linguistic content; the target is < 0.02.
+
 ## Configs
 
 | File | Steps | Corpus | Purpose |
@@ -131,5 +153,6 @@ fails to load is reported as `null` and skipped without aborting the run.
 | `generate_tts_corpus.py` | Generate Edge TTS multi-speaker corpus |
 | `infer_flow.py` | One-step inference test |
 | `evaluate.py` | Offline metrics: SECS / UTMOS / WER |
+| `build_vctk_manifest.py` | Build VCTK parallel-pair manifest for evaluation |
 | `download_corpus.py` | Fetch LibriTTS/VCTK from HuggingFace |
 | `export_weights.py` | Export to safetensors |
