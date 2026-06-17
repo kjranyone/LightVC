@@ -69,7 +69,7 @@ def load_latent_corpus(data_dir: str, max_frames: int = 400):
     return speakers
 
 
-def make_batch(speakers: dict, batch_size: int, max_frames: int, device: torch.device):
+def make_batch(speakers: dict, batch_size: int, max_frames: int, device: torch.device, spk2idx: dict):
     """Sample a training batch.
 
     For each item: pick a source utterance and (optionally) a different
@@ -79,6 +79,7 @@ def make_batch(speakers: dict, batch_size: int, max_frames: int, device: torch.d
     src_list = []
     ref_list = []
     tgt_list = []
+    ref_spk_idx = []
 
     for _ in range(batch_size):
         src_spk = spk_list[np.random.randint(0, len(spk_list))]
@@ -95,8 +96,10 @@ def make_batch(speakers: dict, batch_size: int, max_frames: int, device: torch.d
             ref = ref_utts[np.random.randint(0, len(ref_utts))]
         else:
             ref = src
+            ref_spk = src_spk
 
         ref_list.append(ref)
+        ref_spk_idx.append(spk2idx[ref_spk])
         # Target = source (reconstruction) in warm-start
         tgt_list.append(src)
 
@@ -130,7 +133,8 @@ def make_batch(speakers: dict, batch_size: int, max_frames: int, device: torch.d
             t = t[:, start : start + T]
         tgt[i] = torch.from_numpy(t[:, :T])
 
-    return src.to(device), tgt.to(device), ref.to(device)
+    ref_idx = torch.tensor(ref_spk_idx, dtype=torch.long, device=device)
+    return src.to(device), tgt.to(device), ref.to(device), ref_idx
 
 
 # ---------------------------------------------------------------------------
@@ -164,11 +168,17 @@ def train(config_path, data_dir, output_dir):
 
     # Data
     speakers = load_latent_corpus(data_dir, max_frames)
+    spk2idx = {spk: i for i, spk in enumerate(sorted(speakers.keys()))}
+    num_speakers = len(spk2idx)
 
     # Model
     model = Converter(model_cfg).to(device)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Converter parameters: {n_params:,} ({n_params / 1e6:.1f}M)", flush=True)
+
+    # Speaker classifier (training-only, prevents speaker-encoder collapse)
+    spk_classifier = torch.nn.Linear(model_cfg.speaker_embed_dim, num_speakers).to(device)
+    print(f"Speaker classifier: {num_speakers} speakers", flush=True)
 
     # Init from checkpoint if specified
     if "init_from" in train_cfg and train_cfg["init_from"]:
@@ -177,7 +187,7 @@ def train(config_path, data_dir, output_dir):
         print(f"Initialized from {train_cfg['init_from']}", flush=True)
 
     optim = torch.optim.AdamW(
-        model.parameters(),
+        list(model.parameters()) + list(spk_classifier.parameters()),
         lr=train_cfg["learning_rate"],
         betas=tuple(train_cfg.get("optimizer_betas", [0.8, 0.99])),
         weight_decay=train_cfg.get("weight_decay", 0.01),
@@ -192,11 +202,12 @@ def train(config_path, data_dir, output_dir):
     grad_clip = train_cfg.get("gradient_clip", 1.0)
 
     model.train()
-    losses_log = {"total": [], "recon": [], "spk": [], "content": []}
+    spk_classifier.train()
+    losses_log = {"total": [], "recon": [], "spk": [], "content": [], "cls": []}
 
     print(f"Starting warm-start training for {max_steps} steps...", flush=True)
     for step in range(1, max_steps + 1):
-        src, tgt, ref = make_batch(speakers, batch_size, max_frames, device)
+        src, tgt, ref, ref_idx = make_batch(speakers, batch_size, max_frames, device, spk2idx)
 
         # Precompute target speaker embedding
         with torch.no_grad():
@@ -220,7 +231,12 @@ def train(config_path, data_dir, output_dir):
             "content_preservation", 0.3
         )
 
-        loss = loss_recon + loss_spk + loss_content
+        # Speaker classification auxiliary loss (prevents encoder collapse)
+        ref_embed_for_cls = model.speaker_embedding(ref)
+        logits = spk_classifier(ref_embed_for_cls)
+        loss_cls = F.cross_entropy(logits, ref_idx) * loss_cfg.get("speaker_classify", 0.5)
+
+        loss = loss_recon + loss_spk + loss_content + loss_cls
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
         optim.step()
@@ -230,13 +246,15 @@ def train(config_path, data_dir, output_dir):
         losses_log["recon"].append(loss_recon.item())
         losses_log["spk"].append(loss_spk.item())
         losses_log["content"].append(loss_content.item())
+        losses_log["cls"].append(loss_cls.item())
 
         if step % 100 == 0:
             avg = {k: np.mean(v[-100:]) for k, v in losses_log.items()}
             print(
                 f"step {step}/{max_steps} | loss={avg['total']:.4f} "
                 f"recon={avg['recon']:.4f} spk={avg['spk']:.4f} "
-                f"content={avg['content']:.4f} lr={scheduler.get_last_lr()[0]:.2e}",
+                f"content={avg['content']:.4f} cls={avg['cls']:.4f} "
+                f"lr={scheduler.get_last_lr()[0]:.2e}",
                 flush=True,
             )
 

@@ -81,7 +81,7 @@ pub struct ConvertCmd {
     #[arg(long)]
     pub converter_config: Option<PathBuf>,
 
-    #[arg(long, default_value = "balanced")]
+    #[arg(long, default_value = "balanced", help = "strict | balanced | quality | full")]
     pub mode: String,
 
     #[arg(long)]
@@ -181,6 +181,7 @@ pub fn run_convert(cmd: ConvertCmd) -> Result<()> {
         "quality" => LatencyMode::Quality,
         _ => LatencyMode::Balanced,
     };
+    let use_full = cmd.mode == "full";
 
     println!("Loading converter...");
     let vb = lightvc_core::weights::load_varbuilder(&cmd.converter_weights, DType::F32, &device)?;
@@ -205,6 +206,15 @@ pub fn run_convert(cmd: ConvertCmd) -> Result<()> {
         src_pcm
     };
     let padded = lightvc_core::codec::pad_to_hop(src_44k);
+
+    if use_full {
+        println!("Mode: full (offline, no chunking) — SOTA quality");
+        println!("Processing...");
+        let output = pipeline.process_full(&padded)?;
+        save_wav_mono(&cmd.output, &output, 44_100)?;
+        println!("Saved: {}", cmd.output.display());
+        return Ok(());
+    }
 
     let chunk_size = pipeline.chunk_samples();
     println!(

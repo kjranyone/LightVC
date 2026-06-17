@@ -25,11 +25,30 @@ pub struct TargetVoice {
     pub ref_latent: Tensor,
 }
 
+/// Number of latent frames to retain as converter left-context.
+///
+/// The converter stacks 4 `CausalResBlock`s with dilations [1, 3, 9]
+/// (kernel 7). Because the converter is strictly causal when conditioned
+/// on a fixed reference, feeding `[context | new]` and trimming to the
+/// last `n_new` frames reproduces the non-chunked output near-exactly.
+fn converter_context_frames(mode: LatencyMode) -> usize {
+    match mode {
+        LatencyMode::Strict => 16,
+        LatencyMode::Balanced => 32,
+        LatencyMode::Quality => 64,
+    }
+}
+
 /// The full VC pipeline: encode → convert → decode.
 pub struct VcPipeline {
     stream_codec: StreamingCodec,
     converter: AnyConverter,
     target: Option<TargetVoice>,
+    mode: LatencyMode,
+    /// Cached source-latent left-context for causal conv history.
+    src_context: Option<Tensor>,
+    /// Velocity scale for flow-matching inference (guidance scale).
+    pub velocity_scale: f64,
 }
 
 impl VcPipeline {
@@ -52,6 +71,9 @@ impl VcPipeline {
             stream_codec,
             converter,
             target: None,
+            mode,
+            src_context: None,
+            velocity_scale: 2.5,
         })
     }
 
@@ -100,9 +122,33 @@ impl VcPipeline {
         }
 
         let ref_latent = &self.target.as_ref().unwrap().ref_latent;
-        let converted = self.converter.convert(&latent, ref_latent)?;
 
-        let pcm_out = self.stream_codec.decode_step(&converted)?;
+        // Prepend converter left-context so causal convs see real history.
+        let full_src = match &self.src_context {
+            Some(ctx) => Tensor::cat(&[ctx, &latent], 2)?,
+            None => latent.clone(),
+        };
+        let converted = self.converter.convert(&full_src, ref_latent, self.velocity_scale)?;
+
+        // Keep only newly produced frames for the decoder.
+        let n_new = latent.dim(2)?;
+        let total = converted.dim(2)?;
+        let start = total.saturating_sub(n_new);
+        let new_converted = converted.narrow(2, start, n_new)?.contiguous()?;
+
+        // Update context: retain last ctx_len frames.
+        let ctx_len = converter_context_frames(self.mode);
+        let src_total = full_src.dim(2)?;
+        let ctx_start = src_total.saturating_sub(ctx_len);
+        if ctx_start < src_total {
+            self.src_context = Some(
+                full_src
+                    .narrow(2, ctx_start, src_total - ctx_start)?
+                    .contiguous()?,
+            );
+        }
+
+        let pcm_out = self.stream_codec.decode_step(&new_converted)?;
 
         // Clamp NaN/Inf to [-1, 1]; NaN → 0. Guards against decoder blow-ups
         // from out-of-distribution latents.
@@ -126,6 +172,22 @@ impl VcPipeline {
     /// Reset all streaming state (call on device change or silence gap).
     pub fn reset(&mut self) {
         self.stream_codec.reset_state();
+        self.src_context = None;
+    }
+
+    /// Offline whole-audio conversion (no chunking artifacts).
+    ///
+    /// Encodes the entire source, converts in one pass, decodes.
+    /// SOTA-quality path for file processing.
+    pub fn process_full(&mut self, source_pcm: &[f32]) -> Result<Vec<f32>> {
+        if self.target.is_none() {
+            return Ok(source_pcm.to_vec());
+        }
+        let ref_latent = &self.target.as_ref().unwrap().ref_latent;
+        let latent = self.stream_codec.encode_full(source_pcm)?;
+        let converted = self.converter.convert(&latent, ref_latent, self.velocity_scale)?;
+        let pcm_out = self.stream_codec.codec().decode_to_pcm(&converted)?;
+        Ok(pcm_out)
     }
 
     pub fn has_target(&self) -> bool {
