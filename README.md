@@ -41,6 +41,24 @@ Mic input → DAC encode → one-step converter → DAC decode → output
 
 ## Quick Start
 
+### One-command (Windows / PowerShell)
+
+```powershell
+.\dev.ps1
+```
+
+`dev.ps1` builds the release binary, auto-downloads the ~307 MB DAC
+weights on first run (cached at `models/dac_44khz.safetensors`), then
+launches the GUI. Converter weights are optional — load them later via
+the Realtime tab once training completes.
+
+```powershell
+.\dev.ps1 -NoBuild                # skip build, use existing binary
+.\dev.ps1 -Roundtrip -Input a.wav # validate DAC encode/decode
+```
+
+### Manual build
+
 ### Prerequisites
 
 - Rust 1.75+ (2024 edition)
