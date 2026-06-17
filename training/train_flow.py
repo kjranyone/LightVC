@@ -41,7 +41,11 @@ from converter import (
 
 
 def load_latent_corpus(data_dir: str, max_frames: int = 400):
-    """Load all latents grouped by speaker."""
+    """Load all latents grouped by speaker.
+
+    Also loads timbre-shifted variants ({utt_id}_ts.npy) if present,
+    so the trainer can apply Seed-VC-style augmentation (MODEL_TRAINING C.3).
+    """
     import csv
 
     index_path = Path(data_dir) / "index.tsv"
@@ -49,6 +53,7 @@ def load_latent_corpus(data_dir: str, max_frames: int = 400):
         raise FileNotFoundError(f"No index.tsv in {data_dir}")
 
     speakers = {}
+    n_shifted = 0
     with open(index_path) as f:
         reader = csv.DictReader(f, delimiter="\t")
         for row in reader:
@@ -63,15 +68,31 @@ def load_latent_corpus(data_dir: str, max_frames: int = 400):
                 continue
             if latent.shape[1] > max_frames:
                 latent = latent[:, :max_frames]
-            speakers.setdefault(spk, []).append(latent.astype(np.float32))
+
+            ts_path = npy_path.replace(".npy", "_ts.npy")
+            shifted = None
+            if os.path.exists(ts_path):
+                shifted = np.load(ts_path)
+                if shifted.shape[1] > max_frames:
+                    shifted = shifted[:, :max_frames]
+                shifted = shifted.astype(np.float32)
+                n_shifted += 1
+
+            speakers.setdefault(spk, []).append((latent.astype(np.float32), shifted))
 
     total = sum(len(v) for v in speakers.values())
     print(f"Loaded {total} latents from {len(speakers)} speakers", flush=True)
+    if n_shifted:
+        print(f"Timbre-shifted variants: {n_shifted}", flush=True)
     return speakers
 
 
 def sample_flow_batch(
-    speakers: dict, batch_size: int, max_frames: int, device: torch.device
+    speakers: dict,
+    batch_size: int,
+    max_frames: int,
+    device: torch.device,
+    timbre_shift_prob: float = 0.0,
 ):
     """Sample a flow-matching training batch.
 
@@ -80,6 +101,10 @@ def sample_flow_batch(
       - Pick a DIFFERENT target speaker
       - z_tgt = a real utterance from target speaker (any text)
       - z_ref = another real utterance from target speaker (for speaker conditioning)
+
+    With probability ``timbre_shift_prob``, the source latent is replaced
+    by its pre-encoded timbre-shifted variant (MODEL_TRAINING C.3), if
+    available.
     """
     spk_list = list(speakers.keys())
     src_list, tgt_list, ref_list = [], [], []
@@ -88,8 +113,11 @@ def sample_flow_batch(
     for _ in range(batch_size):
         src_spk = spk_list[np.random.randint(0, len(spk_list))]
         src_utts = speakers[src_spk]
-        src = src_utts[np.random.randint(0, len(src_utts))]
-        src_list.append(src)
+        src_orig, src_shifted = src_utts[np.random.randint(0, len(src_utts))]
+        if src_shifted is not None and np.random.random() < timbre_shift_prob:
+            src_list.append(src_shifted)
+        else:
+            src_list.append(src_orig)
         src_spk_ids.append(src_spk)
 
         # Different target speaker
@@ -98,15 +126,15 @@ def sample_flow_batch(
             tgt_spk = spk_list[np.random.randint(0, len(spk_list))]
 
         tgt_utts = speakers[tgt_spk]
-        # Target utterance (real recording, any text)
-        tgt = tgt_utts[np.random.randint(0, len(tgt_utts))]
+        # Target utterance (real recording, any text) — no timbre shift on target
+        tgt = tgt_utts[np.random.randint(0, len(tgt_utts))][0]
         tgt_list.append(tgt)
 
         # Reference utterance (different from target, same speaker)
         if len(tgt_utts) > 1:
-            ref = tgt_utts[np.random.randint(0, len(tgt_utts))]
+            ref = tgt_utts[np.random.randint(0, len(tgt_utts))][0]
             while ref is tgt:
-                ref = tgt_utts[np.random.randint(0, len(tgt_utts))]
+                ref = tgt_utts[np.random.randint(0, len(tgt_utts))][0]
         else:
             ref = tgt
         ref_list.append(ref)
@@ -152,6 +180,7 @@ def train(config_path, data_dir, output_dir):
     train_cfg = cfg["training"]
     loss_cfg = cfg["losses"]
     max_frames = cfg["data"]["max_utterance_frames"]
+    timbre_shift_prob = train_cfg.get("timbre_shift_prob", 0.0)
 
     configured = train_cfg.get("device", "auto")
     if configured == "auto":
@@ -233,7 +262,7 @@ def train(config_path, data_dir, output_dir):
     print(f"Starting flow matching training for {max_steps} steps...", flush=True)
     for step in range(1, max_steps + 1):
         z_src, z_tgt, z_ref, src_spk_ids = sample_flow_batch(
-            speakers, batch_size, max_frames, device
+            speakers, batch_size, max_frames, device, timbre_shift_prob
         )
 
         B = z_src.shape[0]

@@ -21,6 +21,10 @@ training:
   lr_scheduler_gamma: 0.9999
   gradient_clip: 1.0
   max_steps: 200000
+  # Timbre shifter augmentation (MODEL_TRAINING C.3, Seed-VC recipe).
+  # Requires _ts.npy files from: encode_corpus.py --timbre-shift
+  # 0.0 = disabled (no _ts.npy files encoded yet).
+  timbre_shift_prob: 0.5
 
 losses:
   fm_velocity: 1.0

@@ -107,6 +107,12 @@ def main():
         default=30.0,
         help="Truncate utterances longer than this (seconds)",
     )
+    parser.add_argument(
+        "--timbre-shift",
+        action="store_true",
+        help="Also encode timbre-shifted versions (MODEL_TRAINING C.3 augmentation). "
+        "Creates {utt_id}_ts.npy alongside each latent.",
+    )
     args = parser.parse_args()
 
     os.makedirs(args.output, exist_ok=True)
@@ -161,6 +167,17 @@ def main():
                 np.save(out_path, latent.astype(np.float32))
 
                 writer.writerow([spk, utt_id, latent.shape[1], out_path])
+
+                if args.timbre_shift:
+                    from timbre_shifter import timbre_shift as _ts
+
+                    wav_ts = _ts(wav, 44100)
+                    rem_ts = len(wav_ts) % 512
+                    if rem_ts > 0:
+                        wav_ts = np.pad(wav_ts, (0, 512 - rem_ts))
+                    latent_ts = encode_audio(dac, wav_ts, device)
+                    ts_path = os.path.join(spk_dir, f"{utt_id}_ts.npy")
+                    np.save(ts_path, latent_ts.astype(np.float32))
 
     print(f"\nDone. Index: {index_path}")
 
