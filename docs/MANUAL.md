@@ -126,10 +126,13 @@ cargo build --release --features asio -p lightvc-app
 マイク入力をリアルタイムに変換してスピーカーに出力します。
 
 1. **モデルロード** — Converter重みとConfigを指定して「Load Converter」をクリック
-2. **Start** — リアルタイム変換を開始
-3. **モード切替** — Strict（0ms）/ Balanced（~40ms）/ Quality（~80ms）をノブで切替
-4. **Bypass** — 変換をバイパス（入力をそのまま出力）
-5. **レベルメーター** — 入出力の音量を可視化
+2. **Start / Stop** — 「▶ Start」でリアルタイム変換を開始、「■ Stop」で停止
+3. **ステータス** — 現在の状態を表示: `● LIVE`（変換中）/ `BYPASS`（バイパス中）/ `STOPPED`（停止中）
+4. **モード切替** — Strict（0ms）/ Balanced（~40ms）/ Quality（~80ms）をノブで切替
+5. **Bypass** — 変換をバイパス（入力をそのまま出力）
+6. **レベルメーター** — 入出力の音量を可視化
+7. **メトリクス** — エンドツーエンドレイテンシ（ms）、RTF（リアルタイムファクター）、xrun（オーバーラン/アンダーラン）カウントを表示
+8. **Audio Devices** — 認識されている入出力オーディオデバイスの一覧（折りたたみセクション）
 
 #### タブ3: Voices（ボイスカタログ）
 
@@ -300,7 +303,7 @@ uv run python generate_tts_corpus.py
 
 ### 音が出ない
 
-- **モデルがロードされているか確認** — Realtimeタブのステータスが「● READY」になっているか
+- **モデルがロードされているか確認** — Realtimeタブのステータスが「● LIVE」になっているか（停止中は「STOPPED」）
 - **Bypassがオンになっていないか確認** — 「BYPASS ON」の場合は入力がそのまま出力される
 - **オーディオデバイスを確認** — Realtimeタブの「Audio Devices」で入出力デバイスが認識されているか
 

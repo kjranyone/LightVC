@@ -28,6 +28,7 @@ pub fn render(
     mode: &mut lightvc_core::converter::LatencyMode,
     metrics: &RtMetrics,
     knob_tex: Option<&egui::TextureHandle>,
+    icon_stop_tex: Option<&egui::TextureHandle>,
     mut on_load: impl FnMut(&str, &str),
     mut on_ensure_thread: impl FnMut(),
     on_control: impl Fn(RtControl),
@@ -242,7 +243,12 @@ pub fn render(
                 *running = true;
             }
         } else {
-            if crate::theme::pill_button(ui, "■ Stop", true) {
+            let clicked = if let Some(tex) = icon_stop_tex {
+                crate::theme::icon_button(ui, tex, " Stop", true)
+            } else {
+                crate::theme::pill_button(ui, "■ Stop", true)
+            };
+            if clicked {
                 on_control(RtControl::Stop);
                 *running = false;
             }

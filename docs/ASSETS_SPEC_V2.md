@@ -78,4 +78,22 @@ crates/lightvc-app/assets/
 4. **CLAPノブのリッチ化**
    CLAPプラグインのUIでも画像アセットを使用するように変更します。
 
-よろしくお願いいたします！
+---
+
+## 実装状況（[06-4] にて確認・更新）
+
+| アセット | 状態 | 備考 |
+|---------|------|------|
+| `icon_folder.png` | ✅ 使用中 | Browse ボタン、Catalog タブ |
+| `icon_play.png` | ✅ 使用中 | Offline タブ、Catalog タブ |
+| `icon_convert.png` | ✅ 使用中 | Offline タブ Convert ボタン |
+| `icon_trash.png` | ✅ 使用中 | Catalog タブ Remove ボタン |
+| `icon_mic.png` | ✅ 使用中 | Offline タブ Source ラベル |
+| `icon_speaker.png` | ✅ 使用中 | Offline タブ Output ラベル |
+| `icon_stop.png` | ✅ 使用中 | Realtime タブ Stop ボタン ([06-4] で対応) |
+| `empty_stars.png` | ✅ 使用中 | Catalog タブ空状態 |
+| `knob_64_frames.png` | ✅ 使用中 | スタンドアロンアプリのノブ |
+| `knob_64.png` | ⚠️ 未使用 | スプライト版のみ使用中。削除候補 |
+| `logo_header@2x.png` | ⚠️ 未使用 | Retina 対応未実装。1x 版のみ使用 |
+| `bg_texture@2x.png` | ⚠️ 未使用 | Retina 対応未実装。1x 版のみ使用 |
+| CLAP プラグインのノブ画像化 | ❌ 未実装 | `lightvc-clap` は純 egui 描画のまま（§3） |
