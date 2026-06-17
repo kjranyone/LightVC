@@ -302,6 +302,23 @@ pub fn inference_loop(
     let mut resampler_down: Option<lightvc_audio::Resampler> = None;
     let mut device_sr: u32 = 44_100;
 
+    // Three-stage buffering decouples the four sample-frame domains:
+    //   capture (device_sr) → [in_accum] → process_up →
+    //   [pcm_44k_accum]     → process_chunk →
+    //   [out_44k_accum]     → process_down → playback (device_sr)
+    // Each stage drains in exact multiples of its native frame unit, so
+    // the resamplers never see truncated input and partial chunks carry
+    // over to the next iteration instead of being zero-padded.
+    let mut in_accum: Vec<f32> = Vec::new();
+    let mut pcm_44k_accum: Vec<f32> = Vec::new();
+    let mut out_44k_accum: Vec<f32> = Vec::new();
+
+    // Metrics from the most recently processed chunk.
+    let mut in_rms_last: f32 = 0.0;
+    let mut out_rms_last: f32 = 0.0;
+    let mut rtf_last: f32 = 0.0;
+    let mut latency_ms_last: f32 = 0.0;
+
     loop {
         while let Ok(msg) = control_rx.try_recv() {
             match msg {
@@ -315,6 +332,8 @@ pub fn inference_loop(
                         &mut device_sr,
                     ) {
                         Ok(d) => {
+                            // Chunk size large enough to swallow one converter
+                            // chunk (up to 4096 at 44.1k) plus resampler wiggle.
                             if let Ok(r1) = lightvc_audio::Resampler::new(device_sr as usize, 4096)
                             {
                                 resampler_up = Some(r1);
@@ -323,6 +342,9 @@ pub fn inference_loop(
                             {
                                 resampler_down = Some(r2);
                             }
+                            in_accum.clear();
+                            pcm_44k_accum.clear();
+                            out_44k_accum.clear();
                             duplex = Some(d);
                             running = true;
                         }
@@ -336,6 +358,9 @@ pub fn inference_loop(
                     playback_producer = None;
                     resampler_up = None;
                     resampler_down = None;
+                    in_accum.clear();
+                    pcm_44k_accum.clear();
+                    out_44k_accum.clear();
                 }
                 RtControl::SetMode(mode) => {
                     if let Ok(mut p) = pipeline.lock() {
@@ -374,87 +399,113 @@ pub fn inference_loop(
         };
 
         let chunk_sz = pipeline.lock().map(|p| p.chunk_samples()).unwrap_or(2048);
-        let needed = resampler_up
-            .as_ref()
-            .map(|r| r.input_frames_needed_up())
-            .unwrap_or(chunk_sz);
+        let is_passthrough_sr = device_sr == 44_100;
 
-        let mut cap = Vec::with_capacity(needed);
-        while cap.len() < needed {
-            match cap_rx.pop() {
-                Ok(s) => cap.push(s),
-                Err(_) => break,
+        let mut did_work = false;
+
+        // ---- Stage 1: drain capture ring buffer into in_accum (device_sr).
+        // Never zero-pad here; if the device underruns we simply process less.
+        let mut popped = 0usize;
+        while let Ok(s) = cap_rx.pop() {
+            in_accum.push(s);
+            popped += 1;
+            if popped >= 8192 {
+                break;
             }
         }
-        if cap.len() < needed.min(512) {
-            std::thread::sleep(std::time::Duration::from_millis(2));
-            continue;
-        }
-        if cap.len() < needed {
-            cap.resize(needed, 0.0);
+        if popped > 0 {
+            did_work = true;
         }
 
-        let t0 = Instant::now();
-
-        let pcm_44k: Vec<f32> = if device_sr != 44_100 {
-            resampler_up
-                .as_mut()
-                .and_then(|r| r.process_up(&cap).ok())
-                .map(|s| s.to_vec())
-                .unwrap_or_else(|| cap.clone())
-        } else {
-            cap.clone()
-        };
-
-        let mut chunk = pcm_44k;
-        if chunk.len() < chunk_sz {
-            chunk.resize(chunk_sz, 0.0);
-        } else if chunk.len() > chunk_sz {
-            chunk.truncate(chunk_sz);
-        }
-
-        let out_44k = if bypass {
-            chunk
-        } else {
-            match pipeline.lock() {
-                Ok(mut p) => p.process_chunk(&chunk).unwrap_or_else(|e| {
-                    eprintln!("VC: {e}");
-                    chunk
-                }),
-                Err(_) => chunk,
+        // ---- Stage 2: resample device_sr → 44.1k in exact input chunks.
+        if !is_passthrough_sr {
+            if let Some(r_up) = resampler_up.as_mut() {
+                let needed = r_up.input_frames_needed_up();
+                while in_accum.len() >= needed {
+                    let input_chunk: Vec<f32> = in_accum.drain(..needed).collect();
+                    match r_up.process_up(&input_chunk) {
+                        Ok(out) => {
+                            pcm_44k_accum.extend_from_slice(out);
+                            did_work = true;
+                        }
+                        Err(e) => eprintln!("resample up: {e}"),
+                    }
+                }
             }
-        };
-
-        let in_rms = widgets::rms(&cap);
-        let out_rms = widgets::rms(&out_44k);
-        let elapsed = t0.elapsed();
-
-        let out_dev: Vec<f32> = if device_sr != 44_100 {
-            resampler_down
-                .as_mut()
-                .and_then(|r| r.process_down(&out_44k).ok())
-                .map(|s| s.to_vec())
-                .unwrap_or_else(|| out_44k)
-        } else {
-            out_44k
-        };
-
-        for s in &out_dev {
-            let _ = pb_tx.push(*s);
+        } else if !in_accum.is_empty() {
+            // device_sr == 44.1k: no resampling, pass samples straight through.
+            pcm_44k_accum.append(&mut in_accum);
+            did_work = true;
         }
 
-        let dur_ms = (out_dev.len() as f32 / device_sr as f32) * 1000.0;
-        let rtf = if dur_ms > 0.0 {
-            elapsed.as_secs_f32() / (dur_ms / 1000.0)
+        // ---- Stage 3: run the converter on whole chunks of chunk_sz frames.
+        while pcm_44k_accum.len() >= chunk_sz {
+            let chunk: Vec<f32> = pcm_44k_accum.drain(..chunk_sz).collect();
+            let t0 = Instant::now();
+
+            let out = if bypass {
+                chunk.clone()
+            } else {
+                match pipeline.lock() {
+                    Ok(mut p) => p.process_chunk(&chunk).unwrap_or_else(|e| {
+                        eprintln!("VC: {e}");
+                        chunk.clone()
+                    }),
+                    Err(_) => chunk.clone(),
+                }
+            };
+
+            let elapsed = t0.elapsed();
+            in_rms_last = widgets::rms(&chunk);
+            out_rms_last = widgets::rms(&out);
+            let dur_s = out.len() as f32 / 44_100.0;
+            rtf_last = if dur_s > 0.0 {
+                elapsed.as_secs_f32() / dur_s
+            } else {
+                0.0
+            };
+            latency_ms_last = dur_s * 1000.0;
+
+            out_44k_accum.extend_from_slice(&out);
+            did_work = true;
+        }
+
+        // ---- Stage 4: resample 44.1k → device_sr and push to playback.
+        if !is_passthrough_sr {
+            if let Some(r_down) = resampler_down.as_mut() {
+                // SincFixedOut has a variable input length; read it fresh each
+                // iteration. process_down consumes exactly that many frames.
+                let mut needed = r_down.input_frames_needed_down();
+                while out_44k_accum.len() >= needed && needed > 0 {
+                    let input_chunk: Vec<f32> = out_44k_accum.drain(..needed).collect();
+                    match r_down.process_down(&input_chunk) {
+                        Ok(out) => {
+                            for s in out {
+                                let _ = pb_tx.push(*s);
+                            }
+                        }
+                        Err(e) => eprintln!("resample down: {e}"),
+                    }
+                    needed = r_down.input_frames_needed_down();
+                }
+            }
         } else {
-            0.0
-        };
+            // device_sr == 44.1k: push decoded samples directly.
+            for s in out_44k_accum.drain(..) {
+                let _ = pb_tx.push(s);
+            }
+        }
+
         let _ = metrics_tx.send(RtMetrics {
-            input_rms: in_rms,
-            output_rms: out_rms,
-            latency_ms: dur_ms,
-            rtf,
+            input_rms: in_rms_last,
+            output_rms: out_rms_last,
+            latency_ms: latency_ms_last,
+            rtf: rtf_last,
         });
+
+        if !did_work {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
     }
 }
 
