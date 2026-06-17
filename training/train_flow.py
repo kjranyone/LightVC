@@ -27,7 +27,12 @@ import torch
 import torch.nn.functional as F
 
 sys.path.insert(0, str(Path(__file__).parent))
-from converter import FlowConverter, ConverterConfig
+from converter import (
+    DisentangledConverter,
+    FlowConverter,
+    ConverterConfig,
+    grad_reverse,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -78,12 +83,14 @@ def sample_flow_batch(
     """
     spk_list = list(speakers.keys())
     src_list, tgt_list, ref_list = [], [], []
+    src_spk_ids: list[str] = []
 
     for _ in range(batch_size):
         src_spk = spk_list[np.random.randint(0, len(spk_list))]
         src_utts = speakers[src_spk]
         src = src_utts[np.random.randint(0, len(src_utts))]
         src_list.append(src)
+        src_spk_ids.append(src_spk)
 
         # Different target speaker
         tgt_spk = src_spk
@@ -127,7 +134,7 @@ def sample_flow_batch(
                 d = d[:, start : start + T_len]
             dest[i] = torch.from_numpy(d[:, :T_len])
 
-    return src.to(device), tgt.to(device), ref.to(device)
+    return src.to(device), tgt.to(device), ref.to(device), src_spk_ids
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +171,21 @@ def train(config_path, data_dir, output_dir):
     n_params = sum(p.numel() for p in model.parameters())
     print(f"FlowConverter parameters: {n_params:,} ({n_params / 1e6:.1f}M)", flush=True)
 
+    # --- Content/speaker disentanglement via gradient reversal ([04-4]) ---
+    # Wrap the FlowConverter with a lightweight speaker-adversary on the
+    # content code. Disabled when content_mi weight is 0 or absent.
+    content_mi_weight = loss_cfg.get("content_mi", 0.0)
+    spk_to_idx: dict[str, int] | None = None
+    disentangled: DisentangledConverter | None = None
+    if content_mi_weight > 0:
+        spk_to_idx = {spk: i for i, spk in enumerate(sorted(speakers.keys()))}
+        disentangled = DisentangledConverter(model, len(spk_to_idx)).to(device)
+        print(
+            f"Content MI loss enabled: weight={content_mi_weight}, "
+            f"n_speakers={len(spk_to_idx)}",
+            flush=True,
+        )
+
     # Init from warm-start checkpoint
     if "init_from" in train_cfg and train_cfg["init_from"]:
         ckpt = torch.load(
@@ -178,8 +200,14 @@ def train(config_path, data_dir, output_dir):
             flush=True,
         )
 
+    # Optimizer: include adversary params if GRL is active.
+    opt_params = (
+        list(model.parameters()) + list(disentangled.adversary.parameters())
+        if disentangled is not None
+        else list(model.parameters())
+    )
     optim = torch.optim.AdamW(
-        model.parameters(),
+        opt_params,
         lr=train_cfg["learning_rate"],
         betas=tuple(train_cfg.get("optimizer_betas", [0.8, 0.99])),
         weight_decay=train_cfg.get("weight_decay", 0.01),
@@ -198,11 +226,13 @@ def train(config_path, data_dir, output_dir):
     scaler = None  # GradScaler not safe on Arc A-series (no FP64)
 
     model.train()
-    losses_log = {"total": [], "fm": [], "l1": [], "spk": [], "content": []}
+    if disentangled is not None:
+        disentangled.adversary.train()
+    losses_log = {"total": [], "fm": [], "l1": [], "spk": [], "content": [], "grl": []}
 
     print(f"Starting flow matching training for {max_steps} steps...", flush=True)
     for step in range(1, max_steps + 1):
-        z_src, z_tgt, z_ref = sample_flow_batch(
+        z_src, z_tgt, z_ref, src_spk_ids = sample_flow_batch(
             speakers, batch_size, max_frames, device
         )
 
@@ -251,7 +281,19 @@ def train(config_path, data_dir, output_dir):
             "content_inv", 0.5
         )
 
-        loss = loss_fm + loss_l1 + loss_spk + loss_content
+        # Content/speaker disentanglement via gradient reversal ([04-4]).
+        # The adversary tries to predict the source speaker from the content
+        # code; GRL flips the gradient so the bottleneck learns to remove
+        # speaker information.
+        loss_grl = torch.tensor(0.0, device=device)
+        if disentangled is not None and spk_to_idx is not None:
+            spk_labels = torch.tensor(
+                [spk_to_idx[s] for s in src_spk_ids], device=device, dtype=torch.long
+            )
+            spk_logits = disentangled.adversary(grad_reverse(content_src))
+            loss_grl = F.cross_entropy(spk_logits, spk_labels) * content_mi_weight
+
+        loss = loss_fm + loss_l1 + loss_spk + loss_content + loss_grl
 
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
@@ -263,13 +305,15 @@ def train(config_path, data_dir, output_dir):
         losses_log["l1"].append(loss_l1.item())
         losses_log["spk"].append(loss_spk.item())
         losses_log["content"].append(loss_content.item())
+        losses_log["grl"].append(loss_grl.item())
 
         if step % 100 == 0:
             avg = {k: np.mean(v[-100:]) for k, v in losses_log.items()}
             print(
                 f"step {step}/{max_steps} | loss={avg['total']:.4f} "
                 f"fm={avg['fm']:.4f} l1={avg['l1']:.4f} "
-                f"spk={avg['spk']:.4f} lr={scheduler.get_last_lr()[0]:.2e}",
+                f"spk={avg['spk']:.4f} grl={avg['grl']:.4f} "
+                f"lr={scheduler.get_last_lr()[0]:.2e}",
                 flush=True,
             )
 

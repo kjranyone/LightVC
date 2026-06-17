@@ -23,6 +23,8 @@ losses:
   latent_l1: 2.0
   speaker_sim: 1.0
   content_inv: 0.5
+  # Disabled in smoke; the adversary needs many speakers to be meaningful.
+  content_mi: 0.0
 
 data:
   sample_rate: 44100

@@ -439,3 +439,91 @@ class FlowConverter(nn.Module):
 
     def speaker_embedding(self, ref_latent: torch.Tensor) -> torch.Tensor:
         return self.speaker_encoder(ref_latent)
+
+
+# ---------------------------------------------------------------------------
+# Gradient Reversal Layer (GRL) for content/speaker disentanglement
+# ---------------------------------------------------------------------------
+
+
+class GradientReversalFunction(torch.autograd.Function):
+    """Multiplies gradients by -lambda on backward.
+
+    Used by the content MI loss ([04-4]): a lightweight speaker classifier
+    sits on the content code, but its gradients are reversed so the
+    BottleneckEncoder learns to *remove* speaker information — the
+    VQMIVC-style mutual information regularization (MODEL_TRAINING C.4 #5).
+    """
+
+    @staticmethod
+    def forward(
+        ctx: torch.autograd.function.FunctionCtx, x: torch.Tensor, lambda_: float
+    ) -> torch.Tensor:
+        ctx.lambda_ = lambda_
+        return x.view_as(x)
+
+    @staticmethod
+    def backward(ctx: torch.autograd.function.FunctionCtx, grad_output: torch.Tensor):
+        return -ctx.lambda_ * grad_output, None
+
+
+def grad_reverse(x: torch.Tensor, lambda_: float = 1.0) -> torch.Tensor:
+    return GradientReversalFunction.apply(x, lambda_)
+
+
+class ContentSpeakerAdversary(nn.Module):
+    """Lightweight speaker classifier applied to the content code.
+
+    Adversarially trained via gradient reversal: the bottleneck learns to
+    produce content codes from which speaker identity cannot be recovered,
+    improving disentanglement and reducing source-voice leakage in
+    zero-shot conversion.
+
+    Input: content_code [B, latent_dim, T] → speaker logits [B, n_speakers]
+    """
+
+    def __init__(self, latent_dim: int, n_speakers: int, bottleneck_dim: int = 256):
+        super().__init__()
+        self.proj = nn.Conv1d(latent_dim, bottleneck_dim, 1)
+        self.pool = nn.AdaptiveAvgPool1d(1)
+        self.cls = nn.Sequential(
+            nn.Linear(bottleneck_dim, bottleneck_dim),
+            nn.ReLU(),
+            nn.Linear(bottleneck_dim, n_speakers),
+        )
+
+    def forward(self, content_code: torch.Tensor) -> torch.Tensor:
+        h = self.proj(content_code)
+        h = self.pool(h).squeeze(-1)
+        return self.cls(h)
+
+
+class DisentangledConverter(nn.Module):
+    """Wrapper around FlowConverter + ContentSpeakerAdversary.
+
+    Exposes `content_code()` for the GRL loss during training. At inference,
+    use the inner FlowConverter directly (the adversary is discarded).
+    """
+
+    def __init__(self, converter: "FlowConverter", n_speakers: int):
+        super().__init__()
+        self.converter = converter
+        self.adversary = ContentSpeakerAdversary(
+            converter.config.latent_dim, n_speakers
+        )
+
+    def forward_velocity(
+        self,
+        z_t: torch.Tensor,
+        t: torch.Tensor,
+        ref_latent: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Returns (velocity, content_code) so the trainer can compute the
+        GRL adversary loss on the content code in parallel."""
+        content = self.converter.bottleneck(z_t)
+        spk_logits = self.adversary(grad_reverse(content))
+        v = self.converter.forward_velocity(z_t, t, ref_latent)
+        return v, spk_logits
+
+    def convert(self, z_src: torch.Tensor, ref_latent: torch.Tensor) -> torch.Tensor:
+        return self.converter.convert(z_src, ref_latent)

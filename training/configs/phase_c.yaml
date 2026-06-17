@@ -5,7 +5,7 @@
 # Expected wall time on a single Arc B580: ~5-7 days.
 model:
   latent_dim: 1024
-  hidden_dim: 256
+  hidden_dim: 1024
   n_conv_blocks: 4
   speaker_embed_dim: 256
   enable_timbre: false
@@ -27,6 +27,11 @@ losses:
   latent_l1: 2.0
   speaker_sim: 1.0
   content_inv: 0.5
+  # Content/speaker mutual information penalty via gradient reversal ([04-4]).
+  # The bottleneck is trained to remove speaker information from the content
+  # code. 0.1 is a conservative starting point; raise to 0.2-0.3 if speaker
+  # leakage is observed in conversions, lower if intelligibility degrades.
+  content_mi: 0.1
 
 data:
   sample_rate: 44100
