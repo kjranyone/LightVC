@@ -5,6 +5,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use nice_plug::prelude::*;
@@ -558,6 +559,7 @@ fn inference_thread(
         }
 
         let in_rms = rms(&cap);
+        let t0 = Instant::now();
         let out = match p.lock() {
             Ok(mut pl) => pl.process_chunk(&cap).unwrap_or_else(|e| {
                 nice_log!("VC: {e}");
@@ -565,11 +567,19 @@ fn inference_thread(
             }),
             Err(_) => continue,
         };
+        let elapsed = t0.elapsed();
 
         let out_rms = rms(&out);
         for s in &out {
             let _ = ptx.push(*s);
         }
+        // RTF = process_time / audio_duration. <1.0 means realtime-safe.
+        let audio_dur_s = out.len() as f32 / 44_100.0;
+        let rtf = if audio_dur_s > 0.0 {
+            elapsed.as_secs_f32() / audio_dur_s
+        } else {
+            0.0
+        };
         // Preserve config_source/summary from the shared metrics (set on load).
         let (cfg_src, cfg_sum) = {
             let m = metrics.lock().unwrap();
@@ -578,7 +588,7 @@ fn inference_thread(
         let _ = metrics_tx.send(Metrics {
             input_rms: in_rms,
             output_rms: out_rms,
-            rtf: 0.0, // TODO: measure ([06-2])
+            rtf,
             pipeline_ready: true,
             config_source: cfg_src,
             config_summary: cfg_sum,

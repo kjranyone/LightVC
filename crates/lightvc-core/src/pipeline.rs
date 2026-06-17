@@ -2,14 +2,22 @@
 //!
 //! Wires together streaming codec encode → converter → streaming codec decode.
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use candle_core::Tensor;
 
 use crate::{
     codec::{DacCodec, DacConfig},
     converter::{AnyConverter, LatencyMode},
     streaming::{ChunkMode, StreamingCodec},
+    DAC_SAMPLE_RATE,
 };
+
+/// Minimum reference audio length (1 second) for a reliable speaker embedding.
+pub const MIN_REFERENCE_SAMPLES: usize = DAC_SAMPLE_RATE as usize;
+
+/// RMS threshold below which an input chunk is treated as silence and
+/// short-circuits the encode/convert/decode path (CPU saving).
+pub const SILENCE_RMS_THRESHOLD: f32 = 1e-4;
 
 /// Holds cached target voice information for zero-shot VC.
 pub struct TargetVoice {
@@ -48,7 +56,18 @@ impl VcPipeline {
     }
 
     /// Set the target voice from reference audio (44.1 kHz PCM).
+    ///
+    /// Returns an error if the reference is shorter than
+    /// [`MIN_REFERENCE_SAMPLES`] (1 second), since shorter clips yield
+    /// unstable speaker embeddings.
     pub fn set_target(&mut self, reference_pcm: &[f32]) -> Result<()> {
+        if reference_pcm.len() < MIN_REFERENCE_SAMPLES {
+            return Err(anyhow!(
+                "reference too short: {} samples < {} (1s @ 44.1 kHz)",
+                reference_pcm.len(),
+                MIN_REFERENCE_SAMPLES
+            ));
+        }
         let ref_latent = self.stream_codec.encode_full(reference_pcm)?;
         self.target = Some(TargetVoice { ref_latent });
         Ok(())
@@ -56,12 +75,19 @@ impl VcPipeline {
 
     /// Process one chunk of 44.1 kHz PCM → 44.1 kHz PCM.
     ///
-    /// If no target voice is set, returns the input unchanged (passthrough).
-    /// Returns an empty `Vec` during FRC warmup (the first chunk(s) before
-    /// enough lookahead has accumulated); callers should treat this as
-    /// silence.
+    /// Edge cases handled (ARCHITECTURE §8):
+    ///   - No target set → passthrough.
+    ///   - Near-silence input (RMS < [`SILENCE_RMS_THRESHOLD`]) → passthrough,
+    ///     saves CPU during mute gaps.
+    ///   - FRC warmup (empty latent) → empty output (silence).
+    ///   - NaN/Inf in decoder output → clamped to [-1, 1], NaN → 0.
     pub fn process_chunk(&mut self, chunk_pcm: &[f32]) -> Result<Vec<f32>> {
         if self.target.is_none() {
+            return Ok(chunk_pcm.to_vec());
+        }
+
+        // Silence detection: skip the full path on near-zero input.
+        if rms(chunk_pcm) < SILENCE_RMS_THRESHOLD {
             return Ok(chunk_pcm.to_vec());
         }
 
@@ -78,7 +104,14 @@ impl VcPipeline {
 
         let pcm_out = self.stream_codec.decode_step(&converted)?;
 
-        Ok(pcm_out)
+        // Clamp NaN/Inf to [-1, 1]; NaN → 0. Guards against decoder blow-ups
+        // from out-of-distribution latents.
+        let safe = pcm_out
+            .into_iter()
+            .map(|s| if s.is_nan() { 0.0 } else { s.clamp(-1.0, 1.0) })
+            .collect();
+
+        Ok(safe)
     }
 
     /// Get the underlying streaming codec (for direct encode/decode).
@@ -109,4 +142,23 @@ impl VcPipeline {
         let samples = self.chunk_samples() as f32;
         samples / 44_100.0 * 1000.0
     }
+
+    /// Algorithmic input latency contributed by the current chunk mode, in
+    /// 44.1 kHz samples. = chunk size + FRC lookahead.
+    pub fn algorithmic_latency_samples(&self) -> usize {
+        self.stream_codec.algorithmic_latency_samples()
+    }
+
+    /// Algorithmic input latency in milliseconds.
+    pub fn algorithmic_latency_ms(&self) -> f32 {
+        self.algorithmic_latency_samples() as f32 / 44_100.0 * 1000.0
+    }
+}
+
+fn rms(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    let sum_sq: f32 = samples.iter().map(|s| s * s).sum();
+    (sum_sq / samples.len() as f32).sqrt()
 }

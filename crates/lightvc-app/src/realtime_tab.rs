@@ -464,7 +464,19 @@ pub fn inference_loop(
             } else {
                 0.0
             };
-            latency_ms_last = dur_s * 1000.0;
+            // End-to-end latency estimate: capture/playback cpal buffers
+            // (~10 ms each per ARCHITECTURE §1.3) + resample (~3 ms each
+            // side) + algorithmic (chunk + FRC lookahead). Bypass skips the
+            // algorithmic term since encode/convert/decode are not run.
+            let algo_ms = if bypass {
+                0.0
+            } else {
+                pipeline
+                    .lock()
+                    .map(|p| p.algorithmic_latency_ms())
+                    .unwrap_or(0.0)
+            };
+            latency_ms_last = 10.0 + 3.0 + algo_ms + 3.0 + 10.0;
 
             out_44k_accum.extend_from_slice(&out);
             did_work = true;
