@@ -328,23 +328,27 @@ impl LightVcApp {
         match self.current_tab {
             Tab::Offline => {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    let folder = self.asset_cache.icon_folder(ctx).clone();
-                    let play = self.asset_cache.icon_play(ctx).clone();
-                    let convert = self.asset_cache.icon_convert(ctx).clone();
-                    let speaker = self.asset_cache.icon_speaker(ctx).clone();
-                    let mic = self.asset_cache.icon_mic(ctx).clone();
-                    crate::offline_tab::render(
-                        ui,
-                        ctx,
-                        &mut self.file_dialog,
-                        &self.state,
-                        &mut self.offline,
-                        &folder,
-                        &play,
-                        &convert,
-                        &speaker,
-                        &mic,
-                    );
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            let folder = self.asset_cache.icon_folder(ctx).clone();
+                            let play = self.asset_cache.icon_play(ctx).clone();
+                            let convert = self.asset_cache.icon_convert(ctx).clone();
+                            let speaker = self.asset_cache.icon_speaker(ctx).clone();
+                            let mic = self.asset_cache.icon_mic(ctx).clone();
+                            crate::offline_tab::render(
+                                ui,
+                                ctx,
+                                &mut self.file_dialog,
+                                &self.state,
+                                &mut self.offline,
+                                &folder,
+                                &play,
+                                &convert,
+                                &speaker,
+                                &mic,
+                            );
+                        });
                 });
             }
             Tab::Realtime => {
@@ -381,25 +385,29 @@ impl LightVcApp {
                 let icon_stop_tex_ref = icon_stop_tex.clone();
 
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    crate::realtime_tab::render(
-                        ui,
-                        ctx,
-                        file_dialog,
-                        &state,
-                        &mut conv_path,
-                        &mut conv_cfg,
-                        &mut rt_running,
-                        &mut rt_bypass,
-                        &mut rt_mode,
-                        &mut rt_sel_in,
-                        &mut rt_sel_out,
-                        &metrics,
-                        Some(&knob_tex_ref),
-                        Some(&icon_stop_tex_ref),
-                        |c, cfg| Self::load_converter_static(&state, c, cfg),
-                        || Self::ensure_rt_thread_static(&state),
-                        |ctrl| Self::send_control(&state, ctrl),
-                    );
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            crate::realtime_tab::render(
+                                ui,
+                                ctx,
+                                file_dialog,
+                                &state,
+                                &mut conv_path,
+                                &mut conv_cfg,
+                                &mut rt_running,
+                                &mut rt_bypass,
+                                &mut rt_mode,
+                                &mut rt_sel_in,
+                                &mut rt_sel_out,
+                                &metrics,
+                                Some(&knob_tex_ref),
+                                Some(&icon_stop_tex_ref),
+                                |c, cfg| Self::load_converter_static(&state, c, cfg),
+                                || Self::ensure_rt_thread_static(&state),
+                                |ctrl| Self::send_control(&state, ctrl),
+                            );
+                        });
                 });
 
                 self.conv_path_buf = conv_path;
@@ -412,34 +420,42 @@ impl LightVcApp {
             }
             Tab::Catalog => {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    let folder = self.asset_cache.icon_folder(ctx).clone();
-                    let play = self.asset_cache.icon_play(ctx).clone();
-                    let trash = self.asset_cache.icon_trash(ctx).clone();
-                    let empty = self.asset_cache.empty_stars(ctx).clone();
-                    let state = self.state.clone();
-                    crate::voice_catalog::render(
-                        ui,
-                        ctx,
-                        &mut self.file_dialog,
-                        &state,
-                        &folder,
-                        &play,
-                        &trash,
-                        &empty,
-                        |idx| {
-                            // Load the selected voice as the Realtime reference.
-                            let mut s = state.lock().unwrap();
-                            if let Some(voice) = s.voices.get(idx).cloned() {
-                                s.selected_voice = Some(idx);
-                                if let Ok((wav, sr)) =
-                                    crate::audio_playback::load_wav_mono(&voice.path)
-                                {
-                                    let wav44 = crate::audio_playback::resample_linear(&wav, sr);
-                                    Self::send_control(&state, RtControl::LoadReference(wav44));
-                                }
-                            }
-                        },
-                    );
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            let folder = self.asset_cache.icon_folder(ctx).clone();
+                            let play = self.asset_cache.icon_play(ctx).clone();
+                            let trash = self.asset_cache.icon_trash(ctx).clone();
+                            let empty = self.asset_cache.empty_stars(ctx).clone();
+                            let state = self.state.clone();
+                            crate::voice_catalog::render(
+                                ui,
+                                ctx,
+                                &mut self.file_dialog,
+                                &state,
+                                &folder,
+                                &play,
+                                &trash,
+                                &empty,
+                                |idx| {
+                                    // Load the selected voice as the Realtime reference.
+                                    let mut s = state.lock().unwrap();
+                                    if let Some(voice) = s.voices.get(idx).cloned() {
+                                        s.selected_voice = Some(idx);
+                                        if let Ok((wav, sr)) =
+                                            crate::audio_playback::load_wav_mono(&voice.path)
+                                        {
+                                            let wav44 =
+                                                crate::audio_playback::resample_linear(&wav, sr);
+                                            Self::send_control(
+                                                &state,
+                                                RtControl::LoadReference(wav44),
+                                            );
+                                        }
+                                    }
+                                },
+                            );
+                        });
                 });
             }
         }
