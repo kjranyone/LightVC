@@ -28,12 +28,19 @@ Summary of the literature survey and technology evaluation that informed the des
 ```
 candle-transformers/src/models/
 ├── encodec.rs       ← EnCodec (full)
-├── dac.rs           ← DAC (decode-only, see note)
+├── dac.rs           ← DAC (decode-only, PyTorch-original key names)
 ├── mimi/            ← Mimi (full, streaming)
 ├── snac.rs          ← SNAC
 ├── mamba.rs         ← Mamba SSM
 ├── mamba2.rs        ← Mamba2 (SSD algorithm, chunked)
 ```
+
+> **Note**: LightVC does **not** use `candle-transformers::models::dac`.
+> The HuggingFace `descript/dac_44khz` checkpoint uses transformers-style
+> safetensors key names that do not match the upstream `dac.rs` (which
+> assumes PyTorch-original names). We reimplemented the full DAC natively
+> in `crates/lightvc-core/src/dac_model.rs` to match the HF weight keys.
+> See [ARCHITECTURE.md §3.3](ARCHITECTURE.md) and §6.3 for details.
 
 ---
 

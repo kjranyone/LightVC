@@ -39,13 +39,17 @@ Mic (cpal) → DAC encoder (frozen) → continuous latent
 | License | **MIT** |
 | HF model | `descript/dac_44khz` |
 
-**Rationale**: MIT license (commercial-safe), 44.1 kHz quality, already in Candle (`candle-transformers::models::dac`).
+**Rationale**: MIT license (commercial-safe), 44.1 kHz quality. The DAC
+architecture (encoder + decoder + Snake) is reimplemented natively in
+`dac_model.rs` rather than reusing `candle-transformers::models::dac`,
+because the HuggingFace checkpoint uses transformers-style safetensors
+key names that the upstream module does not match.
 
 **Known challenges and mitigations** (see [ARCHITECTURE.md](ARCHITECTURE.md) section 4 for details):
 
 | Challenge | Mitigation |
 |-----------|------------|
-| Candle DAC is **decode-only** (no encode path exposed) | Wire up encoder forward ourselves (~50 LOC). Converter works in continuous latent space, so **quantizer encode path is not needed**. |
+| Upstream Candle DAC assumes PyTorch-original key names; HF `descript/dac_44khz` uses transformers-style keys | Full native reimplementation in `dac_model.rs` (~400 LOC). See ARCHITECTURE §3.3, §6.3. |
 | **Non-causal** architecture (future context required) | Chunked processing with bounded lookahead (40-120 ms). Map to quality/latency modes per CONCEPT.md. |
 | No **StreamingModule** implementation | Implement streaming wrapper with conv-state caching + overlap-add. |
 | 86 Hz frame rate (6.9x Mimi's 12.5 Hz) | Converter stays lightweight (Conv1d-only, ~10M params). At 86 Hz this is ~860 MFLOP/s for a 10M model — well within CPU budget. |

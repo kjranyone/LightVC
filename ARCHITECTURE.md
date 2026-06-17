@@ -111,6 +111,17 @@ lightvc/
 │       │   └── settings.rs         # Persisted settings (serde)
 │       └── Cargo.toml
 │
+│   ├── lightvc-clap/           # CLAP/VST3 plugin (cdylib)
+│   │   ├── src/
+│   │   │   └── lib.rs              # CLAP plugin entry + process callback
+│   │   ├── build.rs               # clap-wrapper bundle scaffolding
+│   │   └── Cargo.toml
+│   │
+│   └── lightvc-xtask/          # Build automation (bundle / install)
+│       ├── src/
+│       │   └── main.rs             # xtask: cargo run -p lightvc-xtask -- bundle|install
+│       └── Cargo.toml
+│
 ├── models/                     # Model weights (git-lfs or download script)
 │   ├── dac_44khz.safetensors   # Frozen DAC (~307 MB)
 │   ├── converter_p1.safetensors # Phase 1 converter (~40 MB)
@@ -155,6 +166,19 @@ eframe = "0.34"                 # egui
 lightvc-core = { path = "../lightvc-core" }
 lightvc-audio = { path = "../lightvc-audio" }
 serde = { version = "1.0", features = ["derive"] }
+
+# lightvc-clap (CLAP/VST3 plugin, cdylib)
+[dependencies]
+lightvc-core = { path = "../lightvc-core" }
+nice-plug = "0.1"               # ISC — CLAP host abstraction
+nice-plug-egui = "0.1"          # ISC — egui editor wrapper
+egui = "0.34"
+clap-wrapper = "0.3"            # MIT — CLAP→VST3/AUv2 wrapper
+# NOTE: vst3-sys (GPLv3) is intentionally avoided. See AGENTS.md §Licensing.
+
+# lightvc-xtask (build automation, not published)
+[dependencies]
+anyhow = "1.0"
 ```
 
 ---
@@ -199,19 +223,24 @@ This avoids the missing quantizer encode path entirely. The decoder's input is a
 
 ### 3.3 Encoder Forward Implementation
 
-The encoder is already fully implemented in `candle-transformers::models::dac`. We expose it:
+The upstream `candle-transformers::models::dac` assumes PyTorch-original
+safetensors key names and is decode-only. HuggingFace's `descript/dac_44khz`
+uses transformers-style key names, so we reimplemented the full DAC
+(encoder + decoder + Snake + ResidualUnit + blocks) natively in
+`crates/lightvc-core/src/dac_model.rs` (~400 LOC) to match the HF weight
+keys exactly. The encoder forward:
 
 ```rust
-// lightvc-core/src/codec/encoder.rs
+// lightvc-core/src/dac_model.rs — Encoder::forward
 
-pub fn encode(&self, pcm: &Tensor) -> Result<Tensor> {
-    // pcm: [batch, 1, samples] at 44.1kHz
-    let x = self.encoder.conv1.forward(pcm)?;       // [B, 64, T]
-    let x = self.encoder.block1.forward(&x)?;        // [B, 128, T/2]
-    let x = self.encoder.block2.forward(&x)?;        // [B, 256, T/4]
-    let x = self.encoder.block3.forward(&x)?;        // [B, 512, T/8]
-    let x = self.encoder.block4.forward(&x)?;        // [B, 1024, T/8]
-    let x = self.encoder.conv2.forward(&x)?;         // [B, latent_dim, T/512]
+pub fn forward(&self, xs: &Tensor) -> Result<Tensor> {
+    // xs: [batch, 1, samples] at 44.1kHz
+    let x = self.conv1.forward(xs)?;        // [B, 64, T]
+    let x = self.block1.forward(&x)?;       // [B, 128, T/2]
+    let x = self.block2.forward(&x)?;       // [B, 256, T/4]
+    let x = self.block3.forward(&x)?;       // [B, 512, T/8]
+    let x = self.block4.forward(&x)?;       // [B, 1024, T/8]
+    let x = self.conv2.forward(&x)?;        // [B, latent_dim, T/512]
     Ok(x)  // [batch, 1024, frames] at 86 Hz
 }
 ```
