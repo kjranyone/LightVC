@@ -35,4 +35,7 @@ checkpoint:
 
 hardware:
   device: auto
-  mixed_precision: none
+  # bf16 is supported on Intel Arc B-series (XPU) and modern GPUs.
+  # If you see NaN/Inf or loss divergence, fall back to "none" and file a bug
+  # referencing plan/04_training_pipeline.md [04-2].
+  mixed_precision: bf16
