@@ -68,8 +68,8 @@ LightVC プロジェクトの初期設計資料（DESIGN / ARCHITECTURE / MODEL_
 
 | ID | 優先度 | ステータス |
 |---|---|---|
-| 01-1 | P2 | ⬜ |
-| 01-2 | P2 | ⬜ |
+| 01-1 | P2 | ✅ (ARCHITECTURE §3.3 / RESEARCH §1 / DESIGN §2 に dac_model.rs 反映) |
+| 01-2 | P2 | ✅ (ARCHITECTURE §2 に lightvc-clap / lightvc-xtask 追記) |
 | 01-3 | P1 | ✅ (flow_converter.rs 分離) |
 | 02-1 | P0 | ✅ |
 | 02-2 | P0 | ✅ (lookahead+overlap で等価性確保、per-layer cache は最適化として保留) |
@@ -85,7 +85,7 @@ LightVC プロジェクトの初期設計資料（DESIGN / ARCHITECTURE / MODEL_
 | 04-3 | P1 | ✅ (download_corpus.py + encode_corpus 修正) |
 | 04-4 | P1 | ✅ (GRL content MI loss 実装) |
 | 04-5 | P1 | ✅ (evaluate.py: SECS/UTMOS/WER) |
-| 04-6 | P2 | ⬜ |
+| 04-6 | P2 | ✅ (build_vctk_manifest.py + WER degradation 計算) |
 | 05-1 | P0 | ✅ |
 | 05-2 | P1 | ✅ (DuplexStream::start_with) |
 | 05-3 | P1 | ✅ (AudioEngine でスレッド分離 + フォールト処理) |
@@ -93,8 +93,8 @@ LightVC プロジェクトの初期設計資料（DESIGN / ARCHITECTURE / MODEL_
 | 06-1 | P0 | ✅ |
 | 06-2 | P1 | ✅ (latency/RTF 計算修正) |
 | 06-3 | P2 | ✅ |
-| 06-4 | P2 | ⬜ |
-| 07-1 | P2 | ⬜ |
+| 06-4 | P2 | ✅ (MANUAL/ASSETS_SPEC 実装反映 + icon_stop 適用) |
+| 07-1 | P2 | 🚧 (Rust 側 Quantizer 実装完了、Python 側 factorized heads は学習待ち) |
 | 07-2 | P2 | ⬜ |
 | 07-3 | P2 | ⬜ |
 | 07-4 | P1 | ✅ (6/6 エッジケース実装完了) |
@@ -103,7 +103,7 @@ LightVC プロジェクトの初期設計資料（DESIGN / ARCHITECTURE / MODEL_
 | 08-3 | P1 | ✅ (06-1 で解消) |
 | 08-4 | P1 | ✅ |
 | 08-5 | P2 | ✅ |
-| 08-6 | P2 | ⬜ |
+| 08-6 | P2 | ✅ (unbatched [D,T] 入力に unsqueeze/squeeze 対応) |
 | 08-7 | P1 | ✅ (05-4 で解消) |
 
 ステータス凡例: ⬜ 未着手 / 🚧 進行中 / ✅ 完了 / ❌ 中止
@@ -141,3 +141,10 @@ LightVC プロジェクトの初期設計資料（DESIGN / ARCHITECTURE / MODEL_
   - [05-3] AudioEngine 新設: cpal Stream + ring buffer をカプセル化、inference loop からライフサイクル管理を分離
   - [06-2] latency/RTF 計算修正 (algorithmic_latency 含む end-to-end 推算)
   - [07-4] エッジケース 6/6 完了: silence skip / NaN clamp / ref length check / algorithmic_latency (前回) + ring buffer overrun/underrun + デバイス切断ハンドリング (AudioEngine)
+- 2026-06-17: P2 学習不要タスク 6 件 + Phase 3 Rust 先行
+  - [08-6] Converter::forward / FlowConverter::convert に unbatched [D,T] 入力対応 (Python と一致)
+  - [01-1] dac.rs 自前実装 (dac_model.rs) を ARCHITECTURE §3.3 / RESEARCH §1 / DESIGN §2 に反映
+  - [01-2] lightvc-clap / lightvc-xtask を ARCHITECTURE §2 のクレートツリーと Key Dependencies に追記
+  - [06-4] MANUAL §4.2/§7 を実 UI に合わせて更新 (Stop/status/metrics 追加、● READY→LIVE 修正)、ASSETS_SPEC_V2 に実装状況表追加、icon_stop.png を Stop ボタンに適用
+  - [04-6] build_vctk_manifest.py 新設 + evaluate.py に WER degradation (content preservation) 計算を追加
+  - [07-1] Phase 3 準備: Rust 側に DAC Residual Vector Quantizer (QuantizerLayer + Quantizer) 実装、DacModel::with_quantizer でオプションロード。Python 側 factorized FM heads は学習待ち
