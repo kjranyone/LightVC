@@ -1,0 +1,43 @@
+# Phase C flow matching with UTTE (enable_timbre: true) for [03-2].
+# Init from the UTTE warm-start checkpoint.
+model:
+  latent_dim: 1024
+  hidden_dim: 256
+  n_conv_blocks: 4
+  speaker_embed_dim: 256
+  enable_timbre: true
+  n_timbre_tokens: 32
+  n_attn_heads: 8
+  bottleneck_dim: 256
+  time_embed_dim: 128
+
+training:
+  init_from: checkpoints/phase_b_utte/best.pt
+  batch_size: 8
+  learning_rate: 1.5e-4
+  optimizer_betas: [0.8, 0.99]
+  weight_decay: 0.01
+  lr_scheduler_gamma: 0.9999
+  gradient_clip: 1.0
+  max_steps: 30000
+  timbre_shift_prob: 0.0
+
+losses:
+  fm_velocity: 1.0
+  latent_l1: 2.0
+  speaker_sim: 1.0
+  content_inv: 0.5
+  content_mi: 0.0
+
+data:
+  sample_rate: 44100
+  latent_frame_rate: 86
+  max_utterance_frames: 200
+  min_utterance_frames: 30
+
+checkpoint:
+  save_every_steps: 5000
+
+hardware:
+  device: auto
+  mixed_precision: bf16

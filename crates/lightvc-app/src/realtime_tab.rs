@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crossbeam_channel::{Receiver, Sender};
+use cpal::traits::HostTrait;
 use eframe::egui;
 use egui_file_dialog::FileDialog;
 
@@ -26,6 +27,8 @@ pub fn render(
     running: &mut bool,
     bypass: &mut bool,
     mode: &mut lightvc_core::converter::LatencyMode,
+    selected_input: &mut Option<usize>,
+    selected_output: &mut Option<usize>,
     metrics: &RtMetrics,
     knob_tex: Option<&egui::TextureHandle>,
     icon_stop_tex: Option<&egui::TextureHandle>,
@@ -192,8 +195,8 @@ pub fn render(
                 ui.label(
                     egui::RichText::new(match *mode {
                         lightvc_core::converter::LatencyMode::Strict => "0ms lookahead",
-                        lightvc_core::converter::LatencyMode::Balanced => "~40ms lookahead",
-                        lightvc_core::converter::LatencyMode::Quality => "~80ms lookahead",
+                        lightvc_core::converter::LatencyMode::Balanced => "~46ms lookahead",
+                        lightvc_core::converter::LatencyMode::Quality => "~93ms lookahead",
                     })
                     .size(10.0)
                     .color(crate::theme::colors::TEXT_MUTED),
@@ -239,7 +242,10 @@ pub fn render(
     ui.horizontal(|ui| {
         if !*running {
             if crate::theme::pill_button(ui, "▶ Start", true) {
-                on_control(RtControl::Start);
+                on_control(RtControl::StartWithDevices {
+                    input_idx: *selected_input,
+                    output_idx: *selected_output,
+                });
                 *running = true;
             }
         } else {
@@ -257,7 +263,7 @@ pub fn render(
 
     ui.add_space(12.0);
 
-    // Audio devices
+    // Audio devices ([05-6]: interactive selection)
     ui.collapsing(
         egui::RichText::new("Audio Devices")
             .size(13.0)
@@ -266,34 +272,48 @@ pub fn render(
             let inputs = lightvc_audio::DuplexStream::list_input_devices().unwrap_or_default();
             let outputs = lightvc_audio::DuplexStream::list_output_devices().unwrap_or_default();
             ui.label(
-                egui::RichText::new("Inputs")
-                    .size(12.0)
-                    .color(crate::theme::colors::TEXT_DIM),
+                egui::RichText::new(format!(
+                    "Inputs  ({} = default)",
+                    if selected_input.is_some() { "selected" } else { "none" }
+                ))
+                .size(12.0)
+                .color(crate::theme::colors::TEXT_DIM),
             );
-            for d in &inputs {
-                ui.label(
-                    egui::RichText::new(format!(
-                        "  {} ({}Hz, {}ch)",
-                        d.name, d.sample_rate, d.channels
-                    ))
-                    .size(11.0)
-                    .color(crate::theme::colors::TEXT_MUTED),
-                );
+            // Default option
+            let in_default = selected_input.is_none();
+            if ui
+                .radio_value(selected_input, None, "(default)")
+                .clicked()
+            {
+                *selected_input = None;
             }
+            for (i, d) in inputs.iter().enumerate() {
+                let selected = *selected_input == Some(i);
+                let label = format!("{} ({}Hz, {}ch)", d.name, d.sample_rate, d.channels);
+                if ui.radio_value(selected_input, Some(i), &label).clicked() {
+                    *selected_input = Some(i);
+                }
+            }
+            ui.add_space(4.0);
             ui.label(
-                egui::RichText::new("Outputs")
-                    .size(12.0)
-                    .color(crate::theme::colors::TEXT_DIM),
+                egui::RichText::new(format!(
+                    "Outputs  ({} = default)",
+                    if selected_output.is_some() { "selected" } else { "none" }
+                ))
+                .size(12.0)
+                .color(crate::theme::colors::TEXT_DIM),
             );
-            for d in &outputs {
-                ui.label(
-                    egui::RichText::new(format!(
-                        "  {} ({}Hz, {}ch)",
-                        d.name, d.sample_rate, d.channels
-                    ))
-                    .size(11.0)
-                    .color(crate::theme::colors::TEXT_MUTED),
-                );
+            if ui
+                .radio_value(selected_output, None, "(default)")
+                .clicked()
+            {
+                *selected_output = None;
+            }
+            for (i, d) in outputs.iter().enumerate() {
+                let label = format!("{} ({}Hz, {}ch)", d.name, d.sample_rate, d.channels);
+                if ui.radio_value(selected_output, Some(i), &label).clicked() {
+                    *selected_output = Some(i);
+                }
             }
         },
     );
@@ -316,6 +336,7 @@ pub fn inference_loop(
     let mut resampler_up: Option<lightvc_audio::Resampler> = None;
     let mut resampler_down: Option<lightvc_audio::Resampler> = None;
     let mut device_sr: u32 = 44_100;
+    let mut playback_sr: u32 = 44_100;
     let mut disconnected_reported = false;
 
     // Three-stage buffering decouples the four sample-frame domains:
@@ -329,28 +350,101 @@ pub fn inference_loop(
     let mut pcm_44k_accum: Vec<f32> = Vec::new();
     let mut out_44k_accum: Vec<f32> = Vec::new();
 
+    // Pre-allocated work buffers for resampler input ([05-5]): reused across
+    // iterations to avoid per-chunk Vec allocation on the realtime path.
+    let mut resample_up_buf: Vec<f32> = Vec::with_capacity(8192);
+    let mut resample_down_buf: Vec<f32> = Vec::with_capacity(8192);
+
     // Metrics from the most recently processed chunk.
     let mut in_rms_last: f32 = 0.0;
     let mut out_rms_last: f32 = 0.0;
     let mut rtf_last: f32 = 0.0;
     let mut latency_ms_last: f32 = 0.0;
 
+    // [07-5] underrun auto-degradation: if the playback ring repeatedly
+    // underruns (inference too slow), automatically downgrade the latency
+    // mode to reduce CPU load.
+    let mut last_underrun: u64 = 0;
+    let mut underrun_streak: u32 = 0;
+    let mut auto_degraded: bool = false;
+
     loop {
         while let Ok(msg) = control_rx.try_recv() {
             match msg {
-                RtControl::Start => {
+                RtControl::Start | RtControl::StartWithDevices { .. } => {
                     if running {
                         continue;
                     }
                     disconnected_reported = false;
-                    match lightvc_audio::AudioEngine::start_default() {
+                    // [05-6]: use explicitly selected devices when provided.
+                    // [05-7]: device enumeration happens here (inference thread)
+                    // because cpal Device is not Send on macOS. The UI thread
+                    // passes indices; the inference thread resolves them.
+                    let eng_result = match msg {
+                        RtControl::StartWithDevices {
+                            input_idx: Some(ii),
+                            output_idx: Some(oi),
+                        } => {
+                            let inputs =
+                                lightvc_audio::DuplexStream::list_input_devices().unwrap_or_default();
+                            let outputs = lightvc_audio::DuplexStream::list_output_devices()
+                                .unwrap_or_default();
+                            let host = cpal::default_host();
+                            let in_dev = host.input_devices().ok().and_then(|mut d| d.nth(ii));
+                            let out_dev = host.output_devices().ok().and_then(|mut d| d.nth(oi));
+                            match (in_dev, out_dev) {
+                                (Some(id), Some(od)) => {
+                                    lightvc_audio::AudioEngine::start(&id, &od)
+                                }
+                                _ => {
+                                    eprintln!("Device selection failed, falling back to default");
+                                    lightvc_audio::AudioEngine::start_default()
+                                }
+                            }
+                        }
+                        RtControl::StartWithDevices {
+                            input_idx: Some(ii),
+                            output_idx: None,
+                        } => {
+                            let host = cpal::default_host();
+                            let in_dev = host.input_devices().ok().and_then(|mut d| d.nth(ii));
+                            let out_dev = lightvc_audio::DuplexStream::default_output().ok();
+                            match (in_dev, out_dev) {
+                                (Some(id), Some(od)) => {
+                                    lightvc_audio::AudioEngine::start(&id, &od)
+                                }
+                                _ => lightvc_audio::AudioEngine::start_default(),
+                            }
+                        }
+                        RtControl::StartWithDevices {
+                            input_idx: None,
+                            output_idx: Some(oi),
+                        } => {
+                            let host = cpal::default_host();
+                            let in_dev = lightvc_audio::DuplexStream::default_input().ok();
+                            let out_dev = host.output_devices().ok().and_then(|mut d| d.nth(oi));
+                            match (in_dev, out_dev) {
+                                (Some(id), Some(od)) => {
+                                    lightvc_audio::AudioEngine::start(&id, &od)
+                                }
+                                _ => lightvc_audio::AudioEngine::start_default(),
+                            }
+                        }
+                        _ => lightvc_audio::AudioEngine::start_default(),
+                    };
+                    match eng_result {
                         Ok((eng, bufs)) => {
                             device_sr = eng.capture_sample_rate;
+                            playback_sr = eng.playback_sample_rate;
+                            // Capture resampler: device_sr → 44.1k ([05-8]).
                             if let Ok(r1) = lightvc_audio::Resampler::new(device_sr as usize, 4096)
                             {
                                 resampler_up = Some(r1);
                             }
-                            if let Ok(r2) = lightvc_audio::Resampler::new(device_sr as usize, 4096)
+                            // Playback resampler: 44.1k → playback_sr ([05-8]).
+                            // Uses playback_sr, which may differ from capture_sr.
+                            if let Ok(r2) =
+                                lightvc_audio::Resampler::new(playback_sr as usize, 4096)
                             {
                                 resampler_down = Some(r2);
                             }
@@ -438,7 +532,10 @@ pub fn inference_loop(
         };
 
         let chunk_sz = pipeline.lock().map(|p| p.chunk_samples()).unwrap_or(2048);
-        let is_passthrough_sr = device_sr == 44_100;
+        // Capture and playback SR bypass are independent ([05-8]):
+        // e.g. 44.1k mic + 48k HDMI needs capture bypass but playback resample.
+        let capture_passthrough = device_sr == 44_100;
+        let playback_passthrough = playback_sr == 44_100;
 
         let mut did_work = false;
 
@@ -452,17 +549,28 @@ pub fn inference_loop(
                 break;
             }
         }
+        // [07-5] overrun fix: if the consumer-side buffer has grown beyond
+        // 3× the chunk size, the producer is overflowing. Drop the OLDEST
+        // samples (front of in_accum) to stay near real-time. This implements
+        // the "drop oldest" policy from ARCHITECTURE §8 that the rtrb SPSC
+        // producer couldn't do directly.
+        let max_pending = chunk_sz * 3;
+        if in_accum.len() > max_pending {
+            let excess = in_accum.len() - chunk_sz;
+            in_accum.drain(..excess);
+        }
         if popped > 0 {
             did_work = true;
         }
 
         // ---- Stage 2: resample device_sr → 44.1k in exact input chunks.
-        if !is_passthrough_sr {
+        if !capture_passthrough {
             if let Some(r_up) = resampler_up.as_mut() {
                 let needed = r_up.input_frames_needed_up();
                 while in_accum.len() >= needed {
-                    let input_chunk: Vec<f32> = in_accum.drain(..needed).collect();
-                    match r_up.process_up(&input_chunk) {
+                    resample_up_buf.clear();
+                    resample_up_buf.extend(in_accum.drain(..needed));
+                    match r_up.process_up(&resample_up_buf) {
                         Ok(out) => {
                             pcm_44k_accum.extend_from_slice(out);
                             did_work = true;
@@ -472,7 +580,7 @@ pub fn inference_loop(
                 }
             }
         } else if !in_accum.is_empty() {
-            // device_sr == 44.1k: no resampling, pass samples straight through.
+            // capture_sr == 44.1k: no resampling needed.
             pcm_44k_accum.append(&mut in_accum);
             did_work = true;
         }
@@ -521,15 +629,16 @@ pub fn inference_loop(
             did_work = true;
         }
 
-        // ---- Stage 4: resample 44.1k → device_sr and push to playback.
-        if !is_passthrough_sr {
+        // ---- Stage 4: resample 44.1k → playback_sr and push to playback.
+        if !playback_passthrough {
             if let Some(r_down) = resampler_down.as_mut() {
                 // SincFixedOut has a variable input length; read it fresh each
                 // iteration. process_down consumes exactly that many frames.
                 let mut needed = r_down.input_frames_needed_down();
                 while out_44k_accum.len() >= needed && needed > 0 {
-                    let input_chunk: Vec<f32> = out_44k_accum.drain(..needed).collect();
-                    match r_down.process_down(&input_chunk) {
+                    resample_down_buf.clear();
+                    resample_down_buf.extend(out_44k_accum.drain(..needed));
+                    match r_down.process_down(&resample_down_buf) {
                         Ok(out) => {
                             for s in out {
                                 let _ = pb_tx.push(*s);
@@ -541,7 +650,7 @@ pub fn inference_loop(
                 }
             }
         } else {
-            // device_sr == 44.1k: push decoded samples directly.
+            // playback_sr == 44.1k: push decoded samples directly.
             for s in out_44k_accum.drain(..) {
                 let _ = pb_tx.push(s);
             }
@@ -551,6 +660,33 @@ pub fn inference_loop(
             .as_ref()
             .map(|e| (e.overrun_count(), e.underrun_count()))
             .unwrap_or((0, 0));
+
+        // [07-5] underrun auto-degradation.
+        let new_underruns = underrun.saturating_sub(last_underrun);
+        last_underrun = underrun;
+        if new_underruns > 0 {
+            underrun_streak += 1;
+        } else {
+            underrun_streak = 0;
+        }
+        // After 10 consecutive iterations with underruns, downgrade one level.
+        if underrun_streak >= 10 && !auto_degraded {
+            if let Ok(mut p) = pipeline.lock() {
+                let current = p.algorithmic_latency_ms();
+                if current > 50.0 {
+                    // Quality → Balanced, or Balanced → Strict.
+                    let new_mode = if current > 150.0 {
+                        lightvc_core::converter::LatencyMode::Balanced
+                    } else {
+                        lightvc_core::converter::LatencyMode::Strict
+                    };
+                    p.set_mode(new_mode);
+                    auto_degraded = true;
+                    eprintln!("Auto-degraded to {new_mode:?} due to underruns");
+                }
+            }
+        }
+
         let _ = metrics_tx.send(RtMetrics {
             input_rms: in_rms_last,
             output_rms: out_rms_last,

@@ -5,14 +5,27 @@ Trains the `Converter` (residual-prediction variant) as an AutoVC-style
 bottleneck autoencoder in DAC latent space. This gives the flow converter
 a stable initialization.
 
-Losses:
-  - reconstruction L1 (primary)
-  - speaker consistency (pred speaker ≈ ref speaker)
-  - content preservation (content code should be speaker-invariant)
+Teacher-free paradigm ([04-7] revision): since there is no VC teacher,
+cross-speaker targets like "z_src(A) with B's timbre" cannot be created.
+The warm-start is therefore **pure reconstruction with bottleneck
+disentanglement** (the original AutoVC recipe):
 
-Roles:
-  - reconstruction (60%): z_src → z_src (autoencode)
-  - cross_speaker  (40%): z_src(A) + ref(B) → z_src(A) with B's timbre
+  - src and tgt are the same utterance (autoencode)
+  - ref is from the **same speaker** (different utterance if available,
+    so the speaker encoder generalizes across recordings)
+  - Disentanglement emerges from the bottleneck being too narrow for
+    speaker info; the model MUST take speaker from the reference.
+
+Losses ([04-8] [04-9] [04-11] fixes):
+  - reconstruction L1: pred ≈ tgt(=src)
+  - speaker consistency: speaker_embed(pred) ≈ speaker_embed(ref)
+    ([04-8]: was targeting src/tgt speaker — same as ref in reconstruction,
+     but now explicit and correct for any role)
+  - content preservation: content_code(pred) ≈ content_code(src)
+    ([04-9]: was content_code(src) vs content_code(tgt) = identically zero
+     because tgt=src; now uses pred — the model's output — which differs)
+  - speaker classify: auxiliary CE on ref_embed, prevents encoder collapse
+    ([04-11]: now documented in config, was hidden default 0.5)
 """
 
 import argparse
@@ -33,7 +46,9 @@ from converter import Converter, ConverterConfig
 # ---------------------------------------------------------------------------
 
 
-def load_latent_corpus(data_dir: str, max_frames: int = 400):
+def load_latent_corpus(
+    data_dir: str, max_frames: int = 400, min_frames: int = 30
+):
     """Load all latents from the corpus, grouped by speaker.
 
     Returns:
@@ -58,7 +73,7 @@ def load_latent_corpus(data_dir: str, max_frames: int = 400):
             if not os.path.exists(npy_path):
                 continue
             latent = np.load(npy_path)
-            if latent.shape[1] < 30:
+            if latent.shape[1] < min_frames:
                 continue
             if latent.shape[1] > max_frames:
                 latent = latent[:, :max_frames]
@@ -69,11 +84,29 @@ def load_latent_corpus(data_dir: str, max_frames: int = 400):
     return speakers
 
 
-def make_batch(speakers: dict, batch_size: int, max_frames: int, device: torch.device, spk2idx: dict):
-    """Sample a training batch.
+def make_batch(
+    speakers: dict,
+    batch_size: int,
+    max_frames: int,
+    device: torch.device,
+    spk2idx: dict,
+    cross_speaker_prob: float = 0.0,
+):
+    """Sample a warm-start training batch.
 
-    For each item: pick a source utterance and (optionally) a different
-    speaker's reference.
+    Teacher-free AutoVC warm-start ([04-10] revision):
+
+    - **Reconstruction role** (default, ``cross_speaker_prob=0``):
+      src = tgt = utterance from speaker A.
+      ref = a *different* utterance from the same speaker A (if available),
+      so the speaker encoder generalizes. Target = src (autoencode).
+
+    - **Cross-speaker regularizer** (``cross_speaker_prob > 0``, optional):
+      src = tgt from speaker A, ref from speaker B.
+      The model must reconstruct A's latent despite being fed B's reference.
+      This is a regularizer that forces the bottleneck to carry
+      speaker-invariant content — it does NOT produce "A with B's timbre"
+      (that requires a teacher and is deferred to Phase C flow matching).
     """
     spk_list = list(speakers.keys())
     src_list = []
@@ -84,23 +117,36 @@ def make_batch(speakers: dict, batch_size: int, max_frames: int, device: torch.d
     for _ in range(batch_size):
         src_spk = spk_list[np.random.randint(0, len(spk_list))]
         src_utts = speakers[src_spk]
-        src = src_utts[np.random.randint(0, len(src_utts))]
+        src_idx = np.random.randint(0, len(src_utts))
+        src = src_utts[src_idx]
         src_list.append(src)
 
-        # 50% chance: cross-speaker reference
-        if np.random.random() < 0.5 and len(spk_list) > 1:
+        use_cross = (
+            cross_speaker_prob > 0.0
+            and np.random.random() < cross_speaker_prob
+            and len(spk_list) > 1
+        )
+
+        if use_cross:
             ref_spk = src_spk
             while ref_spk == src_spk:
                 ref_spk = spk_list[np.random.randint(0, len(spk_list))]
-            ref_utts = speakers[ref_spk]
-            ref = ref_utts[np.random.randint(0, len(ref_utts))]
         else:
-            ref = src
             ref_spk = src_spk
+
+        ref_utts = speakers[ref_spk]
+        if ref_spk == src_spk and len(ref_utts) > 1:
+            ref_idx = np.random.randint(0, len(ref_utts))
+            if ref_idx == src_idx and len(ref_utts) > 1:
+                ref_idx = (ref_idx + 1) % len(ref_utts)
+            ref = ref_utts[ref_idx]
+        else:
+            ref = ref_utts[np.random.randint(0, len(ref_utts))]
 
         ref_list.append(ref)
         ref_spk_idx.append(spk2idx[ref_spk])
-        # Target = source (reconstruction) in warm-start
+        # Target = source (autoencode). Cross-speaker role does NOT change
+        # the target — there is no teacher to create "src with ref timbre".
         tgt_list.append(src)
 
     # Random crop to common length
@@ -152,6 +198,11 @@ def train(config_path, data_dir, output_dir):
     train_cfg = cfg["training"]
     loss_cfg = cfg["losses"]
     max_frames = cfg["data"]["max_utterance_frames"]
+    min_frames = cfg["data"].get("min_utterance_frames", 30)
+
+    # Role assignment ([04-10]): cross-speaker regularizer probability.
+    role_cfg = cfg.get("role_assignment", {})
+    cross_speaker_prob = role_cfg.get("cross_speaker", 0.0)
 
     # Device
     configured = train_cfg.get("device", "auto")
@@ -167,7 +218,7 @@ def train(config_path, data_dir, output_dir):
     print(f"Device: {device}", flush=True)
 
     # Data
-    speakers = load_latent_corpus(data_dir, max_frames)
+    speakers = load_latent_corpus(data_dir, max_frames, min_frames)
     spk2idx = {spk: i for i, spk in enumerate(sorted(speakers.keys()))}
     num_speakers = len(spk2idx)
 
@@ -175,6 +226,8 @@ def train(config_path, data_dir, output_dir):
     model = Converter(model_cfg).to(device)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Converter parameters: {n_params:,} ({n_params / 1e6:.1f}M)", flush=True)
+    if cross_speaker_prob > 0:
+        print(f"Cross-speaker regularizer: prob={cross_speaker_prob}", flush=True)
 
     # Speaker classifier (training-only, prevents speaker-encoder collapse)
     spk_classifier = torch.nn.Linear(model_cfg.speaker_embed_dim, num_speakers).to(device)
@@ -207,34 +260,47 @@ def train(config_path, data_dir, output_dir):
 
     print(f"Starting warm-start training for {max_steps} steps...", flush=True)
     for step in range(1, max_steps + 1):
-        src, tgt, ref, ref_idx = make_batch(speakers, batch_size, max_frames, device, spk2idx)
-
-        # Precompute target speaker embedding
-        with torch.no_grad():
-            tgt_embed = model.speaker_embedding(tgt)
+        src, tgt, ref, ref_idx = make_batch(
+            speakers, batch_size, max_frames, device, spk2idx, cross_speaker_prob
+        )
 
         optim.zero_grad()
         pred = model(src, ref)
 
         # Losses
+
+        # 1. Reconstruction L1: pred ≈ tgt(=src)
         loss_recon = F.l1_loss(pred, tgt) * loss_cfg["reconstruction_l1"]
 
+        # 2. Speaker consistency ([04-8]): pred speaker ≈ REFERENCE speaker.
+        #    Was targeting src/tgt speaker (identical in reconstruction), but
+        #    now explicit so cross-speaker regularizer roles push pred toward
+        #    the reference's speaker identity.
+        with torch.no_grad():
+            ref_embed = model.speaker_embedding(ref)
         pred_embed = model.speaker_embedding(pred)
         loss_spk = (
-            1.0 - F.cosine_similarity(pred_embed, tgt_embed, dim=-1).mean()
+            1.0 - F.cosine_similarity(pred_embed, ref_embed, dim=-1).mean()
         ) * loss_cfg.get("speaker_consistency", 0.5)
 
-        # Content code should be speaker-invariant
+        # 3. Content preservation ([04-9]): content_code(pred) ≈ content_code(src).
+        #    Was content_code(src) vs content_code(tgt=src) = identically zero.
+        #    Now uses pred (the model's output) which differs from src, so the
+        #    loss is meaningful: the bottleneck content of the output should
+        #    match the bottleneck content of the input.
         content_src = model.content_code(src)
-        content_tgt = model.content_code(tgt)
-        loss_content = F.l1_loss(content_src, content_tgt) * loss_cfg.get(
+        content_pred = model.content_code(pred)
+        loss_content = F.l1_loss(content_pred, content_src.detach()) * loss_cfg.get(
             "content_preservation", 0.3
         )
 
-        # Speaker classification auxiliary loss (prevents encoder collapse)
+        # 4. Speaker classification auxiliary loss ([04-11]): prevents the
+        #    speaker encoder from collapsing. Now documented in config.
         ref_embed_for_cls = model.speaker_embedding(ref)
         logits = spk_classifier(ref_embed_for_cls)
-        loss_cls = F.cross_entropy(logits, ref_idx) * loss_cfg.get("speaker_classify", 0.5)
+        loss_cls = F.cross_entropy(logits, ref_idx) * loss_cfg.get(
+            "speaker_classify", 0.5
+        )
 
         loss = loss_recon + loss_spk + loss_content + loss_cls
         loss.backward()

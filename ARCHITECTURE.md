@@ -48,23 +48,35 @@ Detailed system architecture for the Rust client and model components.
 | `control_tx` | Thread 4 → Thread 2 | Mode changes, target voice, params | `crossbeam_channel::unbounded` |
 | `metrics_rx` | Thread 2 → Thread 4 | Input/output RMS, latency, RTF | `crossbeam_channel::unbounded` (non-blocking recv) |
 
-### 1.3 Latency Budget (quality mode, 80ms lookahead)
+### 1.3 Latency Budget
+
+End-to-end latency = cpal buffers + resample + **algorithmic delay** +
+resample + cpal buffers. The algorithmic delay is `chunk_size + lookahead`
+(see §3.5), and is the mode-dependent term.
 
 ```
 Component                        Latency
 ─────────────────────────────────────────
-Capture buffer (cpal)           ~10 ms
-Resample (44100 ↔ device)        ~3 ms
-DAC encode (chunk + lookahead)  ~15 ms   ← includes receptive field
-Converter forward                ~5 ms   ← 10M params, Conv1d
-DAC decode                      ~15 ms
-Resample                         ~3 ms
-Playback buffer (cpal)          ~10 ms
-Algorithmic lookahead (mode)    ~80 ms   ← quality mode
+Capture buffer (cpal)            ~10 ms
+Resample (device → 44100)         ~3 ms
+Algorithmic delay (mode):
+  Strict  (1 frame, 0 lookahead)  ~12 ms
+  Balanced (4 frames + 4 FRC)     ~93 ms
+  Quality (8 frames + 8 FRC)     ~186 ms
+Resample (44100 → device)         ~3 ms
+Playback buffer (cpal)            ~10 ms
 ─────────────────────────────────────────
-Total (strict mode, 0ms)        ~61 ms
-Total (quality mode, 80ms)     ~141 ms
+Total (strict)                    ~38 ms
+Total (balanced)                 ~119 ms
+Total (quality)                  ~212 ms
 ```
+
+> **Note ([08-8]):** An earlier version of this section reported quality
+> total as ~141 ms with 80 ms lookahead. That was based on a design where
+> lookahead excluded the chunk. The implementation (§3.5) defines
+> algorithmic latency as `chunk + lookahead`, so quality is ~186 ms
+> algorithmic / ~212 ms total. The numbers above match
+> `realtime_tab.rs` and `pipeline::algorithmic_latency_ms()`.
 
 ---
 
@@ -104,10 +116,14 @@ lightvc/
 │       ├── src/
 │       │   ├── main.rs
 │       │   ├── app.rs              # eframe App impl
-│       │   ├── widgets/
-│       │   │   ├── level_meter.rs  # Custom level meter widget
-│       │   │   ├── device_combo.rs # Device selector
-│       │   │   └── param_knob.rs   # Parameter knob/slider
+│       │   ├── realtime_tab.rs     # Real-time VC tab (capture/convert/playback)
+│       │   ├── offline_tab.rs      # Offline file conversion tab
+│       │   ├── widgets.rs          # UI helpers (RMS, level meters)
+│       │   ├── theme.rs            # Colors, styles, custom widgets
+│       │   ├── voice_catalog.rs    # Target voice management
+│       │   ├── audio_playback.rs   # Audio playback helpers
+│       │   ├── assets.rs           # Embedded icons/textures
+│       │   ├── cli.rs              # CLI subcommand handler
 │       │   └── settings.rs         # Persisted settings (serde)
 │       └── Cargo.toml
 │
@@ -462,7 +478,7 @@ Inference (Rust `FlowConverter::convert`, 1-NFE):
     z_out = z_src + velocity_scale * v
 
 `velocity_scale` (>1 amplifies speaker-translation effect, analogous to
-classifier-free guidance in diffusion models). Default 2.5, set via
+classifier-free guidance in diffusion models). Default 1.0, set via
 `VcPipeline::velocity_scale`. At 1.0 the output matches the training
 objective exactly.
 ```
@@ -628,8 +644,8 @@ Device sample rates vary (44.1k, 48k, 96k). DAC requires exactly 44,100 Hz.
 // lightvc-audio/src/resample.rs
 
 pub struct RtResampler {
-    input: AsyncFixedIn<f32>,
-    output: AsyncFixedOut<f32>,
+    input: Async<f32, FixedAsync::Input>,
+    output: Async<f32, FixedAsync::Output>,
     // rubato 3.0: zero-allocation process_into_buffer
 }
 

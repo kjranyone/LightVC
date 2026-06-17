@@ -1,5 +1,5 @@
 """
-Phase C: Mean-flow matching training (the core).
+Phase C: Flow matching training (the core).
 
 Trains the `FlowConverter` to learn the velocity field that transports
 source latents to target-speaker latents. No VC teacher — the target is
@@ -40,7 +40,9 @@ from converter import (
 # ---------------------------------------------------------------------------
 
 
-def load_latent_corpus(data_dir: str, max_frames: int = 400):
+def load_latent_corpus(
+    data_dir: str, max_frames: int = 400, min_frames: int = 30
+):
     """Load all latents grouped by speaker.
 
     Also loads timbre-shifted variants ({utt_id}_ts.npy) if present,
@@ -64,7 +66,7 @@ def load_latent_corpus(data_dir: str, max_frames: int = 400):
             if not os.path.exists(npy_path):
                 continue
             latent = np.load(npy_path)
-            if latent.shape[1] < 30:
+            if latent.shape[1] < min_frames:
                 continue
             if latent.shape[1] > max_frames:
                 latent = latent[:, :max_frames]
@@ -182,6 +184,7 @@ def train(config_path, data_dir, output_dir):
     train_cfg = cfg["training"]
     loss_cfg = cfg["losses"]
     max_frames = cfg["data"]["max_utterance_frames"]
+    min_frames = cfg["data"].get("min_utterance_frames", 30)
     timbre_shift_prob = train_cfg.get("timbre_shift_prob", 0.0)
 
     configured = train_cfg.get("device", "auto")
@@ -196,7 +199,7 @@ def train(config_path, data_dir, output_dir):
         device = torch.device(configured)
     print(f"Device: {device}", flush=True)
 
-    speakers = load_latent_corpus(data_dir, max_frames)
+    speakers = load_latent_corpus(data_dir, max_frames, min_frames)
 
     model = FlowConverter(model_cfg).to(device)
     n_params = sum(p.numel() for p in model.parameters())

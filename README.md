@@ -21,7 +21,7 @@
 
 ## Overview
 
-LightVC transforms audio in a pretrained neural codec's (DAC) continuous latent space using a lightweight mean-flow matching converter. No VC teacher — trained from scratch via flow matching on real speaker data.
+LightVC transforms audio in a pretrained neural codec's (DAC) continuous latent space using a lightweight flow-matching converter. No VC teacher — trained from scratch via flow matching on real speaker data.
 
 ```
 Mic input → DAC encode → one-step converter → DAC decode → output
@@ -29,7 +29,7 @@ Mic input → DAC encode → one-step converter → DAC decode → output
 
 ## Features
 
-- **One-step inference** — mean-flow matching (1-NFE), no ODE loop
+- **One-step inference** — flow matching (1-NFE), no ODE loop
 - **Zero-shot VC** — clone any voice from 5-30s reference audio
 - **Three modes** — Strict (0ms lookahead), Balanced (~40ms), Quality (~80ms)
 - **Three form factors**:
@@ -119,7 +119,7 @@ LightVC/
 ## Architecture
 
 - **Codec**: DAC (Descript Audio Codec), 44.1kHz, MIT license
-- **Converter**: Causal Conv1d (1024→256 hidden), mean-flow matching, ~10M params
+- **Converter**: Causal Conv1d (1024→256 hidden), flow matching, ~10M params
 - **Inference**: Candle (pure Rust), CPU/GPU/CUDA/Metal
 - **Training**: PyTorch + Intel XPU (uv environment)
 - **Plugin**: nice-plug (ISC) + clap-wrapper (MIT) → CLAP + VST3

@@ -24,8 +24,16 @@ training:
 
 losses:
   reconstruction_l1: 1.0
-  speaker_consistency: 0.5
-  content_preservation: 0.3
+  speaker_consistency: 0.5   # pred speaker ≈ reference speaker ([04-8])
+  content_preservation: 0.3  # content_code(pred) ≈ content_code(src) ([04-9])
+  speaker_classify: 0.5      # auxiliary CE on ref_embed, prevents collapse ([04-11])
+
+# Role assignment ([04-10]): teacher-free paradigm.
+# cross_speaker is a REGULARIZER (reconstruct src despite cross-speaker ref),
+# NOT "produce target timbre" (that requires a teacher → Phase C flow matching).
+# 0.0 = pure AutoVC reconstruction (recommended for warm-start).
+role_assignment:
+  cross_speaker: 0.0
 
 data:
   sample_rate: 44100

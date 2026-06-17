@@ -71,6 +71,7 @@ def export(checkpoint_path, output_path, config_override=None, model_type="auto"
                 "enable_timbre": config.enable_timbre,
                 "bottleneck_dim": config.bottleneck_dim,
                 "time_embed_dim": config.time_embed_dim,
+                "n_depth_groups": config.n_depth_groups,
                 "model_type": model_type,
             },
             f,

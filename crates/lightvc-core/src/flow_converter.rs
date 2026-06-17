@@ -74,7 +74,7 @@ impl TimeEmbed {
         let cos = scaled.cos()?;
         let emb = Tensor::cat(&[sin, cos], D::Minus1)?;
         let h = self.mlp0.forward(&emb)?;
-        let h = h.gelu()?;
+        let h = h.gelu_erf()?;
         Ok(self.mlp2.forward(&h)?)
     }
 }
@@ -102,7 +102,7 @@ impl CondMlp {
 
     pub fn forward(&self, x: &Tensor) -> Result<(Tensor, Tensor)> {
         let h = self.l0.forward(x)?;
-        let h = h.gelu()?;
+        let h = h.gelu_erf()?;
         let out = self.l2.forward(&h)?;
         let gamma = out.narrow(D::Minus1, 0, self.out_dim)?;
         let beta = out.narrow(D::Minus1, self.out_dim, self.out_dim)?;

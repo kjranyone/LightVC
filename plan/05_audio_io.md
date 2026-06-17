@@ -11,10 +11,11 @@
 
 | 項目 | 設計 | 実装 |
 |---|---|---|
-| rubato | v3.0 `AsyncFixedIn/Out` + `process_into_buffer` | v0.16 `SincFixedIn/Out` + `process()`（Vec 確保） |
-| `DuplexStream::start` 引数 | `(device, device, sample_rate, channels, buffer_size)` | `(input, output, capture_tx, playback_rx)` |
-| スレッド分離 | capture / playback / inference / UI の 4 分離（§1.1） | `inference_loop` が `start_audio()` 兼務 |
-| リサンプリング境界 | device_sr ↔ 44.1k の明確な境界 | `chunk_sz`(44.1k) と `input_frames_needed_up()`(device_sr) 混在 |
+| rubato | v3.0 `Async` + `process_into_buffer` | 解消（内部は zero-alloc）[05-1]。**ただし呼び出し側が毎回 Vec 確保** ⚠️ [05-5] |
+| `DuplexStream::start_with` 引数 | `(device, device, sr, ch, buf)` | API 実装済み [05-2]。**ただし realtime_tab は `start_default()` のみ使用** ⚠️ [05-6] |
+| スレッド分離 | capture / playback / inference / UI の 4 分離（§1.1） | AudioEngine でカプセル化 [05-3]。**ただし cpal ライフサイクルが依然 inference thread 内** ⚠️ [05-7] |
+| リサンプリング境界 | device_sr ↔ 44.1k の明確な境界 | 3 段バッファリングで解消 [05-4]。**ただし capture/playback 異 SR に未対応** ⚠️ [05-8] |
+| ARCH §5.2 の型名 | `AsyncFixedIn/Out` | **rubato 3.0 に存在しない虚構型名**（実体は `Async<T>` + `FixedAsync` enum）⚠️ [08-8] |
 
 ## タスクリスト
 
@@ -63,7 +64,7 @@
 ### [05-4] (P0) ✅ リサンプリング・チャンクサイズ境界の整理
 - **現状**: `realtime_tab.rs:376-413` で以下の処理が混在:
   - `chunk_sz = pipeline.chunk_samples()`（44.1k 換算のサンプル数）
-  - `needed = resampler.input_frames_needed_up()`（device_sr 揰りの必要フレーム数）
+  - `needed = resampler.input_frames_needed_up()`（device_sr 揃りの必要フレーム数）
   - `cap.len() < needed` で `cap.resize(needed, 0.0)`（ゼロ埋め）
   - その後 `chunk.len() < chunk_sz` でさらにゼロ埋め、`chunk.len() > chunk_sz` で truncate
 - **影響**:
@@ -77,6 +78,63 @@
   4. ゼロ埋めは最終手段（バッファアンダーフロー時のみ）
 - **受け入れ基準**: 長時間実行（5 分以上）で位相・ピッチがドリフトしない。`sox` 等で入出力を突き合わせて可聴範囲のズレなし。
 - **関連**: `crates/lightvc-app/src/realtime_tab.rs:376-456`
+
+### [05-5] (P1) ✅ リサンプラ呼び出し側が毎回 Vec 確保（[05-1] 受け入れ基準未達）
+- **現状**:
+  - `realtime_tab.rs:464`: `let input_chunk: Vec<f32> = in_accum.drain(..needed).collect();`
+  - `realtime_tab.rs:531`: 出力側も同様に `Vec` 確保
+  - リサンプラ内部（`resample.rs`）は `process_into_buffer` + 事前確保 scratch buffer で zero-alloc だが、**呼び出し側が毎イテレーションで新規 Vec をヒープ確保**
+  - [05-1] の受け入れ基準「ステディ状態でヒープアロケーションゼロ」は**realtime path 全体としては未達成**
+- **影響**: RT スレッドでのヒープ確保が xrun・音割れの原因になり得る。内部だけ zero-alloc でも意味が薄い。
+- **作業**:
+  1. `realtime_tab.rs` に事前確保の作業バッファをフィールド追加（`in_chunk_buf`, `out_chunk_buf` 等）
+  2. `drain(..needed).collect()` を `drain(..needed).for_each(|s| buf.push(s))` + クリア、またはリングから直接スライスコピー
+  3. `tracing-allocator` 等でステディ状態の alloc ゼロを確認
+- **受け入れ基準**: [05-1] の本来の受け入れ基準「ステディ状態でヒープアロケーションゼロ」を realtime path 全体で達成。
+- **関連**: `crates/lightvc-app/src/realtime_tab.rs:464,531`, `crates/lightvc-audio/src/resample.rs:5-7`
+
+### [05-6] (P1) ✅ `start_with` API が実装されたが呼び出し側が `start_default()` のみ使用
+- **現状**:
+  - `stream.rs:112-173`: `DuplexStream::start_with(input, output, capture_sr, playback_sr, in_ch, out_ch, buffer_size, ...)` 実装済み
+  - `engine.rs:77-173`: `AudioEngine::start_with` も実装済み
+  - **しかし** `realtime_tab.rs:346` は `AudioEngine::start_default()` のみ呼出
+  - MANUAL §4.2 のオーディオデバイス UI はデバイス一覧を**表示するだけ**（クリックハンドラ無し）。SR / channels / buffer_size を選ぶ UI も無い
+- **影響**:
+  - ユーザーがデバイス・SR・バッファサイズを選べない（常に default）
+  - ASIO / WASAPI exclusive 等の低遅延設定が使えない
+  - `start_with` がデッドコード化
+- **作業**:
+  1. `realtime_tab.rs` のデバイス一覧にクリックハンドラ追加（入出力デバイス選択）
+  2. SR / buffer_size のコンボボックス追加
+  3. Start ボタンから `AudioEngine::start_with(選択値)` を呼出
+- **受け入れ基準**: MANUAL §4.2 のデバイス列挙 UI から選択可能。任意の SR / buffer_size でストリーム開始できる。
+- **関連**: `crates/lightvc-audio/src/stream.rs:112-173`, `crates/lightvc-audio/src/engine.rs:77-173`, `crates/lightvc-app/src/realtime_tab.rs:261-299,346`
+
+### [05-7] (P1) ✅ AudioEngine のライフサイクルが依然 inference thread 内に結合
+- **現状**:
+  - `engine.rs` に `AudioEngine` 構造体は存在（cpal streams + ring buffers + fault flags をカプセル化）
+  - しかし `realtime_tab.rs:338-407` の inference thread は `RtControl::Start` を受けて**スレッド内で** `AudioEngine::start_default()`（346行）を呼出
+  - cpal Stream のライフサイクルと inference loop が依然密結合。[05-3] plan step 2/3「`inference_loop` は ring buffer との I/O のみ」「RealtimeTab の Start → AudioEngine::start() → inference thread 起動、と分離」が未達成
+- **影響**:
+  - デバイス切断時の再接続、モード変更時のスムーズな切り替えが困難
+  - ARCHITECTURE §1.2 の channel 通信図と実装が不一致
+- **作業**:
+  1. `AudioEngine` を `RealtimeTab`（または `AudioEngineHandle`）が所有
+  2. Start ボタン → `AudioEngine::start()`（UI thread 側）→ 別途 inference thread 起動
+  3. inference thread は ring buffer のみ操作、cpal Stream を触らない
+- **受け入れ基準**: スレッド構成が ARCHITECTURE.md §1.1 の図と一致。cpal lifecycle が inference から分離。
+- **関連**: `crates/lightvc-audio/src/engine.rs`, `crates/lightvc-app/src/realtime_tab.rs:338-407`, `ARCHITECTURE.md:11-49`
+
+### [05-8] (P1) ✅ capture と playback で SR が異なる場合の出力経路が未対応
+- **現状**:
+  - `engine.rs:49,80-81,169-170`: `capture_sample_rate` と `playback_sample_rate` を個別に追跡
+  - しかし `realtime_tab.rs:348` は `eng.capture_sample_rate` のみ読む
+  - `realtime_tab.rs:441`: `device_sr == 44_100` でリサンプル バイパス判定を**両方向**に適用
+  - capture 44.1k + playback 48k（例: 44.1k マイク + 48k HDMI 出力）の場合、Stage 4（543-548行）が 44.1k サンプルをそのまま 48k playback ring へ → 速度/ピッチズレ
+- **影響**: 非対称デバイス構成で出力ピッチがずれる。
+- **作業**: リサンプル バイパス判定を `capture_sr == 44_100 && playback_sr == 44_100` に変更。playback 側に `process_down` を常に適用（playback_sr != 44_100 时）。
+- **受け入れ基準**: capture 44.1k + playback 48k でピッチズレ無し。
+- **関連**: `crates/lightvc-audio/src/engine.rs:49,80-81,169-170`, `crates/lightvc-app/src/realtime_tab.rs:348,441,543-548`
 
 ## 関連文書
 - [02_streaming_lookahead.md](02_streaming_lookahead.md)

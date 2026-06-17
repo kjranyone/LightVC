@@ -28,6 +28,13 @@ pub struct RtMetrics {
 /// Control messages from UI to real-time inference thread.
 pub enum RtControl {
     Start,
+    /// Start with explicit device selection ([05-6]).
+    /// `input_idx` / `output_idx` are indices into the cpal device list
+    /// (same order as `DuplexStream::list_input_devices()`). `None` = default.
+    StartWithDevices {
+        input_idx: Option<usize>,
+        output_idx: Option<usize>,
+    },
     Stop,
     SetMode(lightvc_core::converter::LatencyMode),
     Bypass(bool),
@@ -74,6 +81,10 @@ pub struct LightVcApp {
     rt_bypass: bool,
     rt_mode: lightvc_core::converter::LatencyMode,
     rt_metrics: RtMetrics,
+    /// Selected input device index (None = default) ([05-6]).
+    rt_selected_input: Option<usize>,
+    /// Selected output device index (None = default) ([05-6]).
+    rt_selected_output: Option<usize>,
     conv_path_buf: String,
     conv_cfg_buf: String,
     asset_cache: crate::assets::AssetCache,
@@ -106,6 +117,8 @@ impl LightVcApp {
             rt_bypass: false,
             rt_mode: lightvc_core::converter::LatencyMode::Balanced,
             rt_metrics: RtMetrics::default(),
+            rt_selected_input: None,
+            rt_selected_output: None,
             conv_path_buf: String::new(),
             conv_cfg_buf: String::new(),
             asset_cache: Default::default(),
@@ -359,6 +372,8 @@ impl LightVcApp {
                 let mut rt_running = self.rt_running;
                 let mut rt_bypass = self.rt_bypass;
                 let mut rt_mode = self.rt_mode;
+                let mut rt_sel_in = self.rt_selected_input;
+                let mut rt_sel_out = self.rt_selected_output;
                 let metrics = self.rt_metrics.clone();
                 let file_dialog = &mut self.file_dialog;
                 let knob_tex = self.asset_cache.knob(ctx);
@@ -377,6 +392,8 @@ impl LightVcApp {
                         &mut rt_running,
                         &mut rt_bypass,
                         &mut rt_mode,
+                        &mut rt_sel_in,
+                        &mut rt_sel_out,
                         &metrics,
                         Some(&knob_tex_ref),
                         Some(&icon_stop_tex_ref),
@@ -391,6 +408,8 @@ impl LightVcApp {
                 self.rt_running = rt_running;
                 self.rt_bypass = rt_bypass;
                 self.rt_mode = rt_mode;
+                self.rt_selected_input = rt_sel_in;
+                self.rt_selected_output = rt_sel_out;
             }
             Tab::Catalog => {
                 egui::CentralPanel::default().show(ctx, |ui| {

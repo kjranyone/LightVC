@@ -181,7 +181,9 @@ def main():
                 if args.timbre_shift:
                     from timbre_shifter import timbre_shift as _ts
 
-                    wav_ts = _ts(wav, 44100)
+                    # apply_prob=1.0: every _ts.npy must be actually shifted
+                    # ([04-12]). Default 0.5 would leave half un-shifted.
+                    wav_ts = _ts(wav, 44100, apply_prob=1.0)
                     rem_ts = len(wav_ts) % 512
                     if rem_ts > 0:
                         wav_ts = np.pad(wav_ts, (0, 512 - rem_ts))

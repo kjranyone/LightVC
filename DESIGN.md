@@ -54,18 +54,18 @@ key names that the upstream module does not match.
 | No **StreamingModule** implementation | Implement streaming wrapper with conv-state caching + overlap-add. |
 | 86 Hz frame rate (6.9x Mimi's 12.5 Hz) | Converter stays lightweight (Conv1d-only, ~10M params). At 86 Hz this is ~860 MFLOP/s for a 10M model — well within CPU budget. |
 
-### 3. Converter architecture: Causal Conv1d mean-flow latent converter
+### 3. Converter architecture: Causal Conv1d flow-matching latent converter
 
-- **Mean-flow formulation (1-NFE): single forward pass at inference, no ODE loop.**
+- **Rectified flow formulation (1-NFE): single forward pass at inference, no ODE loop.**
 - Phase B (warm-start): AutoVC-style bottleneck autoencoder in DAC latent space.
-- Phase C (core): Mean-flow / shortcut flow matching, target = real speaker latent.
+- Phase C (core): Rectified / linear flow matching, target = real speaker latent.
 - Phase 2: Add MeanVC2-style Universal Timbre Token Encoder via cross-attention.
 - Phase 3: Progressive RVQ-depth factorized FM heads (novel contribution).
 - Parameters: 5-15M (Phase B/C), 15-30M (Phase 2+).
 
 ### 4. Training: Direct flow matching (NO VC teacher)
 
-- **No teacher distillation.** Trained from scratch via mean-flow matching.
+- **No teacher distillation.** Trained from scratch via flow matching.
 - Target latent = DAC encoding of a *real* target-speaker recording (any text).
 - Timbre-shifter augmentation (signal processing, not a neural teacher).
 - Rationale: survey of 16 SOTA zero-shot VC systems shows 14 are teacher-free.
@@ -123,7 +123,7 @@ Detailed design: [ARCHITECTURE.md](ARCHITECTURE.md)
 
 ## Model Data Creation Summary
 
-The converter model is trained **from scratch via mean-flow matching** (no VC teacher):
+The converter model is trained **from scratch via flow matching** (no VC teacher):
 
 ```
 Phase A: Corpus Encoding (offline, Python/XPU)
@@ -135,7 +135,7 @@ Phase B: Warm-start (bottleneck autoencoder, ~2h on B580)
   3. Converter learns to autoencode DAC latents with speaker bottleneck
   4. Target speaker re-injected from reference encoder
 
-Phase C: Mean-flow Matching (core training, ~5-7 days on B580)
+Phase C: Flow Matching (core training, ~5-7 days on B580)
   5. Converter learns: z_src(content) + speaker(ref) → z_tgt(real)
      where z_tgt is the DAC latent of a REAL target-speaker recording
   6. Losses: flow-matching velocity MSE + latent L1 + speaker SECS + content MI
@@ -156,7 +156,7 @@ Detailed pipeline: [MODEL_TRAINING.md](MODEL_TRAINING.md)
 |-------|------|-----------------|
 | **0** | DAC streaming proof-of-concept | Rust binary: WAV → DAC encode → DAC decode → WAV (round-trip) ✅ |
 | **B** | Bottleneck warm-start | AutoVC-in-DAC-space converter (audible VC, low quality) |
-| **C** | Mean-flow matching training | From-scratch SOTA-tier converter (no teacher) |
+| **C** | Flow matching training | From-scratch SOTA-tier converter (no teacher) |
 | **2** | Universal Timbre Token Encoder | Zero-shot target voice from 5-30s reference |
 | **3** | Progressive RVQ-depth factorized FM heads | Novel contribution: depth-axis control |
 | **4** | Prosody/rhythm factorization | Preserve / blend / imitate / flatten modes |
@@ -169,7 +169,7 @@ Detailed pipeline: [MODEL_TRAINING.md](MODEL_TRAINING.md)
 | Insight | Source | Application in LightVC |
 |---------|--------|--------------------------|
 | VC = codec-space translation, not waveform generation | X-VC concept | Converter operates on DAC latents only |
-| One-step conversion via mean-flow (1-NFE) | MeanVC2 | Single forward pass, no ODE loop |
+| One-step conversion via rectified flow (1-NFE) | Lipman 2023, Liu 2022 | Single forward pass, no ODE loop |
 | **14/16 SOTA VC systems trained without teacher** | R-VC, REF-VC, EZ-VC, Seed-VC, MeanVC2 | Direct flow matching, no distillation |
 | Flow target = real recording latent, not teacher output | Flow matching theory | Phase C trains on real target-speaker DAC latents |
 | Timbre-shifter augmentation (signal processing, not neural) | Seed-VC training recipe | Phase C data augmentation |

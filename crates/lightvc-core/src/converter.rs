@@ -14,6 +14,7 @@ use anyhow::Result;
 use candle_core::{Module, Tensor, D};
 use candle_nn::{Conv1d, Conv1dConfig, LayerNorm, VarBuilder};
 
+use crate::flow_converter::BottleneckEncoder;
 use crate::DAC_LATENT_DIM;
 
 // ---------------------------------------------------------------------------
@@ -235,13 +236,17 @@ impl SpeakerEncoder {
             let diff = (ref_latent - &mean_b)?;
             let sum_sq = diff.sqr()?.sum(D::Minus1)?;
             // PyTorch std(unbiased=True) divides by (N-1), not N.
+            // For t_len <= 1 this yields inf/nan, matching PyTorch which
+            // returns nan for std of a single element. The `.max(1.0)` guard
+            // avoids a potential f64 edge-case panic at t_len == 0 without
+            // changing the mathematical result.
             let n = (t_len as f64).max(1.0);
             let var = sum_sq.affine(1.0 / (n - 1.0), 0.0)?;
             var.sqrt()?
         };
         let pooled = Tensor::cat(&[&mean, &std], D::Minus1)?;
         let h = self.proj1.forward(&pooled)?;
-        let h = h.gelu()?;
+        let h = h.gelu_erf()?;
         Ok(self.proj2.forward(&h)?)
     }
 }
@@ -332,10 +337,25 @@ impl CrossAttnBlock {
         let v = self.v_proj.forward(vals)?;
 
         let head_dim = self.attn_dim / self.n_heads;
-        let q = q.reshape((b * self.n_heads, t, head_dim))?;
         let n_tok = k.dim(1)?;
-        let k = k.reshape((b * self.n_heads, n_tok, head_dim))?;
-        let v = v.reshape((b * self.n_heads, n_tok, head_dim))?;
+        // Head split: [B, T, attn_dim] → [B, T, H, d] → transpose(1,2) → [B, H, T, d]
+        //            → [B*H, T, d]. This matches Python's
+        //            reshape(B, T, H, d).transpose(1, 2) ([03-6]).
+        let q = q
+            .reshape((b, t, self.n_heads, head_dim))?
+            .transpose(1, 2)?
+            .contiguous()?
+            .reshape((b * self.n_heads, t, head_dim))?;
+        let k = k
+            .reshape((b, n_tok, self.n_heads, head_dim))?
+            .transpose(1, 2)?
+            .contiguous()?
+            .reshape((b * self.n_heads, n_tok, head_dim))?;
+        let v = v
+            .reshape((b, n_tok, self.n_heads, head_dim))?
+            .transpose(1, 2)?
+            .contiguous()?
+            .reshape((b * self.n_heads, n_tok, head_dim))?;
 
         let scale = 1.0 / (head_dim as f64).sqrt();
         let attn = q.matmul(&k.transpose(1, 2)?)?;
@@ -343,7 +363,12 @@ impl CrossAttnBlock {
         let attn = candle_nn::ops::softmax(&attn, D::Minus1)?;
         let out = attn.matmul(&v)?;
 
-        let out = out.reshape((b, t, self.attn_dim))?;
+        // Merge heads back: [B*H, T, d] → [B, H, T, d] → [B, T, H, d] → [B, T, attn_dim].
+        let out = out
+            .reshape((b, self.n_heads, t, head_dim))?
+            .transpose(1, 2)?
+            .contiguous()?
+            .reshape((b, t, self.attn_dim))?;
         let out = self.out_proj.forward(&out)?;
 
         let z_norm = self.norm.forward(&z_t)?;
@@ -373,6 +398,10 @@ pub struct ConverterConfig {
     pub time_embed_dim: usize,
     #[serde(default = "default_model_type")]
     pub model_type: String,
+    /// Phase 3: Progressive RVQ-depth factorized FM heads ([07-1]).
+    /// 0 = single vel_proj. 3 = coarse/mid/fine groups.
+    #[serde(default)]
+    pub n_depth_groups: usize,
 }
 
 fn default_n_timbre() -> usize {
@@ -404,6 +433,7 @@ impl Default for ConverterConfig {
             bottleneck_dim: 256,
             time_embed_dim: 128,
             model_type: "converter".to_string(),
+            n_depth_groups: 0,
         }
     }
 }
@@ -414,6 +444,59 @@ pub enum LatencyMode {
     Strict,
     Balanced,
     Quality,
+}
+
+/// Phase 4: Prosody handling mode ([07-2]).
+#[derive(Clone, Copy, Debug, serde::Deserialize, PartialEq, Eq, Default)]
+pub enum ProsodyMode {
+    PreserveSource,
+    Blend,
+    #[default]
+    ImitateTarget,
+    FlattenPrivacy,
+}
+
+/// Apply prosody factorization to converted latent ([07-2]).
+///
+/// Prosody is approximated as the per-frame energy envelope (L2 norm across
+/// the latent dimension). This function preserves, blends, or flattens the
+/// source's temporal dynamics on the converted output.
+pub fn apply_prosody_mode(
+    z_converted: &Tensor,
+    z_src: &Tensor,
+    mode: ProsodyMode,
+    blend_factor: f64,
+) -> Result<Tensor> {
+    if mode == ProsodyMode::ImitateTarget {
+        return Ok(z_converted.clone());
+    }
+    let src_env = z_src.sqr()?.sum(D::Minus1)?.sqrt()?;
+    let src_env = (&src_env + 1e-8)?; // clamp_min via epsilon
+    let conv_env = z_converted.sqr()?.sum(D::Minus1)?.sqrt()?;
+    let conv_env = (&conv_env + 1e-8)?;
+
+    match mode {
+        ProsodyMode::PreserveSource => {
+            let scale = (&src_env / &conv_env)?;
+            Ok(z_converted.broadcast_mul(&scale.unsqueeze(D::Minus1)?)?)
+        }
+        ProsodyMode::Blend => {
+            let scaled_src = src_env.affine(1.0 - blend_factor, 0.0)?;
+            let scaled_conv = conv_env.affine(blend_factor, 0.0)?;
+            let target_env = (&scaled_src + &scaled_conv)?;
+            let scale = (&target_env / &conv_env)?;
+            Ok(z_converted.broadcast_mul(&scale.unsqueeze(D::Minus1)?)?)
+        }
+        ProsodyMode::FlattenPrivacy => {
+            let dims = z_converted.dims();
+            let t_len = dims[dims.len() - 1];
+            let mean_env = conv_env.mean(D::Minus1)?.broadcast_as((1, 1))?;
+            let mean_env = mean_env.broadcast_as((1, t_len))?;
+            let scale = (&mean_env / &conv_env)?;
+            Ok(z_converted.broadcast_mul(&scale.unsqueeze(D::Minus1)?)?)
+        }
+        ProsodyMode::ImitateTarget => Ok(z_converted.clone()),
+    }
 }
 
 impl Default for LatencyMode {
@@ -428,6 +511,7 @@ impl Default for LatencyMode {
 
 pub struct Converter {
     config: ConverterConfig,
+    bottleneck: BottleneckEncoder,
     film: FilmCond,
     speaker_encoder: SpeakerEncoder,
     blocks: Vec<CausalResBlock>,
@@ -441,6 +525,11 @@ impl Converter {
         let latent_dim = config.latent_dim;
         let embed_dim = config.speaker_embed_dim;
 
+        let bottleneck = BottleneckEncoder::new(
+            latent_dim,
+            config.bottleneck_dim,
+            vb.pp("bottleneck"),
+        )?;
         let film = FilmCond::new(embed_dim, latent_dim, vb.pp("film"))?;
         let speaker_encoder = SpeakerEncoder::new(latent_dim, embed_dim, vb.pp("speaker_encoder"))?;
 
@@ -471,6 +560,7 @@ impl Converter {
 
         Ok(Self {
             config,
+            bottleneck,
             film,
             speaker_encoder,
             blocks,
@@ -482,6 +572,11 @@ impl Converter {
 
     pub fn speaker_embedding(&self, ref_latent: &Tensor) -> Result<Tensor> {
         self.speaker_encoder.forward(ref_latent)
+    }
+
+    /// Content bottleneck code, matching Python `Converter.content_code`.
+    pub fn content_code(&self, src_latent: &Tensor) -> Result<Tensor> {
+        self.bottleneck.forward(src_latent)
     }
 
     pub fn timbre_tokens(&self, ref_latent: &Tensor) -> Result<(Tensor, Tensor)> {
@@ -505,7 +600,8 @@ impl Converter {
         };
 
         let speaker_embed = self.speaker_encoder.forward(&ref_latent)?;
-        let z = self.film.forward(&src_latent, &speaker_embed)?;
+        let content = self.bottleneck.forward(&src_latent)?;
+        let z = self.film.forward(&content, &speaker_embed)?;
 
         let timbre = if self.config.enable_timbre {
             if let Some(bank) = &self.timbre_bank {
@@ -543,6 +639,4 @@ impl Converter {
 // `crate::converter::FlowConverter` paths keep working.
 // ===========================================================================
 
-pub use crate::flow_converter::{
-    AnyConverter, BottleneckEncoder, CondMlp, FlowConverter, TimeEmbed,
-};
+pub use crate::flow_converter::{AnyConverter, CondMlp, FlowConverter, TimeEmbed};

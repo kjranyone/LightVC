@@ -7,7 +7,7 @@ use candle_core::Tensor;
 
 use crate::{
     codec::{DacCodec, DacConfig},
-    converter::{AnyConverter, LatencyMode},
+    converter::{apply_prosody_mode, AnyConverter, LatencyMode, ProsodyMode},
     streaming::{ChunkMode, StreamingCodec},
     DAC_SAMPLE_RATE,
 };
@@ -52,6 +52,10 @@ pub struct VcPipeline {
     src_context: Option<Tensor>,
     /// Velocity scale for flow-matching inference (guidance scale).
     pub velocity_scale: f64,
+    /// Prosody handling mode ([07-2]).
+    pub prosody_mode: ProsodyMode,
+    /// Prosody blend factor (0.0 = all source, 1.0 = all target) ([07-2]).
+    pub prosody_blend: f64,
 }
 
 impl VcPipeline {
@@ -77,6 +81,8 @@ impl VcPipeline {
             mode,
             src_context: None,
             velocity_scale: 1.0,
+            prosody_mode: ProsodyMode::default(),
+            prosody_blend: 0.5,
         })
     }
 
@@ -139,6 +145,14 @@ impl VcPipeline {
         let start = total.saturating_sub(n_new);
         let new_converted = converted.narrow(2, start, n_new)?.contiguous()?;
 
+        // Apply prosody factorization ([07-2]).
+        let new_converted = apply_prosody_mode(
+            &new_converted,
+            &latent,
+            self.prosody_mode,
+            self.prosody_blend,
+        )?;
+
         // Update context: retain last ctx_len frames.
         let ctx_len = converter_context_frames(self.mode);
         let src_total = full_src.dim(2)?;
@@ -176,6 +190,24 @@ impl VcPipeline {
     pub fn reset(&mut self) {
         self.stream_codec.reset_state();
         self.src_context = None;
+    }
+
+    /// Switch latency/quality mode at runtime ([06-6]).
+    ///
+    /// Updates the streaming codec's chunk size + lookahead and resets all
+    /// streaming state to avoid frame-index mismatch from the mode change.
+    pub fn set_mode(&mut self, mode: LatencyMode) {
+        if mode == self.mode {
+            return;
+        }
+        let chunk_mode = match mode {
+            LatencyMode::Strict => ChunkMode::Strict,
+            LatencyMode::Balanced => ChunkMode::Balanced,
+            LatencyMode::Quality => ChunkMode::Quality,
+        };
+        self.stream_codec.set_chunk_mode(chunk_mode);
+        self.src_context = None;
+        self.mode = mode;
     }
 
     /// Offline whole-audio conversion (no chunking artifacts).

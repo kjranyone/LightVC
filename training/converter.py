@@ -6,13 +6,14 @@ load directly into the Candle implementation.
 
 Three model variants:
   - Converter      : residual-prediction converter (Phase 1 baseline, warm-start)
-  - FlowConverter  : mean-flow matching converter (Phase C, the core model)
+  - FlowConverter  : flow-matching converter (Phase C, the core model)
   - shared modules: Snake1d, CausalConv1d, CausalResBlock, FiLM, SpeakerEncoder,
                     TimbreTokenBank, CrossAttnBlock, BottleneckEncoder, TimeEmbed
 """
 
 from __future__ import annotations
 
+import enum
 import math
 
 import torch
@@ -38,6 +39,76 @@ class ConverterConfig:
     # Flow matching additions
     bottleneck_dim: int = 256
     time_embed_dim: int = 128
+    # Phase 3: Progressive RVQ-depth factorized FM heads ([07-1]).
+    # 0 = single vel_proj (disabled). 3 = coarse(1-3)/mid(4-6)/fine(7-9).
+    n_depth_groups: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Prosody / Rhythm factorization ([07-2])
+# ---------------------------------------------------------------------------
+
+
+class ProsodyMode(enum.Enum):
+    """Controls how prosody (F0, energy, rhythm) is handled during conversion.
+
+    * ``PreserveSource`` — keep source prosody, convert timbre only
+    * ``Blend`` — interpolate prosody between source and target
+    * ``ImitateTarget`` — replace prosody with target's (default VC behavior)
+    * ``FlattenPrivacy`` — normalize prosody for anti-voice-print
+    """
+
+    PreserveSource = 0
+    Blend = 1
+    ImitateTarget = 2
+    FlattenPrivacy = 3
+
+
+def apply_prosody_mode(
+    z_converted: torch.Tensor,
+    z_src: torch.Tensor,
+    mode: ProsodyMode,
+    blend_factor: float = 0.5,
+) -> torch.Tensor:
+    """Post-process the converted latent to control prosody ([07-2]).
+
+    Prosody is approximated as the per-frame energy envelope (L2 norm across
+    the latent dimension). This function preserves, blends, or flattens the
+    source's temporal dynamics on the converted output.
+
+    Args:
+        z_converted: [B, D, T] latent after voice conversion
+        z_src: [B, D, T] original source latent (for envelope reference)
+        mode: prosody handling mode
+        blend_factor: 0.0 = all source, 1.0 = all target (for Blend mode)
+    Returns:
+        [B, D, T] prosody-adjusted latent
+    """
+    if mode == ProsodyMode.ImitateTarget:
+        return z_converted
+
+    # Per-frame energy envelope: [B, 1, T]
+    src_env = z_src.norm(dim=1, keepdim=True).clamp(min=1e-8)  # [B, 1, T]
+    conv_env = z_converted.norm(dim=1, keepdim=True).clamp(min=1e-8)
+
+    if mode == ProsodyMode.PreserveSource:
+        # Scale converted latent to match source's energy envelope per frame.
+        scale = src_env / conv_env
+        return z_converted * scale
+
+    if mode == ProsodyMode.Blend:
+        # Interpolate energy envelope between source and converted.
+        target_env = (1.0 - blend_factor) * src_env + blend_factor * conv_env
+        scale = target_env / conv_env
+        return z_converted * scale
+
+    if mode == ProsodyMode.FlattenPrivacy:
+        # Normalize energy envelope to its mean (remove prosody dynamics).
+        mean_env = conv_env.mean(dim=-1, keepdim=True).clamp(min=1e-8)
+        scale = mean_env / conv_env
+        return z_converted * scale
+
+    return z_converted
 
 
 # ---------------------------------------------------------------------------
@@ -285,6 +356,11 @@ class Converter(nn.Module):
     def forward(
         self, src_latent: torch.Tensor, ref_latent: torch.Tensor
     ) -> torch.Tensor:
+        was_unbatched = src_latent.ndim == 2
+        if was_unbatched:
+            src_latent = src_latent.unsqueeze(0)
+            ref_latent = ref_latent.unsqueeze(0)
+
         speaker_embed = self.speaker_encoder(ref_latent)
 
         content = self.bottleneck(src_latent)
@@ -301,7 +377,11 @@ class Converter(nn.Module):
                 z = self.xattn[i](z, keys, vals)
 
         delta = self.out_proj(z)
-        return src_latent + delta
+        result = src_latent + delta
+
+        if was_unbatched:
+            result = result.squeeze(0)
+        return result
 
     def speaker_embedding(self, ref_latent: torch.Tensor) -> torch.Tensor:
         return self.speaker_encoder(ref_latent)
@@ -316,7 +396,7 @@ class Converter(nn.Module):
 
 
 class FlowConverter(nn.Module):
-    """Mean-flow matching converter.
+    """Flow-matching converter (rectified / linear flow, 1-NFE).
 
     Predicts the velocity field v(z_t, t | content, speaker) that transports
     z_0 (source) to z_1 (target speaker). At inference, a single forward pass
@@ -351,11 +431,26 @@ class FlowConverter(nn.Module):
         self.blocks = nn.ModuleList(
             [CausalResBlock(D, config.hidden_dim) for _ in range(config.n_conv_blocks)]
         )
-        self.vel_proj = CausalConv1d(D, D, 1)
 
-        # Zero-init final projection so the model starts as identity
-        nn.init.zeros_(self.vel_proj.conv.weight)  # type: ignore
-        nn.init.zeros_(self.vel_proj.conv.bias)  # type: ignore
+        # Velocity projection: single head or factorized heads ([07-1]).
+        self.n_depth_groups = config.n_depth_groups
+        if config.n_depth_groups > 0:
+            # Progressive RVQ-depth factorized FM heads.
+            # Group 0 (coarse, ~RVQ 1-3): content/timbre — convert aggressively
+            # Group 1 (mid,   ~RVQ 4-6): spectral shape — moderate
+            # Group 2 (fine,  ~RVQ 7-9): texture/noise — light or passthrough
+            self.vel_heads = nn.ModuleList(
+                [CausalConv1d(D, D, 1) for _ in range(config.n_depth_groups)]
+            )
+            for head in self.vel_heads:
+                nn.init.zeros_(head.conv.weight)  # type: ignore
+                nn.init.zeros_(head.conv.bias)  # type: ignore
+            self.vel_proj = None
+        else:
+            self.vel_proj = CausalConv1d(D, D, 1)
+            # Zero-init final projection so the model starts as identity
+            nn.init.zeros_(self.vel_proj.conv.weight)  # type: ignore
+            nn.init.zeros_(self.vel_proj.conv.bias)  # type: ignore
 
         if config.enable_timbre:
             self.timbre = TimbreTokenBank(E, config.n_timbre_tokens)
@@ -383,6 +478,7 @@ class FlowConverter(nn.Module):
         z_t: torch.Tensor,
         t: torch.Tensor,
         ref_latent: torch.Tensor,
+        depth_strengths: tuple[float, ...] | None = None,
     ) -> torch.Tensor:
         """Predict velocity field. Used during training.
 
@@ -390,6 +486,8 @@ class FlowConverter(nn.Module):
             z_t: [B, latent_dim, T] interpolated latent at time t
             t: [B] timestep in [0, 1]
             ref_latent: [B, latent_dim, T_ref] target speaker reference
+            depth_strengths: optional per-group scaling ([07-1]). None = all 1.0.
+                e.g. (1.0, 0.0, 0.0) = coarse-only for low-latency mode.
         Returns:
             v_pred: [B, latent_dim, T] predicted velocity
         """
@@ -414,17 +512,52 @@ class FlowConverter(nn.Module):
                 keys, vals = timbre
                 z = self.xattn[i](z, keys, vals)
 
-        return self.vel_proj(z)
+        # Velocity prediction: single head or factorized heads ([07-1]).
+        if self.vel_proj is not None:
+            return self.vel_proj(z)
+        # Factorized: sum of per-depth-group velocity contributions.
+        if depth_strengths is None:
+            depth_strengths = tuple(1.0 for _ in self.vel_heads)
+        v_total = None
+        for i, head in enumerate(self.vel_heads):
+            s = depth_strengths[i] if i < len(depth_strengths) else 0.0
+            if s == 0.0:
+                continue
+            v_i = head(z)
+            v_total = v_i * s if v_total is None else v_total + v_i * s
+        return v_total if v_total is not None else torch.zeros_like(z)
+
+    # ------------------------------------------------------------------
+    # Phase 4: Prosody / Rhythm factorization ([07-2])
+    # ------------------------------------------------------------------
 
     @torch.no_grad()
     def convert(
         self,
         z_src: torch.Tensor,
         ref_latent: torch.Tensor,
+        velocity_scale: float = 1.0,
+        depth_strengths: tuple[float, ...] | None = None,
+        prosody_mode: ProsodyMode = ProsodyMode.ImitateTarget,
+        prosody_blend: float = 0.5,
     ) -> torch.Tensor:
-        """One-step inference (mean-flow, 1-NFE).
+        """One-step inference (1-NFE).
 
-        z_converted = z_src + v_pred(z_src, t=1, ref)
+        z_converted = z_src + velocity_scale * v_pred(z_src, t=1, ref)
+
+        ``velocity_scale`` (>1 amplifies speaker-translation effect, analogous
+        to classifier-free guidance in diffusion models). 1.0 matches the
+        training objective exactly. Mirrors the Rust ``FlowConverter::convert``
+        API ([03-9]).
+
+        ``depth_strengths`` ([07-1]): per-group scaling for factorized heads.
+        None = all groups active at 1.0. Common presets:
+          * (1.0, 1.0, 1.0) — full conversion (default)
+          * (1.0, 0.0, 0.0) — coarse-only (lowest latency, ~RVQ 1-3)
+          * (1.5, 1.5, 0.0) — privacy mode (strong timbre, skip fine detail)
+
+        ``prosody_mode`` ([07-2]): controls F0/energy/rhythm handling.
+        ``prosody_blend``: 0.0=all source, 1.0=all target (for Blend mode).
 
         Accepts both batched [B, D, T] and unbatched [D, T] inputs.
         """
@@ -435,8 +568,11 @@ class FlowConverter(nn.Module):
 
         B = z_src.shape[0]
         t = torch.ones(B, device=z_src.device)
-        v = self.forward_velocity(z_src, t, ref_latent)
-        result = z_src + v
+        v = self.forward_velocity(z_src, t, ref_latent, depth_strengths=depth_strengths)
+        result = z_src + velocity_scale * v
+
+        # Apply prosody factorization ([07-2]).
+        result = apply_prosody_mode(result, z_src, prosody_mode, prosody_blend)
 
         if was_unbatched:
             result = result.squeeze(0)
@@ -444,6 +580,72 @@ class FlowConverter(nn.Module):
 
     def speaker_embedding(self, ref_latent: torch.Tensor) -> torch.Tensor:
         return self.speaker_encoder(ref_latent)
+
+    # ------------------------------------------------------------------
+    # Phase 5: Dual-path converter ([07-3])
+    # ------------------------------------------------------------------
+
+    @torch.no_grad()
+    def convert_dual_path(
+        self,
+        z_src: torch.Tensor,
+        ref_latent: torch.Tensor,
+        coarse_only: bool = False,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        """Dual-path conversion: fast coarse + optional refine ([07-3]).
+
+        Returns ``(coarse_result, refine_result)``:
+          * ``coarse_result`` — immediate output using only the coarse head
+            (group 0). Suitable for low-latency streaming where the user
+            hears this first.
+          * ``refine_result`` — detail-corrected output using mid + fine
+            heads (groups 1, 2) applied to ``coarse_result``. ``None`` if
+            ``coarse_only=True`` or if the model has no factorized heads.
+
+        In a streaming pipeline, ``coarse_result`` is emitted immediately and
+        ``refine_result`` replaces it on the next chunk (bounded lookahead).
+
+        Requires ``n_depth_groups >= 2`` in the config.
+        """
+        if self.n_depth_groups < 2 or self.vel_proj is not None:
+            # No factorized heads — single-path fallback.
+            full = self.convert(z_src, ref_latent)
+            return full, None
+
+        was_unbatched = z_src.ndim == 2
+        if was_unbatched:
+            z_src = z_src.unsqueeze(0)
+            ref_latent = ref_latent.unsqueeze(0)
+
+        B = z_src.shape[0]
+        device = z_src.device
+        t = torch.ones(B, device=device)
+
+        # Fast path: coarse head only (group 0).
+        coarse_strengths = tuple(
+            1.0 if i == 0 else 0.0 for i in range(self.n_depth_groups)
+        )
+        v_coarse = self.forward_velocity(z_src, t, ref_latent, depth_strengths=coarse_strengths)
+        coarse_result = z_src + v_coarse
+
+        if coarse_only:
+            result = coarse_result.squeeze(0) if was_unbatched else coarse_result
+            return result, None
+
+        # Refine path: mid + fine heads (groups 1+) applied to coarse result.
+        refine_strengths = tuple(
+            1.0 if i > 0 else 0.0 for i in range(self.n_depth_groups)
+        )
+        v_refine = self.forward_velocity(
+            coarse_result, t, ref_latent, depth_strengths=refine_strengths
+        )
+        refine_result = coarse_result + v_refine
+
+        if was_unbatched:
+            coarse_result = coarse_result.squeeze(0)
+            refine_result = refine_result.squeeze(0)
+
+        return coarse_result, refine_result
 
 
 # ---------------------------------------------------------------------------
@@ -506,8 +708,11 @@ class ContentSpeakerAdversary(nn.Module):
 class DisentangledConverter(nn.Module):
     """Wrapper around FlowConverter + ContentSpeakerAdversary.
 
-    Exposes `content_code()` for the GRL loss during training. At inference,
-    use the inner FlowConverter directly (the adversary is discarded).
+    The adversary is used standalone in train_flow.py
+    (``disentangled.adversary(grad_reverse(content))``). The wrapper
+    exists only to keep the adversary's parameters in the same module
+    tree for ``.to(device)`` / ``state_dict``. At inference, use the
+    inner FlowConverter directly (the adversary is discarded).
     """
 
     def __init__(self, converter: "FlowConverter", n_speakers: int):
@@ -516,19 +721,3 @@ class DisentangledConverter(nn.Module):
         self.adversary = ContentSpeakerAdversary(
             converter.config.latent_dim, n_speakers
         )
-
-    def forward_velocity(
-        self,
-        z_t: torch.Tensor,
-        t: torch.Tensor,
-        ref_latent: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Returns (velocity, content_code) so the trainer can compute the
-        GRL adversary loss on the content code in parallel."""
-        content = self.converter.bottleneck(z_t)
-        spk_logits = self.adversary(grad_reverse(content))
-        v = self.converter.forward_velocity(z_t, t, ref_latent)
-        return v, spk_logits
-
-    def convert(self, z_src: torch.Tensor, ref_latent: torch.Tensor) -> torch.Tensor:
-        return self.converter.convert(z_src, ref_latent)
