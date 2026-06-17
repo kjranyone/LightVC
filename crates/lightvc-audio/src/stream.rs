@@ -87,15 +87,48 @@ impl DuplexStream {
         let in_channels = input_cfg.channels();
         let out_channels = output_cfg.channels();
 
+        Self::start_with(
+            input_device,
+            output_device,
+            capture_sr,
+            playback_sr,
+            in_channels,
+            out_channels,
+            cpal::BufferSize::Default,
+            capture_tx,
+            playback_rx,
+        )
+    }
+
+    /// Start a duplex stream with explicit sample rate, channel count and
+    /// buffer size. `buffer_size` of `Default` lets cpal choose; `Fixed(n)`
+    /// requests a specific period for lower latency ([05-2]).
+    ///
+    /// The caller is responsible for picking values that both devices
+    /// actually support; cpal will error out otherwise. Use
+    /// [`DuplexStream::supported_input_configs`] /
+    /// [`DuplexStream::supported_output_configs`] to enumerate options.
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_with(
+        input_device: &Device,
+        output_device: &Device,
+        capture_sr: cpal::SampleRate,
+        playback_sr: cpal::SampleRate,
+        in_channels: u16,
+        out_channels: u16,
+        buffer_size: cpal::BufferSize,
+        mut capture_tx: Producer<f32>,
+        mut playback_rx: rtrb::Consumer<f32>,
+    ) -> Result<Self> {
         let in_config = StreamConfig {
             channels: in_channels,
             sample_rate: capture_sr,
-            buffer_size: cpal::BufferSize::Default,
+            buffer_size,
         };
         let out_config = StreamConfig {
             channels: out_channels,
             sample_rate: playback_sr,
-            buffer_size: cpal::BufferSize::Default,
+            buffer_size,
         };
 
         let n_in = in_channels as usize;
@@ -137,6 +170,20 @@ impl DuplexStream {
             capture_sample_rate: capture_sr,
             playback_sample_rate: playback_sr,
         })
+    }
+
+    /// Enumerate sample rates / channel counts supported by an input device.
+    pub fn supported_input_configs(
+        device: &Device,
+    ) -> Result<Vec<cpal::SupportedStreamConfigRange>> {
+        Ok(device.supported_input_configs()?.collect())
+    }
+
+    /// Enumerate sample rates / channel counts supported by an output device.
+    pub fn supported_output_configs(
+        device: &Device,
+    ) -> Result<Vec<cpal::SupportedStreamConfigRange>> {
+        Ok(device.supported_output_configs()?.collect())
     }
 
     pub fn pause(&self) -> Result<()> {
