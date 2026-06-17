@@ -57,12 +57,21 @@ impl VcPipeline {
     /// Process one chunk of 44.1 kHz PCM → 44.1 kHz PCM.
     ///
     /// If no target voice is set, returns the input unchanged (passthrough).
+    /// Returns an empty `Vec` during FRC warmup (the first chunk(s) before
+    /// enough lookahead has accumulated); callers should treat this as
+    /// silence.
     pub fn process_chunk(&mut self, chunk_pcm: &[f32]) -> Result<Vec<f32>> {
         if self.target.is_none() {
             return Ok(chunk_pcm.to_vec());
         }
 
         let latent = self.stream_codec.encode_step(chunk_pcm)?;
+
+        // FRC warmup: encoder returned a 0-frame latent while buffering
+        // lookahead. Skip convert/decode and emit silence for this chunk.
+        if latent.dim(2)? == 0 {
+            return Ok(Vec::new());
+        }
 
         let ref_latent = &self.target.as_ref().unwrap().ref_latent;
         let converted = self.converter.convert(&latent, ref_latent)?;

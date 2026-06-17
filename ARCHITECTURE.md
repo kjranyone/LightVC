@@ -276,13 +276,19 @@ impl StreamingDacEncoder {
 
 ### 3.5 Latency / Quality Modes
 
-| Mode | Lookahead | Chunk Size | Use Case |
-|------|-----------|------------|----------|
-| **Strict** | 0 ms | 1 frame (512 samples, 11.6ms) | Minimum latency, boundary artifacts |
-| **Balanced** | ~40 ms | ~4 frames (2048 samples, 46ms) | Good quality/latency tradeoff |
-| **Quality** | ~80-120 ms | ~8 frames (4096 samples, 93ms) | Best quality, streaming-safe |
+| Mode | Lookahead | Chunk Size | Total algorithmic latency | Use Case |
+|------|-----------|------------|---------------------------|----------|
+| **Strict** | 0 ms | 1 frame (512 samples, 11.6ms) | ~12 ms | Minimum latency, boundary artifacts accepted |
+| **Balanced** | ~46 ms (2048 samples) | 4 frames (2048 samples, 46ms) | ~93 ms | Good quality/latency tradeoff |
+| **Quality** | ~93 ms (4096 samples) | 8 frames (4096 samples, 93ms) | ~186 ms | Best quality, streaming-safe |
 
-The lookahead absorbs DAC's non-causal receptive field. In **strict mode**, we accept quality degradation at chunk boundaries (acceptable for communication); in **quality mode**, we overlap chunks and cross-fade.
+> Implemented in `crates/lightvc-core/src/streaming.rs` via Future-Receptive
+> Chunking (FRC). The encoder buffers `lookahead` samples of *future* audio
+> before emitting the current chunk's latent, so DAC's symmetric-padded convs
+> receive real context on both edges and chunk-boundary artifacts are
+> eliminated (Balanced/Quality). Strict mode skips lookahead entirely.
+
+The lookahead absorbs DAC's non-causal receptive field. In **strict mode**, we accept quality degradation at chunk boundaries (acceptable for communication); in **balanced/quality mode**, FRC provides real future context and the decoder uses overlap-add with cross-fade.
 
 ---
 
