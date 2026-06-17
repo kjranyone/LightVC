@@ -33,7 +33,7 @@
   - ステディ状態でヒープアロケーションゼロ（`tracing-allocator` 等のプロファイラで確認）
 - **関連**: `Cargo.toml:29`, `crates/lightvc-audio/src/resample.rs`, `ARCHITECTURE.md:449-469`, `RESEARCH.md:142-145`
 
-### [05-2] (P1) `DuplexStream::start` シグネチャ修正
+### [05-2] (P1) ✅ `DuplexStream::start` シグネチャ修正
 - **現状**: `stream.rs:75-140` の `DuplexStream::start` 引数は ring buffer の producer/consumer。デバイス設定は `default_input_config()` / `default_output_config()` に固定で、ユーザーが SR / channels / buffer_size を選べない。
 - **影響**:
   - MANUAL §4.2 のオーディオデバイス UI が実質機能していない（一覧表示のみ、選択しても SR 等は default 固定）
@@ -46,7 +46,7 @@
 - **受け入れ基準**: 任意の SR / channels / buffer_size でストリーム開始できる。MANUAL §4.2 のデバイス列挙 UI から選択可能。
 - **関連**: `crates/lightvc-audio/src/stream.rs:75-140`, `ARCHITECTURE.md:407-447`, `crates/lightvc-app/src/realtime_tab.rs:245-284`
 
-### [05-3] (P1) capture / playback / inference スレッドの完全分離
+### [05-3] (P1) ✅ capture / playback / inference スレッドの完全分離
 - **現状**: `realtime_tab.rs:291-477` の `inference_loop` は `start_audio()`（459-477 行）で cpal ストリームを立ち上げる。ARCHITECTURE.md §1.1（11-39 行）は capture callback / inference / playback callback / UI の 4 スレッド分離を想定。
 - **影響**:
   - cpal Stream のライフサイクルと inference loop が密結合

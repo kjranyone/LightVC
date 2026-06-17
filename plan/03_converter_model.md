@@ -20,7 +20,7 @@
 
 ## タスクリスト
 
-### [03-1] (P1) パラメータ数乖離の解消
+### [03-1] (P1) ✅ パラメータ数乖離の解消
 - **現状**: DESIGN.md §4.1（295-315 行）は「Conv1d(1024→1024)」、README.md:106 は「~10M params」。実装の `hidden_dim: 256` だと `CausalResBlock` は `1024→256→1024` 結合で約 6M パラメータ。
 - **影響**: 設計で想定した表現力が得られていない可能性。ただし現在の学習ステップ数（30K）では差は顕在化しにくい。
 - **作業**: 以下いずれかを選択して整合
@@ -40,7 +40,7 @@
 - **受け入れ基準**: UTTE 有効版が学習完了し、ゼロショット SECS が改善すること（目標: +0.05 以上）。
 - **関連**: `crates/lightvc-core/src/converter.rs:234-332`, `training/converter.py:150-199`, `MODEL_TRAINING.md:295-296`
 
-### [03-3] (P1) FlowConverter の ARCHITECTURE 反映
+### [03-3] (P1) ✅ FlowConverter の ARCHITECTURE 反映
 - **現状**: ARCHITECTURE.md §4（289-399 行）は Phase 1 `Converter`（residual-prediction）だけ記載。Phase C `FlowConverter` と `AnyConverter` enum による `model_type` 切替が未記載。
 - **作業**:
   1. ARCHITECTURE.md §4 に「Phase C: FlowConverter」セクションを追加
@@ -50,7 +50,7 @@
 - **受け入れ基準**: ARCHITECTURE.md を読めば `model_type` 切替の仕組みと FlowConverter の役割が分かること。
 - **関連**: `crates/lightvc-core/src/converter.rs:608-731`, `MODEL_TRAINING.md:202-234`
 
-### [03-4] (P2) CausalConv1d の dead code 削除
+### [03-4] (P2) ✅ CausalConv1d の dead code 削除
 - **現状**: `converter.rs:100-105` に `conv.weight` / `conv.bias` の depthwise フォールバックがある。AGENTS.md「Known Issues」で depthwise conv (`groups=in_ch`) は XPU backward で失敗すると明記。Python 側 `converter.py:60-89` にも `depthwise=True` オプションがあるが、`CausalResBlock` は `depthwise=False`（標準 conv）で使用。
 - **作業**:
   1. `CausalConv1d::new` の `or_else(|_| vb.get(..., "conv.weight"))` フォールバック削除

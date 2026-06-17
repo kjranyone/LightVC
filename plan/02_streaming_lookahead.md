@@ -52,7 +52,7 @@ LightVC の差別化要件的に最重要な **bounded future context（MeanVC2 
 - **受け入れ基準**: 同一入力を streaming / non-streaming でエンコードした際、出力 latent が一致（誤差 1e-5 以内）。
 - **関連**: `crates/lightvc-core/src/streaming.rs:49-59`, `crates/lightvc-core/src/dac_model.rs`, `ARCHITECTURE.md:240-275`
 
-### [02-3] (P1) デコーダ overlap-add の設計文書化と検証
+### [02-3] (P1) ✅ デコーダ overlap-add の設計文書化と検証
 - **現状**: `streaming.rs:153-181` にリニアクロスフェード実装があるが、設計資料に詳細なし。クロスフェード長が `DAC_HOP_LENGTH`（512 sample = 約 11.6ms）固定で、チャンクサイズに依存しない。
 - **作業**:
   1. 実装の根拠を ARCHITECTURE.md §3 に追記

@@ -29,7 +29,7 @@
 ### [08-3] (P1) ✅ CLAP が `model_type` を見ないため FlowConverter 重みが読めない（再掲）
 - **詳細**: [06_plugin_app.md の 06-1](06_plugin_app.md) を参照。Phase C 本命モデルが DAW で読み込めない重大問題。
 
-### [08-4] (P1) `SpeakerEncoder` の活性化関数不一致（GELU vs ReLU）
+### [08-4] (P1) ✅ `SpeakerEncoder` の活性化関数不一致（GELU vs ReLU）
 - **現状**:
   - Python (`converter.py:147`): `F.gelu(self.p1(pooled))`
   - Rust (`converter.rs:227`): `self.proj1.forward(&pooled)?.relu()?`
@@ -41,7 +41,7 @@
 - **受け入れ基準**: Rust / Python の speaker embedding 出力が 1e-6 以内で一致。
 - **関連**: `crates/lightvc-core/src/converter.rs:217-229`, `training/converter.py:136-147`
 
-### [08-5] (P2) `TimeEmbed` の freqs 初期化精度の差
+### [08-5] (P2) ✅ `TimeEmbed` の freqs 初期化精度の差
 - **現状**:
   - Python (`converter.py:233-235`): `1.0 / (10000 ** (arange(0, half) / half))` — `torch.arange` は float32
   - Rust (`converter.rs:546-549`): `(1.0f32 / 10000.0f32).powf(i as f32 / half as f32)`、`i` は `0..half`
@@ -57,7 +57,7 @@
 - **受け入れ基準**: Rust / Python の time_embed 出力が 1e-7 以内で一致。
 - **関連**: `crates/lightvc-core/src/converter.rs:543-549`, `training/converter.py:228-236`
 
-### [08-6] (P2) `SpeakerEncoder.forward` の unbatched 入力扱い
+### [08-6] (P2) ✅ `SpeakerEncoder.forward` の unbatched 入力扱い
 - **現状**: Rust `converter.rs:223-228` は `ref_latent.mean(D::Minus1)`。入力 `[B, D, T_ref]` を T_ref 方向に平均 → `[B, D]`。Python も `mean(dim=-1)` で `[B, D]`。batched では一致する。
 - **注記**: 一見問題ないが、`ref_latent` が unbatched `[D, T]` で渡された場合の挙動が Rust / Python で異なる:
   - Python (`converter.py:427-451`): `FlowConverter.convert` で `was_unbatched = z_src.ndim == 2` をチェックし、必要に応じて unsqueeze
