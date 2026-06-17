@@ -19,7 +19,11 @@ Phase C: train_flow.py           Mean-flow matching (core training)
 Phase D: export_weights.py       PyTorch → safetensors for Rust
 ```
 
-## Quick Start
+## Quick Start (smoke test)
+
+Quick sanity check on a small Edge TTS corpus (~5 min encode + ~30 min train).
+Use this to verify the pipeline runs end-to-end before committing to a full
+training run.
 
 ```bash
 # 1. Generate TTS corpus (Edge TTS, 17 speakers, ~170 utterances)
@@ -30,25 +34,53 @@ uv run python encode_corpus.py \
     --source ../data/tts_corpus \
     --output data/latents
 
-# 3. Phase B: Warm-start
+# 3. Phase B: Warm-start (smoke)
 uv run python train_warmstart.py \
-    --config configs/phase_b.yaml \
+    --config configs/phase_b_smoke.yaml \
     --data data/latents \
-    --output checkpoints/phase_b
+    --output checkpoints/phase_b_smoke
 
-# 4. Phase C: Flow matching
+# 4. Phase C: Flow matching (smoke)
 uv run python train_flow.py \
-    --config configs/phase_c.yaml \
+    --config configs/phase_c_smoke.yaml \
     --data data/latents \
-    --output checkpoints/phase_c
+    --output checkpoints/phase_c_smoke
 
 # 5. Export
+uv run python export_weights.py \
+    --checkpoint checkpoints/phase_c_smoke/best.pt \
+    --output ../models/converter.safetensors \
+    --model-type flow
+```
+
+## Production training
+
+Full-scale training on LibriTTS / VCTK (100+ speakers). Expected wall time on
+a single Arc B580: Phase B ~2 h, Phase C ~5-7 days. See MODEL_TRAINING.md for
+corpus download instructions.
+
+```bash
+# Phase B: 50K steps, batch_size=8
+uv run python train_warmstart.py \
+    --config configs/phase_b.yaml \
+    --data data/latents_libritts \
+    --output checkpoints/phase_b
+
+# Phase C: 200K steps, bf16, batch_size=8
+uv run python train_flow.py \
+    --config configs/phase_c.yaml \
+    --data data/latents_libritts \
+    --output checkpoints/phase_c
+
 uv run python export_weights.py \
     --checkpoint checkpoints/phase_c/best.pt \
     --output ../models/converter.safetensors \
     --model-type flow
+```
 
-# 6. Inference
+## Inference (Python reference)
+
+```bash
 uv run python infer_flow.py \
     --source source.wav --reference reference.wav \
     --output converted.wav \
@@ -57,10 +89,12 @@ uv run python infer_flow.py \
 
 ## Configs
 
-| File | Description |
-|------|-------------|
-| `configs/phase_b.yaml` | Warm-start (bottleneck autoencoder) |
-| `configs/phase_c.yaml` | Flow matching (core, init from phase_b) |
+| File | Steps | Corpus | Purpose |
+|------|-------|--------|---------|
+| `configs/phase_b_smoke.yaml` | 10K | Edge TTS (17 spk) | Smoke test warm-start |
+| `configs/phase_c_smoke.yaml` | 30K | Edge TTS (17 spk) | Smoke test flow matching |
+| `configs/phase_b.yaml` | 50K | LibriTTS/VCTK (100+ spk) | Production warm-start |
+| `configs/phase_c.yaml` | 200K | LibriTTS/VCTK (100+ spk) | Production flow matching (bf16) |
 
 ## Files
 

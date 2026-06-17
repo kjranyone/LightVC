@@ -1,0 +1,39 @@
+# Phase B: Warm-start on full corpus (LibriTTS / VCTK, 100+ speakers)
+#
+# This is the production config matching MODEL_TRAINING.md §B.
+# For a quick smoke test on Edge TTS use phase_b_smoke.yaml instead.
+model:
+  latent_dim: 1024
+  hidden_dim: 256
+  n_conv_blocks: 4
+  speaker_embed_dim: 256
+  enable_timbre: false
+  bottleneck_dim: 256
+  time_embed_dim: 128
+
+training:
+  batch_size: 8
+  learning_rate: 3.0e-4
+  optimizer_betas: [0.8, 0.99]
+  weight_decay: 0.01
+  lr_scheduler_gamma: 0.9998
+  gradient_clip: 1.0
+  max_steps: 50000
+
+losses:
+  reconstruction_l1: 1.0
+  speaker_consistency: 0.5
+  content_preservation: 0.3
+
+data:
+  sample_rate: 44100
+  latent_frame_rate: 86
+  max_utterance_frames: 600
+  min_utterance_frames: 30
+
+checkpoint:
+  save_every_steps: 5000
+
+hardware:
+  device: auto
+  mixed_precision: none
