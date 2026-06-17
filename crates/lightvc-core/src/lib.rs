@@ -6,6 +6,7 @@
 pub mod codec;
 pub mod converter;
 pub mod dac_model;
+pub mod flow_converter;
 pub mod pipeline;
 pub mod streaming;
 pub mod weights;
