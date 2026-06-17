@@ -55,22 +55,27 @@ pub fn apply_theme(ctx: &egui::Context) {
 
     style.visuals.widgets.noninteractive.bg_fill = BG_PANEL;
     style.visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, TEXT_DIM);
-    style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(0.5, BG_PANEL_LIGHT);
+    style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, BG_PANEL_LIGHT);
+    style.visuals.widgets.noninteractive.expansion = 0.0;
 
     style.visuals.widgets.inactive.bg_fill = BG_PANEL_LIGHT;
     style.visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, TEXT);
     style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, LAVENDER);
+    style.visuals.widgets.inactive.expansion = 0.0;
 
     style.visuals.widgets.hovered.bg_fill = PINK;
-    style.visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.5, TEXT);
-    style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(2.0, PINK_BRIGHT);
+    style.visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, TEXT);
+    style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, PINK_BRIGHT);
+    style.visuals.widgets.hovered.expansion = 0.0;
 
     style.visuals.widgets.active.bg_fill = LAVENDER;
-    style.visuals.widgets.active.fg_stroke = egui::Stroke::new(1.5, TEXT);
-    style.visuals.widgets.active.bg_stroke = egui::Stroke::new(2.0, CYAN);
+    style.visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, TEXT);
+    style.visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, CYAN);
+    style.visuals.widgets.active.expansion = 0.0;
 
     style.visuals.widgets.open.bg_fill = LAVENDER;
-    style.visuals.widgets.open.fg_stroke = egui::Stroke::new(1.5, TEXT);
+    style.visuals.widgets.open.fg_stroke = egui::Stroke::new(1.0, TEXT);
+    style.visuals.widgets.open.expansion = 0.0;
 
     // Selection
     style.visuals.selection.bg_fill = PINK;
@@ -105,7 +110,7 @@ pub fn icon_button(
             .color(colors::TEXT),
     )
     .fill(fill)
-    .stroke(egui::Stroke::new(2.0, stroke_color))
+    .stroke(egui::Stroke::new(1.0, stroke_color))
     .min_size(egui::vec2(80.0, 30.0));
 
     ui.add(btn).clicked()
@@ -142,7 +147,7 @@ pub fn pill_button(ui: &mut egui::Ui, text: &str, active: bool) -> bool {
             .color(colors::TEXT),
     )
     .fill(fill)
-    .stroke(egui::Stroke::new(2.0, stroke_color))
+    .stroke(egui::Stroke::new(1.0, stroke_color))
     .min_size(egui::vec2(80.0, 32.0));
 
     ui.add(btn).clicked()
@@ -158,7 +163,7 @@ pub fn tab_button(ui: &mut egui::Ui, text: &str, selected: bool) -> bool {
 
     let btn = egui::Button::new(egui::RichText::new(text).size(14.0).strong().color(fg))
         .fill(bg)
-        .stroke(egui::Stroke::new(if selected { 2.0 } else { 1.0 }, stroke))
+        .stroke(egui::Stroke::new(1.0, stroke))
         .min_size(egui::vec2(70.0, 30.0));
 
     ui.add(btn).clicked()
