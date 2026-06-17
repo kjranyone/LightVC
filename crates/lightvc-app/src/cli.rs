@@ -332,9 +332,11 @@ pub fn resample_to_44100(input: &[f32], input_sr: u32) -> Result<Vec<f32>> {
         if chunk.len() < chunk_size {
             let mut padded = chunk.to_vec();
             padded.resize(chunk_size, 0.0);
-            output.extend(resampler.process_up(&padded)?);
+            let resampled = resampler.process_up(&padded)?;
+            output.extend_from_slice(resampled);
         } else {
-            output.extend(resampler.process_up(chunk)?);
+            let resampled = resampler.process_up(chunk)?;
+            output.extend_from_slice(resampled);
         }
         pos = end;
     }

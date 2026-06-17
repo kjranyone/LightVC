@@ -396,10 +396,11 @@ pub fn inference_loop(
 
         let t0 = Instant::now();
 
-        let pcm_44k = if device_sr != 44_100 {
+        let pcm_44k: Vec<f32> = if device_sr != 44_100 {
             resampler_up
                 .as_mut()
                 .and_then(|r| r.process_up(&cap).ok())
+                .map(|s| s.to_vec())
                 .unwrap_or_else(|| cap.clone())
         } else {
             cap.clone()
@@ -428,11 +429,12 @@ pub fn inference_loop(
         let out_rms = widgets::rms(&out_44k);
         let elapsed = t0.elapsed();
 
-        let out_dev = if device_sr != 44_100 {
+        let out_dev: Vec<f32> = if device_sr != 44_100 {
             resampler_down
                 .as_mut()
                 .and_then(|r| r.process_down(&out_44k).ok())
-                .unwrap_or(out_44k)
+                .map(|s| s.to_vec())
+                .unwrap_or_else(|| out_44k)
         } else {
             out_44k
         };
