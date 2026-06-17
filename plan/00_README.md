@@ -70,34 +70,34 @@ LightVC プロジェクトの初期設計資料（DESIGN / ARCHITECTURE / MODEL_
 |---|---|---|
 | 01-1 | P2 | ⬜ |
 | 01-2 | P2 | ⬜ |
-| 01-3 | P1 | ⬜ |
+| 01-3 | P1 | ✅ (flow_converter.rs 分離) |
 | 02-1 | P0 | ✅ |
 | 02-2 | P0 | ✅ (lookahead+overlap で等価性確保、per-layer cache は最適化として保留) |
-| 02-3 | P1 | ⬜ |
+| 02-3 | P1 | ✅ (overlap-add 設計 ARCHITECTURE §3.4.1 に文書化) |
 | 02-4 | P0 | ✅ |
-| 03-1 | P1 | ⬜ |
+| 03-1 | P1 | ✅ (hidden_dim 1024 統一) |
 | 03-2 | P2 | ⬜ |
-| 03-3 | P1 | ⬜ |
+| 03-3 | P1 | ✅ (FlowConverter を ARCHITECTURE §4.1b に反映) |
 | 03-4 | P2 | ✅ |
 | 03-5 | P0 | ✅ |
-| 04-1 | P1 | ⬜ |
+| 04-1 | P1 | ✅ (smoke / production config 分離) |
 | 04-2 | P0 | 🚧 (config 有効化、実機検証 pending) |
-| 04-3 | P1 | ⬜ |
-| 04-4 | P1 | ⬜ |
-| 04-5 | P1 | ⬜ |
+| 04-3 | P1 | ✅ (download_corpus.py + encode_corpus 修正) |
+| 04-4 | P1 | ✅ (GRL content MI loss 実装) |
+| 04-5 | P1 | ✅ (evaluate.py: SECS/UTMOS/WER) |
 | 04-6 | P2 | ⬜ |
 | 05-1 | P0 | ✅ |
-| 05-2 | P1 | ⬜ |
-| 05-3 | P1 | ⬜ |
+| 05-2 | P1 | ✅ (DuplexStream::start_with) |
+| 05-3 | P1 | ✅ (AudioEngine でスレッド分離 + フォールト処理) |
 | 05-4 | P0 | ✅ ([08-2][08-7] 同時解消) |
 | 06-1 | P0 | ✅ |
-| 06-2 | P1 | ⬜ |
+| 06-2 | P1 | ✅ (latency/RTF 計算修正) |
 | 06-3 | P2 | ✅ |
 | 06-4 | P2 | ⬜ |
 | 07-1 | P2 | ⬜ |
 | 07-2 | P2 | ⬜ |
 | 07-3 | P2 | ⬜ |
-| 07-4 | P1 | ⬜ |
+| 07-4 | P1 | ✅ (6/6 エッジケース実装完了) |
 | 08-1 | P0 | ✅ (02-1/02-2/02-4 で対応) |
 | 08-2 | P1 | ✅ (05-4 で解消) |
 | 08-3 | P1 | ✅ (06-1 で解消) |
@@ -127,3 +127,17 @@ LightVC プロジェクトの初期設計資料（DESIGN / ARCHITECTURE / MODEL_
   - [03-4] CausalConv1d depthwise dead code 削除 (Rust/Python 両方)
   - [06-3] README の `cargo xtask` → `cargo run -p lightvc-xtask --` 修正
   - **P0 全 9 タスク完了** (残り [04-2] の実機検証のみ)
+- 2026-06-17: P1 学習パイプライン系 5 件完了
+  - [01-3] converter.rs → flow_converter.rs 分離 (約 500 行削減)
+  - [03-1] hidden_dim を 256 → 1024 に統一 (ConverterConfig と一致)
+  - [03-3] FlowConverter を ARCHITECTURE §4.1b に反映
+  - [04-1] smoke / production config 分離 (phase_b/c + phase_b/c_smoke)
+  - [04-3] download_corpus.py 新設 (HuggingFace datasets 経由) + encode_corpus.py 型バグ修正
+  - [04-4] content MI loss (gradient reversal) 実装: ContentSpeakerAdversary + DisentangledConverter, phase_c.yaml で content_mi=0.1 有効化
+  - [04-5] evaluate.py 新設: SECS (speechbrain ECAPA) / UTMOS / WER (Whisper + jiwer), pyproject.toml に eval extra 追加
+- 2026-06-17: P1 リアルタイム/プラグイン系 5 件完了
+  - [02-3] overlap-add 設計を ARCHITECTURE §3.4.1 に文書化
+  - [05-2] DuplexStream::start_with (明示的 config 指定)
+  - [05-3] AudioEngine 新設: cpal Stream + ring buffer をカプセル化、inference loop からライフサイクル管理を分離
+  - [06-2] latency/RTF 計算修正 (algorithmic_latency 含む end-to-end 推算)
+  - [07-4] エッジケース 6/6 完了: silence skip / NaN clamp / ref length check / algorithmic_latency (前回) + ring buffer overrun/underrun + デバイス切断ハンドリング (AudioEngine)
