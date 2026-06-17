@@ -87,6 +87,29 @@ uv run python infer_flow.py \
     --converter checkpoints/phase_c/best.pt
 ```
 
+## Evaluation
+
+Offline metrics (SECS / UTMOS / WER) for a trained model. The metric models
+are heavy, so they live in an optional dependency group:
+
+```bash
+uv sync --extra eval
+```
+
+Build a manifest of (source, reference, optional ground-truth text) pairs,
+then run:
+
+```bash
+uv run python evaluate.py \
+    --converter checkpoints/phase_c/best.pt \
+    --manifest eval_manifest.json \
+    --output eval_results.json
+```
+
+Targets (MODEL_TRAINING.md §Validation Protocol): SECS > 0.70, UTMOS > 3.5,
+WER < 5%, WER degradation (src vs converted) < 2%. Any metric whose model
+fails to load is reported as `null` and skipped without aborting the run.
+
 ## Configs
 
 | File | Steps | Corpus | Purpose |
@@ -107,4 +130,6 @@ uv run python infer_flow.py \
 | `timbre_shifter.py` | Signal-processing augmentation (not a teacher) |
 | `generate_tts_corpus.py` | Generate Edge TTS multi-speaker corpus |
 | `infer_flow.py` | One-step inference test |
+| `evaluate.py` | Offline metrics: SECS / UTMOS / WER |
+| `download_corpus.py` | Fetch LibriTTS/VCTK from HuggingFace |
 | `export_weights.py` | Export to safetensors |

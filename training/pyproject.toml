@@ -22,6 +22,14 @@ dependencies = [
     "asyncio>=4.0.0",
 ]
 
+[project.optional-dependencies]
+# Offline evaluation metrics (evaluate.py). Heavy; install on the eval host only:
+#   uv sync --extra eval
+eval = [
+    "speechbrain>=1.0",
+    "jiwer>=3.0",
+]
+
 [[tool.uv.index]]
 name = "pytorch-xpu"
 url = "https://download.pytorch.org/whl/xpu"
