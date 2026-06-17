@@ -125,15 +125,20 @@ class FilmCond(nn.Module):
 
 
 class SpeakerEncoder(nn.Module):
-    """Reference latent → global speaker embedding via average pooling."""
+    """Reference latent → global speaker embedding via statistical pooling.
+
+    Uses mean + std pooling (capture both central tendency and variability,
+    which carries speaker-diagnostic information). A simple mean-only pool
+    collapses to a near-constant output across speakers.
+    """
 
     def __init__(self, latent_dim: int, embed_dim: int):
         super().__init__()
-        self.p1 = nn.Linear(latent_dim, latent_dim // 2)
+        self.p1 = nn.Linear(latent_dim * 2, latent_dim // 2)
         self.p2 = nn.Linear(latent_dim // 2, embed_dim)
 
     def forward(self, ref_latent: torch.Tensor) -> torch.Tensor:
-        pooled = ref_latent.mean(dim=-1)
+        pooled = torch.cat([ref_latent.mean(dim=-1), ref_latent.std(dim=-1)], dim=-1)
         h = F.gelu(self.p1(pooled))
         return self.p2(h)
 
@@ -160,17 +165,17 @@ class TimbreTokenBank(nn.Module):
 
 
 class CrossAttnBlock(nn.Module):
-    """Cross-attention: z queries timbre tokens."""
+    """Cross-attention: z (latent_dim) queries timbre tokens (embed_dim)."""
 
-    def __init__(self, dim: int, n_heads: int = 8):
+    def __init__(self, q_dim: int, kv_dim: int, n_heads: int = 8):
         super().__init__()
         self.n_heads = n_heads
-        self.head_dim = dim // n_heads
-        self.q = nn.Linear(dim, dim)
-        self.k = nn.Linear(dim, dim)
-        self.v = nn.Linear(dim, dim)
-        self.o = nn.Linear(dim, dim)
-        self.norm = nn.LayerNorm(dim)
+        self.attn_dim = n_heads * (kv_dim // n_heads)
+        self.q = nn.Linear(q_dim, self.attn_dim)
+        self.k = nn.Linear(kv_dim, self.attn_dim)
+        self.v = nn.Linear(kv_dim, self.attn_dim)
+        self.o = nn.Linear(self.attn_dim, q_dim)
+        self.norm = nn.LayerNorm(q_dim)
 
     def forward(
         self, z: torch.Tensor, keys: torch.Tensor, vals: torch.Tensor
@@ -178,12 +183,12 @@ class CrossAttnBlock(nn.Module):
         B, D, T = z.shape
         z_t = z.transpose(1, 2)
 
-        q = self.q(z_t).reshape(B, T, self.n_heads, self.head_dim).transpose(1, 2)
-        k = self.k(keys).reshape(B, -1, self.n_heads, self.head_dim).transpose(1, 2)
-        v = self.v(vals).reshape(B, -1, self.n_heads, self.head_dim).transpose(1, 2)
+        q = self.q(z_t).reshape(B, T, self.n_heads, self.attn_dim // self.n_heads).transpose(1, 2)
+        k = self.k(keys).reshape(B, -1, self.n_heads, self.attn_dim // self.n_heads).transpose(1, 2)
+        v = self.v(vals).reshape(B, -1, self.n_heads, self.attn_dim // self.n_heads).transpose(1, 2)
 
         attn = torch.nn.functional.scaled_dot_product_attention(q, k, v)
-        attn = attn.transpose(1, 2).reshape(B, T, D)
+        attn = attn.transpose(1, 2).reshape(B, T, self.attn_dim)
         out = self.o(attn)
 
         z_norm = self.norm(z_t)
@@ -269,7 +274,7 @@ class Converter(nn.Module):
             self.timbre = TimbreTokenBank(E, config.n_timbre_tokens)
             self.xattn = nn.ModuleList(
                 [
-                    CrossAttnBlock(D, config.n_attn_heads)
+                    CrossAttnBlock(D, E, config.n_attn_heads)
                     for _ in range(config.n_conv_blocks)
                 ]
             )
@@ -356,7 +361,7 @@ class FlowConverter(nn.Module):
             self.timbre = TimbreTokenBank(E, config.n_timbre_tokens)
             self.xattn = nn.ModuleList(
                 [
-                    CrossAttnBlock(D, config.n_attn_heads)
+                    CrossAttnBlock(D, E, config.n_attn_heads)
                     for _ in range(config.n_conv_blocks)
                 ]
             )

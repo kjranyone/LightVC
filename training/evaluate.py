@@ -172,10 +172,6 @@ class WerMetric(Metric):
             self.model = (
                 WhisperForConditionalGeneration.from_pretrained(mid).to(device).eval()
             )
-            forced = self.processor.get_decoder_prompt_ids(
-                language="en", task="transcribe"
-            )
-            self._forced = forced
         except Exception as e:
             self._fail(f"Whisper load failed: {e}")
 
@@ -187,7 +183,8 @@ class WerMetric(Metric):
         inputs = self.processor(
             wav16k, sampling_rate=16000, return_tensors="pt"
         ).input_features.to(self.device)
-        ids = self.model.generate(inputs, max_new_tokens=440, prompt_ids=self._forced)
+        inputs = inputs.to(self.model.dtype)
+        ids = self.model.generate(inputs, max_new_tokens=440, language="en", task="transcribe")
         return self.processor.batch_decode(ids, skip_special_tokens=True)[0].strip()
 
     def wer(self, ref: str, hyp: str) -> Optional[float]:

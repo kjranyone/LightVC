@@ -106,10 +106,10 @@ impl CausalConv1d {
             groups: 1,
             cudnn_fwd_algo: None,
         };
-        // Standard conv keys only. The depthwise fallback was dead code
-        // (CausalResBlock always uses groups=1 for XPU compatibility).
-        let weight = vb.get((out_channels, in_channels, kernel_size), "weight")?;
-        let bias = vb.get((out_channels,), "bias")?;
+        // Python CausalConv1d stores conv as self.conv = nn.Conv1d(...),
+        // so safetensors keys are "conv.weight" / "conv.bias".
+        let weight = vb.get((out_channels, in_channels, kernel_size), "conv.weight")?;
+        let bias = vb.get((out_channels,), "conv.bias")?;
         let conv = Conv1d::new(weight, Some(bias), cfg);
         Ok(Self {
             conv,
@@ -222,13 +222,24 @@ pub struct SpeakerEncoder {
 
 impl SpeakerEncoder {
     pub fn new(latent_dim: usize, embed_dim: usize, vb: VarBuilder) -> Result<Self> {
-        let proj1 = linear_layer(latent_dim, latent_dim / 2, vb.pp("p1"))?;
+        let proj1 = linear_layer(latent_dim * 2, latent_dim / 2, vb.pp("p1"))?;
         let proj2 = linear_layer(latent_dim / 2, embed_dim, vb.pp("p2"))?;
         Ok(Self { proj1, proj2 })
     }
 
     pub fn forward(&self, ref_latent: &Tensor) -> Result<Tensor> {
-        let pooled = ref_latent.mean(D::Minus1)?;
+        let t_len = ref_latent.dim(2)?;
+        let mean = ref_latent.mean(D::Minus1)?;
+        let std = {
+            let mean_b = mean.unsqueeze(D::Minus1)?.broadcast_as(ref_latent.shape())?;
+            let diff = (ref_latent - &mean_b)?;
+            let sum_sq = diff.sqr()?.sum(D::Minus1)?;
+            // PyTorch std(unbiased=True) divides by (N-1), not N.
+            let n = (t_len as f64).max(1.0);
+            let var = sum_sq.affine(1.0 / (n - 1.0), 0.0)?;
+            var.sqrt()?
+        };
+        let pooled = Tensor::cat(&[&mean, &std], D::Minus1)?;
         let h = self.proj1.forward(&pooled)?;
         let h = h.gelu()?;
         Ok(self.proj2.forward(&h)?)
@@ -288,25 +299,26 @@ pub struct CrossAttnBlock {
     v_proj: candle_nn::Linear,
     out_proj: candle_nn::Linear,
     n_heads: usize,
-    head_dim: usize,
+    attn_dim: usize,
     norm: LayerNorm,
 }
 
 impl CrossAttnBlock {
-    pub fn new(dim: usize, n_heads: usize, vb: VarBuilder) -> Result<Self> {
-        let head_dim = dim / n_heads;
-        let q_proj = linear_layer(dim, dim, vb.pp("q"))?;
-        let k_proj = linear_layer(dim, dim, vb.pp("k"))?;
-        let v_proj = linear_layer(dim, dim, vb.pp("v"))?;
-        let out_proj = linear_layer(dim, dim, vb.pp("o"))?;
-        let norm = layer_norm_layer(dim, 1e-5, vb.pp("norm"))?;
+    pub fn new(q_dim: usize, kv_dim: usize, n_heads: usize, vb: VarBuilder) -> Result<Self> {
+        let attn_dim = n_heads * (kv_dim / n_heads);
+        let head_dim = attn_dim / n_heads;
+        let q_proj = linear_layer(q_dim, attn_dim, vb.pp("q"))?;
+        let k_proj = linear_layer(kv_dim, attn_dim, vb.pp("k"))?;
+        let v_proj = linear_layer(kv_dim, attn_dim, vb.pp("v"))?;
+        let out_proj = linear_layer(attn_dim, q_dim, vb.pp("o"))?;
+        let norm = layer_norm_layer(q_dim, 1e-5, vb.pp("norm"))?;
         Ok(Self {
             q_proj,
             k_proj,
             v_proj,
             out_proj,
             n_heads,
-            head_dim,
+            attn_dim,
             norm,
         })
     }
@@ -319,18 +331,19 @@ impl CrossAttnBlock {
         let k = self.k_proj.forward(keys)?;
         let v = self.v_proj.forward(vals)?;
 
-        let q = q.reshape((b * self.n_heads, t, self.head_dim))?;
+        let head_dim = self.attn_dim / self.n_heads;
+        let q = q.reshape((b * self.n_heads, t, head_dim))?;
         let n_tok = k.dim(1)?;
-        let k = k.reshape((b * self.n_heads, n_tok, self.head_dim))?;
-        let v = v.reshape((b * self.n_heads, n_tok, self.head_dim))?;
+        let k = k.reshape((b * self.n_heads, n_tok, head_dim))?;
+        let v = v.reshape((b * self.n_heads, n_tok, head_dim))?;
 
-        let scale = 1.0 / (self.head_dim as f64).sqrt();
+        let scale = 1.0 / (head_dim as f64).sqrt();
         let attn = q.matmul(&k.transpose(1, 2)?)?;
         let attn = (attn * scale)?;
         let attn = candle_nn::ops::softmax(&attn, D::Minus1)?;
         let out = attn.matmul(&v)?;
 
-        let out = out.reshape((b, t, self.n_heads * self.head_dim))?;
+        let out = out.reshape((b, t, self.attn_dim))?;
         let out = self.out_proj.forward(&out)?;
 
         let z_norm = self.norm.forward(&z_t)?;
@@ -445,6 +458,7 @@ impl Converter {
             for i in 0..config.n_conv_blocks {
                 let attn = CrossAttnBlock::new(
                     latent_dim,
+                    embed_dim,
                     config.n_attn_heads,
                     vb.pp(&format!("xattn.{i}")),
                 )?;

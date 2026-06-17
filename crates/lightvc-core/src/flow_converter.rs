@@ -152,6 +152,7 @@ impl FlowConverter {
             for i in 0..config.n_conv_blocks {
                 let attn = CrossAttnBlock::new(
                     latent_dim,
+                    embed_dim,
                     config.n_attn_heads,
                     vb.pp(format!("xattn.{i}")),
                 )?;
@@ -228,7 +229,12 @@ impl FlowConverter {
     ///
     /// Accepts both batched `[B, D, T]` and unbatched `[D, T]` inputs,
     /// matching the Python `FlowConverter.convert` ([08-6]).
-    pub fn convert(&self, z_src: &Tensor, ref_latent: &Tensor) -> Result<Tensor> {
+    pub fn convert(
+        &self,
+        z_src: &Tensor,
+        ref_latent: &Tensor,
+        velocity_scale: f64,
+    ) -> Result<Tensor> {
         let was_unbatched = z_src.rank() == 2;
         let (z_src, ref_latent) = if was_unbatched {
             (z_src.unsqueeze(0)?, ref_latent.unsqueeze(0)?)
@@ -239,7 +245,8 @@ impl FlowConverter {
         let device = z_src.device();
         let t = Tensor::ones((batch,), candle_core::DType::F32, device)?;
         let v = self.forward_velocity(&z_src, &t, &ref_latent)?;
-        let result = (&z_src + &v)?;
+        let v_scaled = v.affine(velocity_scale, 0.0)?;
+        let result = (&z_src + &v_scaled)?;
         if was_unbatched {
             result.squeeze(0).map_err(Into::into)
         } else {
@@ -273,10 +280,15 @@ impl AnyConverter {
     }
 
     /// One-step forward conversion.
-    pub fn convert(&self, src_latent: &Tensor, ref_latent: &Tensor) -> Result<Tensor> {
+    pub fn convert(
+        &self,
+        src_latent: &Tensor,
+        ref_latent: &Tensor,
+        velocity_scale: f64,
+    ) -> Result<Tensor> {
         match self {
             Self::Warm(c) => c.forward(src_latent, ref_latent),
-            Self::Flow(c) => c.convert(src_latent, ref_latent),
+            Self::Flow(c) => c.convert(src_latent, ref_latent, velocity_scale),
         }
     }
 
