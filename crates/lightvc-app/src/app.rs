@@ -16,6 +16,13 @@ pub struct RtMetrics {
     pub output_rms: f32,
     pub latency_ms: f32,
     pub rtf: f32,
+    /// True when the audio device was lost ([07-4]). The UI should stop
+    /// and return to the device-selection screen.
+    pub disconnected: bool,
+    /// Capture overrun count since start ([07-4]).
+    pub overrun: u64,
+    /// Playback underrun count since start ([07-4]).
+    pub underrun: u64,
 }
 
 /// Control messages from UI to real-time inference thread.
@@ -334,6 +341,13 @@ impl LightVcApp {
                     let s = self.state.lock().unwrap();
                     if let Some(ref rx) = s.rt_metrics_rx {
                         while let Ok(m) = rx.try_recv() {
+                            // [07-4] device disconnection: the inference thread
+                            // already tore down its streams; reflect that in the UI.
+                            if m.disconnected {
+                                self.rt_running = false;
+                                self.state.lock().unwrap().status =
+                                    "Audio device disconnected".to_string();
+                            }
                             self.rt_metrics = m;
                         }
                     }

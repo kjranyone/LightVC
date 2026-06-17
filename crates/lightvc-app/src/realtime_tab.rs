@@ -6,7 +6,6 @@
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
 use egui_file_dialog::FileDialog;
@@ -133,6 +132,16 @@ pub fn render(
             .size(12.0)
             .color(crate::theme::colors::TEXT_DIM),
         );
+        if metrics.overrun > 0 || metrics.underrun > 0 {
+            ui.label(
+                egui::RichText::new(format!(
+                    "xruns: {} over / {} under",
+                    metrics.overrun, metrics.underrun
+                ))
+                .size(11.0)
+                .color(crate::theme::colors::YELLOW),
+            );
+        }
     });
 
     ui.add_space(12.0);
@@ -295,12 +304,13 @@ pub fn inference_loop(
 ) {
     let mut running = false;
     let mut bypass = false;
-    let mut duplex: Option<lightvc_audio::DuplexStream> = None;
+    let mut engine: Option<lightvc_audio::AudioEngine> = None;
     let mut capture_consumer: Option<rtrb::Consumer<f32>> = None;
     let mut playback_producer: Option<rtrb::Producer<f32>> = None;
     let mut resampler_up: Option<lightvc_audio::Resampler> = None;
     let mut resampler_down: Option<lightvc_audio::Resampler> = None;
     let mut device_sr: u32 = 44_100;
+    let mut disconnected_reported = false;
 
     // Three-stage buffering decouples the four sample-frame domains:
     //   capture (device_sr) → [in_accum] → process_up →
@@ -326,14 +336,10 @@ pub fn inference_loop(
                     if running {
                         continue;
                     }
-                    match start_audio(
-                        &mut capture_consumer,
-                        &mut playback_producer,
-                        &mut device_sr,
-                    ) {
-                        Ok(d) => {
-                            // Chunk size large enough to swallow one converter
-                            // chunk (up to 4096 at 44.1k) plus resampler wiggle.
+                    disconnected_reported = false;
+                    match lightvc_audio::AudioEngine::start_default() {
+                        Ok((eng, bufs)) => {
+                            device_sr = eng.capture_sample_rate;
                             if let Ok(r1) = lightvc_audio::Resampler::new(device_sr as usize, 4096)
                             {
                                 resampler_up = Some(r1);
@@ -345,7 +351,9 @@ pub fn inference_loop(
                             in_accum.clear();
                             pcm_44k_accum.clear();
                             out_44k_accum.clear();
-                            duplex = Some(d);
+                            capture_consumer = Some(bufs.capture);
+                            playback_producer = Some(bufs.playback);
+                            engine = Some(eng);
                             running = true;
                         }
                         Err(e) => eprintln!("Audio: {e}"),
@@ -353,7 +361,7 @@ pub fn inference_loop(
                 }
                 RtControl::Stop => {
                     running = false;
-                    duplex = None;
+                    engine = None;
                     capture_consumer = None;
                     playback_producer = None;
                     resampler_up = None;
@@ -361,6 +369,7 @@ pub fn inference_loop(
                     in_accum.clear();
                     pcm_44k_accum.clear();
                     out_44k_accum.clear();
+                    disconnected_reported = false;
                 }
                 RtControl::SetMode(mode) => {
                     if let Ok(mut p) = pipeline.lock() {
@@ -388,6 +397,30 @@ pub fn inference_loop(
 
         if !running {
             std::thread::sleep(std::time::Duration::from_millis(50));
+            continue;
+        }
+
+        // [07-4] device disconnection: cpal error callback sets the flag.
+        // Tear down and notify the UI so the user can re-select a device.
+        if engine
+            .as_ref()
+            .map(|e| e.is_disconnected())
+            .unwrap_or(false)
+        {
+            if !disconnected_reported {
+                eprintln!("Audio device disconnected — stopping pipeline");
+                disconnected_reported = true;
+            }
+            running = false;
+            engine = None;
+            capture_consumer = None;
+            playback_producer = None;
+            resampler_up = None;
+            resampler_down = None;
+            let _ = metrics_tx.send(RtMetrics {
+                disconnected: true,
+                ..Default::default()
+            });
             continue;
         }
 
@@ -508,35 +541,22 @@ pub fn inference_loop(
             }
         }
 
+        let (overrun, underrun) = engine
+            .as_ref()
+            .map(|e| (e.overrun_count(), e.underrun_count()))
+            .unwrap_or((0, 0));
         let _ = metrics_tx.send(RtMetrics {
             input_rms: in_rms_last,
             output_rms: out_rms_last,
             latency_ms: latency_ms_last,
             rtf: rtf_last,
+            disconnected: false,
+            overrun,
+            underrun,
         });
 
         if !did_work {
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
     }
-}
-
-fn start_audio(
-    cap: &mut Option<rtrb::Consumer<f32>>,
-    pb: &mut Option<rtrb::Producer<f32>>,
-    sr: &mut u32,
-) -> anyhow::Result<lightvc_audio::DuplexStream> {
-    let input = lightvc_audio::DuplexStream::default_input()?;
-    let output = lightvc_audio::DuplexStream::default_output()?;
-    *sr = input
-        .default_input_config()
-        .map(|c| c.sample_rate())
-        .unwrap_or(44_100);
-
-    let (tx, rx1) = rtrb::RingBuffer::new(1 << 16);
-    let (tx2, rx2) = rtrb::RingBuffer::new(1 << 16);
-    let d = lightvc_audio::DuplexStream::start(&input, &output, tx, rx2)?;
-    *cap = Some(rx1);
-    *pb = Some(tx2);
-    Ok(d)
 }
