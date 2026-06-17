@@ -155,6 +155,16 @@ def main():
                 if len(wav) > max_samples:
                     wav = wav[:max_samples]
 
+                # Skip near-silent utterances (RMS gate)
+                rms = np.sqrt(np.mean(wav ** 2))
+                if rms < 1e-4:
+                    continue
+
+                # Peak-normalize to [-1, 1] — DAC was trained on normalized audio
+                peak = np.max(np.abs(wav))
+                if peak > 1e-6:
+                    wav = wav / peak
+
                 # Pad to hop length
                 rem = len(wav) % 512
                 if rem > 0:

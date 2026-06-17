@@ -32,10 +32,13 @@ pub struct TargetVoice {
 /// on a fixed reference, feeding `[context | new]` and trimming to the
 /// last `n_new` frames reproduces the non-chunked output near-exactly.
 fn converter_context_frames(mode: LatencyMode) -> usize {
+    // True receptive field of 4 stacked CausalResBlocks (dilations [1,3,9],
+    // kernel 7) is ~313 frames. We use 128/192/256 to cover >60%/80%+ at
+    // acceptable compute overhead for each mode.
     match mode {
-        LatencyMode::Strict => 16,
-        LatencyMode::Balanced => 32,
-        LatencyMode::Quality => 64,
+        LatencyMode::Strict => 128,
+        LatencyMode::Balanced => 192,
+        LatencyMode::Quality => 256,
     }
 }
 
@@ -73,7 +76,7 @@ impl VcPipeline {
             target: None,
             mode,
             src_context: None,
-            velocity_scale: 2.5,
+            velocity_scale: 1.0,
         })
     }
 

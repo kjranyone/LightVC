@@ -127,14 +127,16 @@ def sample_flow_batch(
 
         tgt_utts = speakers[tgt_spk]
         # Target utterance (real recording, any text) — no timbre shift on target
-        tgt = tgt_utts[np.random.randint(0, len(tgt_utts))][0]
+        tgt_idx = np.random.randint(0, len(tgt_utts))
+        tgt = tgt_utts[tgt_idx][0]
         tgt_list.append(tgt)
 
         # Reference utterance (different from target, same speaker)
         if len(tgt_utts) > 1:
-            ref = tgt_utts[np.random.randint(0, len(tgt_utts))][0]
-            while ref is tgt:
-                ref = tgt_utts[np.random.randint(0, len(tgt_utts))][0]
+            ref_idx = tgt_idx
+            while ref_idx == tgt_idx:
+                ref_idx = np.random.randint(0, len(tgt_utts))
+            ref = tgt_utts[ref_idx][0]
         else:
             ref = tgt
         ref_list.append(ref)
@@ -223,11 +225,20 @@ def train(config_path, data_dir, output_dir):
         # Load shared modules (bottleneck, speaker_encoder, blocks)
         # FlowConverter has different keys than Converter, so load with strict=False
         missing, unexpected = model.load_state_dict(ckpt["model"], strict=False)
+        critical = {"bottleneck", "speaker_encoder", "blocks", "vel_proj"}
+        missing_critical = [k for k in missing if any(c in k for c in critical)]
         print(
             f"Initialized from {train_cfg['init_from']} "
             f"(missing: {len(missing)}, unexpected: {len(unexpected)})",
             flush=True,
         )
+        if missing_critical:
+            print(
+                f"  WARNING: {len(missing_critical)} critical keys not loaded "
+                f"(effective cold start for those modules): "
+                f"{missing_critical[:5]}",
+                flush=True,
+            )
 
     # Optimizer: include adversary params if GRL is active.
     opt_params = (

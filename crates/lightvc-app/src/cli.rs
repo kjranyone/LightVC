@@ -84,6 +84,9 @@ pub struct ConvertCmd {
     #[arg(long, default_value = "balanced", help = "strict | balanced | quality | full")]
     pub mode: String,
 
+    #[arg(long, default_value = "1.0", help = "Velocity scale (guidance). 1.0 = training-matched, >1 amplifies conversion")]
+    pub velocity_scale: f64,
+
     #[arg(long)]
     pub cuda: bool,
 
@@ -188,6 +191,7 @@ pub fn run_convert(cmd: ConvertCmd) -> Result<()> {
     let converter = AnyConverter::new(converter_config, vb)?;
 
     let mut pipeline = VcPipeline::new(&cmd.dac_weights, &dac_config, converter, mode, device)?;
+    pipeline.velocity_scale = cmd.velocity_scale;
 
     println!("Loading reference: {}", cmd.reference.display());
     let (ref_pcm, ref_sr) = load_wav_mono(&cmd.reference)?;
