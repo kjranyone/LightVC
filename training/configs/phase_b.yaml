@@ -7,7 +7,9 @@ model:
   hidden_dim: 1024
   n_conv_blocks: 4
   speaker_embed_dim: 256
-  enable_timbre: false
+  enable_timbre: true
+  n_timbre_tokens: 32
+  n_attn_heads: 8
   bottleneck_dim: 256
   time_embed_dim: 128
 
