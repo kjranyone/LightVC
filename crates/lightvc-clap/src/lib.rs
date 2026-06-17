@@ -226,14 +226,14 @@ impl Plugin for LightVcPlugin {
             nice_plug_egui::EguiSettings::default(),
             |ctx, _queue, _state| {
                 // Apply dark kawaii background
-                let mut style = (*ctx.style()).clone();
+                let mut style = (*ctx.global_style()).clone();
                 style.visuals.dark_mode = true;
                 style.visuals.panel_fill = BG;
                 style.visuals.widgets.inactive.bg_fill = PANEL;
                 style.visuals.widgets.hovered.bg_fill = PINK;
                 style.visuals.widgets.active.bg_fill = LAVENDER;
                 style.spacing.item_spacing = egui::vec2(8.0, 6.0);
-                ctx.set_style(style);
+                ctx.set_global_style(style);
             },
             move |ui, setter, _queue, state| {
                 let m = state.metrics.lock().unwrap().clone();
@@ -596,7 +596,8 @@ impl ClapResampler {
         let ratio_down = host_sr as f64 / 44_100.0;
         let up = Async::<f32>::new_sinc(ratio_up, 2.0, &params, chunk_size, 1, FixedAsync::Input)?;
         let down_chunk = (chunk_size as f64 * ratio_down).round().max(1.0) as usize;
-        let down = Async::<f32>::new_sinc(ratio_down, 2.0, &params, down_chunk, 1, FixedAsync::Output)?;
+        let down =
+            Async::<f32>::new_sinc(ratio_down, 2.0, &params, down_chunk, 1, FixedAsync::Output)?;
         Ok(Self {
             up_out: vec![0.0; up.output_frames_max()],
             down_out: vec![0.0; down.output_frames_max()],
@@ -608,24 +609,34 @@ impl ClapResampler {
     fn process_up(&mut self, input: &[f32]) -> anyhow::Result<&[f32]> {
         let needed = self.up.input_frames_next();
         if input.len() < needed {
-            return Err(anyhow::anyhow!("process_up: need {needed}, got {}", input.len()));
+            return Err(anyhow::anyhow!(
+                "process_up: need {needed}, got {}",
+                input.len()
+            ));
         }
         let frames_out = self.up.output_frames_next();
         let in_adapter = SequentialSlice::new(input, 1, needed)?;
         let mut out_adapter = SequentialSlice::new_mut(&mut self.up_out, 1, frames_out)?;
-        let (_used, written) = self.up.process_into_buffer(&in_adapter, &mut out_adapter, None)?;
+        let (_used, written) = self
+            .up
+            .process_into_buffer(&in_adapter, &mut out_adapter, None)?;
         Ok(&self.up_out[..written])
     }
 
     fn process_down(&mut self, input: &[f32]) -> anyhow::Result<&[f32]> {
         let needed = self.down.input_frames_next();
         if input.len() < needed {
-            return Err(anyhow::anyhow!("process_down: need {needed}, got {}", input.len()));
+            return Err(anyhow::anyhow!(
+                "process_down: need {needed}, got {}",
+                input.len()
+            ));
         }
         let frames_out = self.down.output_frames_next();
         let in_adapter = SequentialSlice::new(input, 1, needed)?;
         let mut out_adapter = SequentialSlice::new_mut(&mut self.down_out, 1, frames_out)?;
-        let (_used, written) = self.down.process_into_buffer(&in_adapter, &mut out_adapter, None)?;
+        let (_used, written) =
+            self.down
+                .process_into_buffer(&in_adapter, &mut out_adapter, None)?;
         Ok(&self.down_out[..written])
     }
 
@@ -652,7 +663,9 @@ fn inference_thread(
     let mut capture_rx: Option<rtrb::Consumer<f32>> = None;
     let mut playback_tx: Option<rtrb::Producer<f32>> = None;
 
-    // Resampling state ([06-5]).
+    // Resampling state ([06-5]). Currently unused — reserved for the
+    // future host-sample-rate resampling path.
+    #[allow(unused_variables, unused_assignments)]
     let mut host_sr: u32 = 44_100;
     let mut resampler: Option<ClapResampler> = None;
 
@@ -710,7 +723,10 @@ fn inference_thread(
                     }
                 }
                 Task::SetSampleRate(sr) => {
-                    host_sr = sr;
+                    #[allow(unused_assignments)]
+                    {
+                        host_sr = sr;
+                    }
                     if sr != 44_100 {
                         match ClapResampler::new(sr as usize, 2048) {
                             Ok(r) => {
@@ -735,8 +751,7 @@ fn inference_thread(
             }
         }
 
-        let (Some(p), Some(crx), Some(ptx)) = (&pipeline, &mut capture_rx, &mut playback_tx)
-        else {
+        let (Some(p), Some(crx), Some(ptx)) = (&pipeline, &mut capture_rx, &mut playback_tx) else {
             std::thread::sleep(std::time::Duration::from_millis(50));
             continue;
         };
@@ -977,7 +992,7 @@ fn load_pipeline(
 /// Returns: new normalized value if dragged, or None
 fn egui_knob(
     ui: &mut egui::Ui,
-    id_str: &str,
+    _id_str: &str,
     value: f32,
     label: &str,
     display_text: &str,
@@ -1025,7 +1040,7 @@ fn egui_knob(
     // Value arc
     let val_end = start_angle + (end_angle - start_angle) * shown;
     let val_points = (0..40)
-        .take({ ((shown * 39.0).round() as usize).max(1) })
+        .take(((shown * 39.0).round() as usize).max(1))
         .map(|i| {
             let t = i as f32 / 39.0;
             let a = start_angle + (val_end - start_angle) * t.min(1.0);

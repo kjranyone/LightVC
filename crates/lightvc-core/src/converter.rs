@@ -294,7 +294,7 @@ pub struct CrossAttnBlock {
 impl CrossAttnBlock {
     pub fn new(q_dim: usize, kv_dim: usize, n_heads: usize, vb: VarBuilder) -> Result<Self> {
         let attn_dim = n_heads * (kv_dim / n_heads);
-        let head_dim = attn_dim / n_heads;
+        let _head_dim = attn_dim / n_heads;
         let q_proj = linear_layer(q_dim, attn_dim, vb.pp("q"))?;
         let k_proj = linear_layer(kv_dim, attn_dim, vb.pp("k"))?;
         let v_proj = linear_layer(kv_dim, attn_dim, vb.pp("v"))?;

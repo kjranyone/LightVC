@@ -81,10 +81,18 @@ pub struct ConvertCmd {
     #[arg(long)]
     pub converter_config: Option<PathBuf>,
 
-    #[arg(long, default_value = "balanced", help = "strict | balanced | quality | full")]
+    #[arg(
+        long,
+        default_value = "balanced",
+        help = "strict | balanced | quality | full"
+    )]
     pub mode: String,
 
-    #[arg(long, default_value = "1.0", help = "Velocity scale (guidance). 1.0 = training-matched, >1 amplifies conversion")]
+    #[arg(
+        long,
+        default_value = "1.0",
+        help = "Velocity scale (guidance). 1.0 = training-matched, >1 amplifies conversion"
+    )]
     pub velocity_scale: f64,
 
     #[arg(long)]
@@ -269,8 +277,9 @@ pub fn run_gui(cmd: GuiCmd) -> Result<()> {
         viewport,
         ..Default::default()
     };
-    eframe::run_simple_native("LightVC", opts, move |ctx, _frame| {
-        app.render(ctx);
+    eframe::run_ui_native("LightVC", opts, move |ui, _frame| {
+        let ctx = ui.ctx().clone();
+        app.render(&ctx);
     })?;
 
     Ok(())

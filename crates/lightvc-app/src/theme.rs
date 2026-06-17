@@ -38,7 +38,7 @@ pub mod colors {
 
 /// Apply the Kawaii Future Bass theme to an egui context.
 pub fn apply_theme(ctx: &egui::Context) {
-    let mut style = (*ctx.style()).clone();
+    let mut style = (*ctx.global_style()).clone();
 
     // Spacing
     style.spacing.item_spacing = egui::vec2(8.0, 8.0);
@@ -79,7 +79,7 @@ pub fn apply_theme(ctx: &egui::Context) {
     // Hyperlinks
     style.visuals.hyperlink_color = CYAN;
 
-    ctx.set_style(style);
+    ctx.set_global_style(style);
 }
 
 // ---------------------------------------------------------------------------

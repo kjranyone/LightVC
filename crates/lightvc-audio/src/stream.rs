@@ -76,8 +76,8 @@ impl DuplexStream {
     pub fn start(
         input_device: &Device,
         output_device: &Device,
-        mut capture_tx: Producer<f32>,
-        mut playback_rx: rtrb::Consumer<f32>,
+        capture_tx: Producer<f32>,
+        playback_rx: rtrb::Consumer<f32>,
     ) -> Result<Self> {
         let input_cfg = input_device.default_input_config()?;
         let output_cfg = output_device.default_output_config()?;

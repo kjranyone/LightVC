@@ -204,6 +204,11 @@ impl LightVcApp {
 }
 
 impl LightVcApp {
+    // egui 0.34 deprecated CentralPanel::show/Panel::show in favor of
+    // show_inside(), but migrating requires restructuring the entire app
+    // (each panel must nest inside a parent Ui). Kept as top-level show()
+    // until a full Ui-tree migration is done.
+    #[allow(deprecated)]
     pub fn render(&mut self, ctx: &egui::Context) {
         // Apply kawaii theme
         crate::theme::apply_theme(ctx);
@@ -218,7 +223,7 @@ impl LightVcApp {
             };
 
             let splash = self.asset_cache.splash(ctx);
-            let screen = ctx.screen_rect();
+            let screen = ctx.content_rect();
             egui::CentralPanel::default()
                 .frame(
                     egui::Frame::NONE.fill(egui::Color32::from_rgba_premultiplied(28, 22, 38, 255)),
@@ -248,7 +253,7 @@ impl LightVcApp {
         // Draw background texture
         {
             let bg = self.asset_cache.bg(ctx);
-            let screen = ctx.screen_rect();
+            let screen = ctx.content_rect();
             ctx.layer_painter(egui::LayerId::background()).image(
                 bg.id(),
                 screen,
@@ -258,7 +263,7 @@ impl LightVcApp {
         }
 
         // Top bar with logo image + kawaii tabs
-        egui::TopBottomPanel::top("tabs")
+        egui::Panel::top("tabs")
             .frame(
                 egui::Frame::NONE
                     .fill(egui::Color32::from_rgba_premultiplied(28, 22, 38, 220))
@@ -296,7 +301,7 @@ impl LightVcApp {
         // Status bar
         {
             let st = self.state.lock().unwrap();
-            egui::TopBottomPanel::bottom("status")
+            egui::Panel::bottom("status")
                 .frame(
                     egui::Frame::NONE
                         .fill(egui::Color32::from_rgba_premultiplied(42, 32, 56, 180))
