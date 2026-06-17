@@ -355,6 +355,9 @@ impl Module for Decoder {
 pub struct DacModel {
     pub encoder: Encoder,
     pub decoder: Decoder,
+    /// RVQ quantizer. Only loaded for Phase 3 ([07-1]); `None` for normal
+    /// continuous-latent inference.
+    pub quantizer: Option<Quantizer>,
 }
 
 #[derive(Clone, Debug)]
@@ -393,6 +396,119 @@ impl DacModel {
             1,
             vb.pp("decoder"),
         )?;
-        Ok(Self { encoder, decoder })
+        Ok(Self {
+            encoder,
+            decoder,
+            quantizer: None,
+        })
+    }
+
+    /// Load the model including the RVQ quantizer ([07-1] Phase 3 prep).
+    /// The quantizer is only present in the full `descript/dac_44khz`
+    /// checkpoint; it is absent from LightVC's exported inference weights.
+    pub fn with_quantizer(mut self, vb: VarBuilder) -> Result<Self> {
+        let q = Quantizer::new(
+            config_default_latent_dim(),
+            DAC_CODEBOOK_DIM,
+            DAC_N_CODES,
+            DAC_N_CODEBOOKS,
+            vb.pp("quantizer"),
+        )?;
+        self.quantizer = Some(q);
+        Ok(self)
+    }
+}
+
+fn config_default_latent_dim() -> usize {
+    DacModelConfig::default().latent_dim
+}
+
+// ---------------------------------------------------------------------------
+// Residual Vector Quantizer ([07-1] Phase 3 preparation, Rust side only)
+// ---------------------------------------------------------------------------
+
+/// DAC factorized codebook dimensions (descript/dac_44khz).
+const DAC_CODEBOOK_DIM: usize = 8;
+const DAC_N_CODES: usize = 1024;
+const DAC_N_CODEBOOKS: usize = 9;
+
+/// Single codebook: nearest-neighbor lookup in factorized space.
+pub struct QuantizerLayer {
+    codebook: Tensor, // [n_codes, codebook_dim]
+}
+
+impl QuantizerLayer {
+    pub fn new(n_codes: usize, codebook_dim: usize, vb: VarBuilder) -> Result<Self> {
+        let codebook = vb.get((n_codes, codebook_dim), "codebook")?;
+        Ok(Self { codebook })
+    }
+
+    /// `z: [B, codebook_dim, T]` → `(codes [B, T], quantized [B, codebook_dim, T])`
+    pub fn forward(&self, z: &Tensor) -> Result<(Tensor, Tensor)> {
+        let z_t = z.permute((0, 2, 1))?; // [B, T, D]
+                                         // L2 distance: ||z||^2 - 2*z·c + ||c||^2
+        let z_sq = (&z_t * &z_t)?.sum(D::Minus1)?; // [B, T]
+        let c_sq = (&self.codebook * &self.codebook)?.sum(D::Minus1)?; // [n_codes]
+        let zc = z_t.matmul(&self.codebook.t()?)?; // [B, T, n_codes]
+        let z_sq_e = z_sq.unsqueeze(D::Minus1)?; // [B, T, 1]
+        let c_sq_e = c_sq.unsqueeze(0)?; // [1, n_codes]
+        let dist = (z_sq_e.broadcast_add(&c_sq_e)? - (&zc * 2.0)?)?; // [B, T, n_codes]
+        let codes = dist.argmin(D::Minus1)?; // [B, T]
+        let quantized = Tensor::embedding(&self.codebook, &codes)?; // [B, T, D]
+        let quantized = quantized.permute((0, 2, 1))?; // [B, D, T]
+        Ok((codes, quantized))
+    }
+}
+
+/// Residual vector quantizer: projects to codebook space, runs `n_codebooks`
+/// residual layers, projects back to latent space.
+pub struct Quantizer {
+    in_proj: Conv1d,  // latent_dim → codebook_dim (1×1, no bias)
+    out_proj: Conv1d, // codebook_dim → latent_dim (1×1, no bias)
+    layers: Vec<QuantizerLayer>,
+}
+
+impl Quantizer {
+    pub fn new(
+        latent_dim: usize,
+        codebook_dim: usize,
+        n_codes: usize,
+        n_codebooks: usize,
+        vb: VarBuilder,
+    ) -> Result<Self> {
+        let in_weight = vb.get((codebook_dim, latent_dim, 1), "in_proj.weight")?;
+        let in_proj = Conv1d::new(in_weight, None, Conv1dConfig::default());
+        let out_weight = vb.get((latent_dim, codebook_dim, 1), "out_proj.weight")?;
+        let out_proj = Conv1d::new(out_weight, None, Conv1dConfig::default());
+        let mut layers = Vec::with_capacity(n_codebooks);
+        for i in 0..n_codebooks {
+            layers.push(QuantizerLayer::new(
+                n_codes,
+                codebook_dim,
+                vb.pp(format!("layers.{i}")),
+            )?);
+        }
+        Ok(Self {
+            in_proj,
+            out_proj,
+            layers,
+        })
+    }
+
+    /// `z: [B, latent_dim, T]` → `(codes [B, n_codebooks, T], quantized [B, latent_dim, T])`
+    pub fn forward(&self, z: &Tensor) -> Result<(Tensor, Tensor)> {
+        let z_q = self.in_proj.forward(z)?; // [B, codebook_dim, T]
+        let mut residual = z_q.clone();
+        let mut all_codes = Vec::with_capacity(self.layers.len());
+        let mut quantized_sum = Tensor::zeros_like(&z_q)?;
+        for layer in &self.layers {
+            let (codes, quantized) = layer.forward(&residual)?;
+            all_codes.push(codes);
+            quantized_sum = (&quantized_sum + &quantized)?;
+            residual = (&residual - &quantized)?;
+        }
+        let codes = Tensor::stack(&all_codes, 1)?; // [B, n_codebooks, T]
+        let quantized_out = self.out_proj.forward(&quantized_sum)?;
+        Ok((codes, quantized_out))
     }
 }
