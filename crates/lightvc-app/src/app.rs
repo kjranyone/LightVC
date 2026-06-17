@@ -147,11 +147,11 @@ impl LightVcApp {
 
         drop(s);
 
-        if let Some(pipeline) = pipeline {
-            std::thread::spawn(move || {
-                crate::realtime_tab::inference_loop(pipeline, control_rx, metrics_tx);
-            });
-        }
+        // Spawn the inference thread even without a converter — it will
+        // run in bypass mode, allowing the audio path to be tested.
+        std::thread::spawn(move || {
+            crate::realtime_tab::inference_loop(pipeline, control_rx, metrics_tx);
+        });
     }
 
     fn load_converter_static(state: &Arc<Mutex<AppState>>, conv_path: &str, cfg_path: &str) {

@@ -6,8 +6,8 @@
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crossbeam_channel::{Receiver, Sender};
 use cpal::traits::HostTrait;
+use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
 use egui_file_dialog::FileDialog;
 
@@ -40,6 +40,9 @@ pub fn render(
     ui.add_space(8.0);
 
     let has_pipeline = state.lock().unwrap().pipeline.is_some();
+    // When no converter is loaded, force bypass mode so the audio path
+    // (mic → speaker) can still be tested. Mode/quality controls are hidden.
+    let force_bypass = !has_pipeline;
 
     // --- Model Setup Section ---
     if !has_pipeline {
@@ -78,6 +81,15 @@ pub fn render(
             {
                 on_load(conv_path, conv_cfg);
             }
+
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new(
+                    "No converter loaded — Start will run in BYPASS mode (passthrough).",
+                )
+                .size(11.0)
+                .color(crate::theme::colors::YELLOW),
+            );
         });
 
         // Handle file dialog
@@ -89,7 +101,6 @@ pub fn render(
                 _ => {}
             }
         }
-        return;
     }
 
     // --- Pipeline loaded: realtime UI ---
@@ -150,90 +161,101 @@ pub fn render(
 
     ui.add_space(12.0);
 
-    // Quality mode — knob or pill buttons
-    ui.horizontal(|ui| {
-        if let Some(tex) = knob_tex {
-            // Knob: Strict=0.0, Balanced=0.5, Quality=1.0
-            let mode_val = match *mode {
-                lightvc_core::converter::LatencyMode::Strict => 0.0,
-                lightvc_core::converter::LatencyMode::Balanced => 0.5,
-                lightvc_core::converter::LatencyMode::Quality => 1.0,
-            };
-            let mode_name = match *mode {
-                lightvc_core::converter::LatencyMode::Strict => "Strict",
-                lightvc_core::converter::LatencyMode::Balanced => "Balanced",
-                lightvc_core::converter::LatencyMode::Quality => "Quality",
-            };
-
-            let id = ui.make_persistent_id("rt_mode_knob");
-            if let Some(new_val) = crate::theme::knob(ui, tex, id, mode_val, "Mode") {
-                let old_mode = *mode;
-                *mode = if new_val < 0.33 {
-                    lightvc_core::converter::LatencyMode::Strict
-                } else if new_val < 0.67 {
-                    lightvc_core::converter::LatencyMode::Balanced
-                } else {
-                    lightvc_core::converter::LatencyMode::Quality
+    // Quality mode — knob or pill buttons (hidden when no converter loaded)
+    if !force_bypass {
+        ui.horizontal(|ui| {
+            if let Some(tex) = knob_tex {
+                // Knob: Strict=0.0, Balanced=0.5, Quality=1.0
+                let mode_val = match *mode {
+                    lightvc_core::converter::LatencyMode::Strict => 0.0,
+                    lightvc_core::converter::LatencyMode::Balanced => 0.5,
+                    lightvc_core::converter::LatencyMode::Quality => 1.0,
                 };
-                if *mode != old_mode {
-                    on_control(RtControl::SetMode(*mode));
-                }
-            }
+                let mode_name = match *mode {
+                    lightvc_core::converter::LatencyMode::Strict => "Strict",
+                    lightvc_core::converter::LatencyMode::Balanced => "Balanced",
+                    lightvc_core::converter::LatencyMode::Quality => "Quality",
+                };
 
-            ui.vertical(|ui| {
+                let id = ui.make_persistent_id("rt_mode_knob");
+                if let Some(new_val) = crate::theme::knob(ui, tex, id, mode_val, "Mode") {
+                    let old_mode = *mode;
+                    *mode = if new_val < 0.33 {
+                        lightvc_core::converter::LatencyMode::Strict
+                    } else if new_val < 0.67 {
+                        lightvc_core::converter::LatencyMode::Balanced
+                    } else {
+                        lightvc_core::converter::LatencyMode::Quality
+                    };
+                    if *mode != old_mode {
+                        on_control(RtControl::SetMode(*mode));
+                    }
+                }
+
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new("Mode")
+                            .size(13.0)
+                            .color(crate::theme::colors::TEXT_DIM),
+                    );
+                    ui.label(
+                        egui::RichText::new(mode_name)
+                            .size(16.0)
+                            .strong()
+                            .color(crate::theme::colors::PINK_BRIGHT),
+                    );
+                    ui.label(
+                        egui::RichText::new(match *mode {
+                            lightvc_core::converter::LatencyMode::Strict => "0ms lookahead",
+                            lightvc_core::converter::LatencyMode::Balanced => "~46ms lookahead",
+                            lightvc_core::converter::LatencyMode::Quality => "~93ms lookahead",
+                        })
+                        .size(10.0)
+                        .color(crate::theme::colors::TEXT_MUTED),
+                    );
+                });
+            } else {
+                // Fallback: pill buttons
                 ui.label(
                     egui::RichText::new("Mode")
                         .size(13.0)
                         .color(crate::theme::colors::TEXT_DIM),
                 );
-                ui.label(
-                    egui::RichText::new(mode_name)
-                        .size(16.0)
-                        .strong()
-                        .color(crate::theme::colors::PINK_BRIGHT),
-                );
-                ui.label(
-                    egui::RichText::new(match *mode {
-                        lightvc_core::converter::LatencyMode::Strict => "0ms lookahead",
-                        lightvc_core::converter::LatencyMode::Balanced => "~46ms lookahead",
-                        lightvc_core::converter::LatencyMode::Quality => "~93ms lookahead",
-                    })
-                    .size(10.0)
-                    .color(crate::theme::colors::TEXT_MUTED),
-                );
-            });
-        } else {
-            // Fallback: pill buttons
-            ui.label(
-                egui::RichText::new("Mode")
-                    .size(13.0)
-                    .color(crate::theme::colors::TEXT_DIM),
-            );
-            let old = *mode;
-            for (m, name) in [
-                (lightvc_core::converter::LatencyMode::Strict, "Strict"),
-                (lightvc_core::converter::LatencyMode::Balanced, "Balanced"),
-                (lightvc_core::converter::LatencyMode::Quality, "Quality"),
-            ] {
-                if crate::theme::pill_button(ui, name, *mode == m) {
-                    *mode = m;
+                let old = *mode;
+                for (m, name) in [
+                    (lightvc_core::converter::LatencyMode::Strict, "Strict"),
+                    (lightvc_core::converter::LatencyMode::Balanced, "Balanced"),
+                    (lightvc_core::converter::LatencyMode::Quality, "Quality"),
+                ] {
+                    if crate::theme::pill_button(ui, name, *mode == m) {
+                        *mode = m;
+                    }
+                }
+                if *mode != old {
+                    on_control(RtControl::SetMode(*mode));
                 }
             }
-            if *mode != old {
-                on_control(RtControl::SetMode(*mode));
-            }
-        }
-    });
+        });
+    }
 
     ui.add_space(8.0);
 
-    // Bypass — styled toggle button
-    let old_bp = *bypass;
-    if crate::theme::pill_button(ui, if *bypass { "BYPASS ON" } else { "Bypass" }, *bypass) {
-        *bypass = !*bypass;
-    }
-    if *bypass != old_bp {
-        on_control(RtControl::Bypass(*bypass));
+    // Bypass — styled toggle button (disabled when no converter loaded)
+    if force_bypass {
+        *bypass = true;
+        ui.label(
+            egui::RichText::new("BYPASS ON (no converter)")
+                .size(13.0)
+                .color(crate::theme::colors::YELLOW),
+        );
+    } else {
+        let old_bp = *bypass;
+        if crate::theme::pill_button(ui, if *bypass { "BYPASS ON" } else { "Bypass" }, *bypass) {
+            *bypass = !*bypass;
+        }
+        if *bypass != old_bp {
+            on_control(RtControl::Bypass(*bypass));
+        }
     }
 
     ui.add_space(12.0);
@@ -241,7 +263,15 @@ pub fn render(
     // Start/Stop
     ui.horizontal(|ui| {
         if !*running {
-            if crate::theme::pill_button(ui, "▶ Start", true) {
+            let label = if force_bypass {
+                "▶ Start (bypass)"
+            } else {
+                "▶ Start"
+            };
+            if crate::theme::pill_button(ui, label, true) {
+                if force_bypass {
+                    on_control(RtControl::Bypass(true));
+                }
                 on_control(RtControl::StartWithDevices {
                     input_idx: *selected_input,
                     output_idx: *selected_output,
@@ -263,60 +293,63 @@ pub fn render(
 
     ui.add_space(12.0);
 
-    // Audio devices ([05-6]: interactive selection)
-    ui.collapsing(
+    // Audio devices ([05-6]: interactive selection) — default open
+    egui::CollapsingHeader::new(
         egui::RichText::new("Audio Devices")
             .size(13.0)
             .color(crate::theme::colors::CYAN),
-        |ui| {
-            let inputs = lightvc_audio::DuplexStream::list_input_devices().unwrap_or_default();
-            let outputs = lightvc_audio::DuplexStream::list_output_devices().unwrap_or_default();
-            ui.label(
-                egui::RichText::new(format!(
-                    "Inputs  ({} = default)",
-                    if selected_input.is_some() { "selected" } else { "none" }
-                ))
-                .size(12.0)
-                .color(crate::theme::colors::TEXT_DIM),
-            );
-            // Default option
-            let in_default = selected_input.is_none();
-            if ui
-                .radio_value(selected_input, None, "(default)")
-                .clicked()
-            {
-                *selected_input = None;
-            }
-            for (i, d) in inputs.iter().enumerate() {
-                let selected = *selected_input == Some(i);
-                let label = format!("{} ({}Hz, {}ch)", d.name, d.sample_rate, d.channels);
-                if ui.radio_value(selected_input, Some(i), &label).clicked() {
-                    *selected_input = Some(i);
+    )
+    .default_open(true)
+    .show(ui, |ui| {
+        let inputs = lightvc_audio::DuplexStream::list_input_devices().unwrap_or_default();
+        let outputs = lightvc_audio::DuplexStream::list_output_devices().unwrap_or_default();
+        ui.label(
+            egui::RichText::new(format!(
+                "Inputs  ({} = default)",
+                if selected_input.is_some() {
+                    "selected"
+                } else {
+                    "none"
                 }
+            ))
+            .size(12.0)
+            .color(crate::theme::colors::TEXT_DIM),
+        );
+        // Default option
+        let in_default = selected_input.is_none();
+        if ui.radio_value(selected_input, None, "(default)").clicked() {
+            *selected_input = None;
+        }
+        for (i, d) in inputs.iter().enumerate() {
+            let selected = *selected_input == Some(i);
+            let label = format!("{} ({}Hz, {}ch)", d.name, d.sample_rate, d.channels);
+            if ui.radio_value(selected_input, Some(i), &label).clicked() {
+                *selected_input = Some(i);
             }
-            ui.add_space(4.0);
-            ui.label(
-                egui::RichText::new(format!(
-                    "Outputs  ({} = default)",
-                    if selected_output.is_some() { "selected" } else { "none" }
-                ))
-                .size(12.0)
-                .color(crate::theme::colors::TEXT_DIM),
-            );
-            if ui
-                .radio_value(selected_output, None, "(default)")
-                .clicked()
-            {
-                *selected_output = None;
-            }
-            for (i, d) in outputs.iter().enumerate() {
-                let label = format!("{} ({}Hz, {}ch)", d.name, d.sample_rate, d.channels);
-                if ui.radio_value(selected_output, Some(i), &label).clicked() {
-                    *selected_output = Some(i);
+        }
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(format!(
+                "Outputs  ({} = default)",
+                if selected_output.is_some() {
+                    "selected"
+                } else {
+                    "none"
                 }
+            ))
+            .size(12.0)
+            .color(crate::theme::colors::TEXT_DIM),
+        );
+        if ui.radio_value(selected_output, None, "(default)").clicked() {
+            *selected_output = None;
+        }
+        for (i, d) in outputs.iter().enumerate() {
+            let label = format!("{} ({}Hz, {}ch)", d.name, d.sample_rate, d.channels);
+            if ui.radio_value(selected_output, Some(i), &label).clicked() {
+                *selected_output = Some(i);
             }
-        },
-    );
+        }
+    });
 }
 
 // =========================================================================
@@ -324,12 +357,12 @@ pub fn render(
 // =========================================================================
 
 pub fn inference_loop(
-    pipeline: Arc<Mutex<lightvc_core::pipeline::VcPipeline>>,
+    pipeline: Option<Arc<Mutex<lightvc_core::pipeline::VcPipeline>>>,
     control_rx: Receiver<RtControl>,
     metrics_tx: Sender<RtMetrics>,
 ) {
     let mut running = false;
-    let mut bypass = false;
+    let mut bypass = pipeline.is_none(); // force bypass when no converter
     let mut engine: Option<lightvc_audio::AudioEngine> = None;
     let mut capture_consumer: Option<rtrb::Consumer<f32>> = None;
     let mut playback_producer: Option<rtrb::Producer<f32>> = None;
@@ -385,17 +418,15 @@ pub fn inference_loop(
                             input_idx: Some(ii),
                             output_idx: Some(oi),
                         } => {
-                            let inputs =
-                                lightvc_audio::DuplexStream::list_input_devices().unwrap_or_default();
+                            let inputs = lightvc_audio::DuplexStream::list_input_devices()
+                                .unwrap_or_default();
                             let outputs = lightvc_audio::DuplexStream::list_output_devices()
                                 .unwrap_or_default();
                             let host = cpal::default_host();
                             let in_dev = host.input_devices().ok().and_then(|mut d| d.nth(ii));
                             let out_dev = host.output_devices().ok().and_then(|mut d| d.nth(oi));
                             match (in_dev, out_dev) {
-                                (Some(id), Some(od)) => {
-                                    lightvc_audio::AudioEngine::start(&id, &od)
-                                }
+                                (Some(id), Some(od)) => lightvc_audio::AudioEngine::start(&id, &od),
                                 _ => {
                                     eprintln!("Device selection failed, falling back to default");
                                     lightvc_audio::AudioEngine::start_default()
@@ -410,9 +441,7 @@ pub fn inference_loop(
                             let in_dev = host.input_devices().ok().and_then(|mut d| d.nth(ii));
                             let out_dev = lightvc_audio::DuplexStream::default_output().ok();
                             match (in_dev, out_dev) {
-                                (Some(id), Some(od)) => {
-                                    lightvc_audio::AudioEngine::start(&id, &od)
-                                }
+                                (Some(id), Some(od)) => lightvc_audio::AudioEngine::start(&id, &od),
                                 _ => lightvc_audio::AudioEngine::start_default(),
                             }
                         }
@@ -424,9 +453,7 @@ pub fn inference_loop(
                             let in_dev = lightvc_audio::DuplexStream::default_input().ok();
                             let out_dev = host.output_devices().ok().and_then(|mut d| d.nth(oi));
                             match (in_dev, out_dev) {
-                                (Some(id), Some(od)) => {
-                                    lightvc_audio::AudioEngine::start(&id, &od)
-                                }
+                                (Some(id), Some(od)) => lightvc_audio::AudioEngine::start(&id, &od),
                                 _ => lightvc_audio::AudioEngine::start_default(),
                             }
                         }
@@ -472,7 +499,7 @@ pub fn inference_loop(
                     disconnected_reported = false;
                 }
                 RtControl::SetMode(mode) => {
-                    if let Ok(mut p) = pipeline.lock() {
+                    if let Some(mut p) = pipeline.as_ref().and_then(|p| p.lock().ok()) {
                         p.codec_mut().set_chunk_mode(match mode {
                             lightvc_core::converter::LatencyMode::Strict => {
                                 lightvc_core::streaming::ChunkMode::Strict
@@ -488,7 +515,7 @@ pub fn inference_loop(
                 }
                 RtControl::Bypass(b) => bypass = b,
                 RtControl::LoadReference(pcm) => {
-                    if let Ok(mut p) = pipeline.lock() {
+                    if let Some(mut p) = pipeline.as_ref().and_then(|p| p.lock().ok()) {
                         let _ = p.set_target(&pcm);
                     }
                 }
@@ -531,7 +558,11 @@ pub fn inference_loop(
             continue;
         };
 
-        let chunk_sz = pipeline.lock().map(|p| p.chunk_samples()).unwrap_or(2048);
+        let chunk_sz = pipeline
+            .as_ref()
+            .and_then(|p| p.lock().ok())
+            .map(|p| p.chunk_samples())
+            .unwrap_or(2048);
         // Capture and playback SR bypass are independent ([05-8]):
         // e.g. 44.1k mic + 48k HDMI needs capture bypass but playback resample.
         let capture_passthrough = device_sr == 44_100;
@@ -593,12 +624,12 @@ pub fn inference_loop(
             let out = if bypass {
                 chunk.clone()
             } else {
-                match pipeline.lock() {
-                    Ok(mut p) => p.process_chunk(&chunk).unwrap_or_else(|e| {
+                match pipeline.as_ref().and_then(|p| p.lock().ok()) {
+                    Some(mut p) => p.process_chunk(&chunk).unwrap_or_else(|e| {
                         eprintln!("VC: {e}");
                         chunk.clone()
                     }),
-                    Err(_) => chunk.clone(),
+                    None => chunk.clone(),
                 }
             };
 
@@ -619,7 +650,8 @@ pub fn inference_loop(
                 0.0
             } else {
                 pipeline
-                    .lock()
+                    .as_ref()
+                    .and_then(|p| p.lock().ok())
                     .map(|p| p.algorithmic_latency_ms())
                     .unwrap_or(0.0)
             };
@@ -671,7 +703,7 @@ pub fn inference_loop(
         }
         // After 10 consecutive iterations with underruns, downgrade one level.
         if underrun_streak >= 10 && !auto_degraded {
-            if let Ok(mut p) = pipeline.lock() {
+            if let Some(mut p) = pipeline.as_ref().and_then(|p| p.lock().ok()) {
                 let current = p.algorithmic_latency_ms();
                 if current > 50.0 {
                     // Quality → Balanced, or Balanced → Strict.
