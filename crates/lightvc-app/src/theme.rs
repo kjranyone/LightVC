@@ -30,9 +30,6 @@ pub mod colors {
     pub const TEXT: Color32 = Color32::from_rgb(240, 235, 250);
     pub const TEXT_DIM: Color32 = Color32::from_rgb(160, 150, 180);
     pub const TEXT_MUTED: Color32 = Color32::from_rgb(110, 100, 130);
-
-    pub const ACCENT: Color32 = PINK;
-    pub const ACCENT2: Color32 = CYAN;
 }
 
 // ---------------------------------------------------------------------------
@@ -273,7 +270,7 @@ const KNOB_SIZE: f32 = 64.0;
 pub fn knob(
     ui: &mut egui::Ui,
     knob_tex: &egui::TextureHandle,
-    id: egui::Id,
+    _id: egui::Id,
     value: f32,
     label: &str,
 ) -> Option<f32> {
@@ -347,6 +344,7 @@ pub fn knob(
 }
 
 /// A labeled knob row: [Knob] [Label + value text]
+#[allow(dead_code)]
 pub fn knob_labeled(
     ui: &mut egui::Ui,
     knob_tex: &egui::TextureHandle,

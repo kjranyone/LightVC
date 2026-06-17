@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use candle_core::{DType, Device};
 use clap::{Parser, Subcommand};
 use lightvc_audio::Resampler;

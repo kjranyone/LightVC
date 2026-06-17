@@ -15,6 +15,7 @@ const LABEL_WIDTH: f32 = 80.0;
 pub struct OfflineState {
     pub source_path: String,
     pub reference_path: String,
+    #[allow(dead_code)]
     pub output_path: String,
     pub converting: bool,
     pub converted_samples: Option<Vec<f32>>,
@@ -71,14 +72,21 @@ pub fn render(
                     });
                     ui.add_space(6.0);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if crate::theme::icon_button(
-                            ui,
-                            icon_play,
-                            "Play",
-                            !offline.source_path.is_empty(),
-                        ) && !offline.source_path.is_empty()
-                        {
-                            play_audio(&offline.source_path);
+                        let src_playing = offline
+                            .source_preview
+                            .as_ref()
+                            .map(|p| p.is_playing())
+                            .unwrap_or(false);
+                        let src_label = if src_playing { "■ Stop" } else { "▶ Play" };
+                        let src_active = !offline.source_path.is_empty() || src_playing;
+                        if crate::theme::icon_button(ui, icon_play, src_label, src_active) {
+                            if src_playing {
+                                if let Some(p) = offline.source_preview.take() {
+                                    p.stop();
+                                }
+                            } else if !offline.source_path.is_empty() {
+                                offline.source_preview = play_audio(&offline.source_path);
+                            }
                         }
                         ui.add_space(4.0);
                         if crate::theme::icon_button(ui, icon_folder, "Browse", true) {
@@ -115,14 +123,21 @@ pub fn render(
                     });
                     ui.add_space(6.0);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if crate::theme::icon_button(
-                            ui,
-                            icon_play,
-                            "Play",
-                            !offline.reference_path.is_empty(),
-                        ) && !offline.reference_path.is_empty()
-                        {
-                            play_audio(&offline.reference_path);
+                        let ref_playing = offline
+                            .reference_preview
+                            .as_ref()
+                            .map(|p| p.is_playing())
+                            .unwrap_or(false);
+                        let ref_label = if ref_playing { "■ Stop" } else { "▶ Play" };
+                        let ref_active = !offline.reference_path.is_empty() || ref_playing;
+                        if crate::theme::icon_button(ui, icon_play, ref_label, ref_active) {
+                            if ref_playing {
+                                if let Some(p) = offline.reference_preview.take() {
+                                    p.stop();
+                                }
+                            } else if !offline.reference_path.is_empty() {
+                                offline.reference_preview = play_audio(&offline.reference_path);
+                            }
                         }
                         ui.add_space(4.0);
                         if crate::theme::icon_button(ui, icon_folder, "Browse", true) {
@@ -234,8 +249,24 @@ pub fn render(
                         );
                         ui.add_space(6.0);
                         ui.horizontal(|ui| {
-                            if crate::theme::icon_button(ui, icon_play, "Play Output", true) {
-                                offline.player = AudioPlayer::play(samples.clone()).ok();
+                            let out_playing = offline
+                                .player
+                                .as_ref()
+                                .map(|p| p.is_playing())
+                                .unwrap_or(false);
+                            let out_label = if out_playing {
+                                "■ Stop"
+                            } else {
+                                "▶ Play Output"
+                            };
+                            if crate::theme::icon_button(ui, icon_play, out_label, true) {
+                                if out_playing {
+                                    if let Some(p) = offline.player.take() {
+                                        p.stop();
+                                    }
+                                } else {
+                                    offline.player = AudioPlayer::play(samples.clone()).ok();
+                                }
                             }
                             ui.add_space(4.0);
                             if crate::theme::icon_button(ui, icon_speaker, "Save As...", true) {
@@ -286,12 +317,13 @@ pub fn render(
     }
 }
 
-fn play_audio(path_str: &str) {
+fn play_audio(path_str: &str) -> Option<AudioPlayer> {
     let path = std::path::PathBuf::from(path_str);
     if let Ok((wav, sr)) = audio_playback::load_wav_mono(&path) {
         let wav44 = audio_playback::resample_linear(&wav, sr);
-        let _ = AudioPlayer::play(wav44);
+        return AudioPlayer::play(wav44).ok();
     }
+    None
 }
 
 fn run_offline_conversion(state: Arc<Mutex<AppState>>, source_path: &str, reference_path: &str) {

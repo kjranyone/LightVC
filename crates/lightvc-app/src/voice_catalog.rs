@@ -19,7 +19,9 @@ pub fn render(
     icon_play: &egui::TextureHandle,
     icon_trash: &egui::TextureHandle,
     empty_stars: &egui::TextureHandle,
+    on_select: impl FnMut(usize),
 ) {
+    let mut on_select = on_select;
     crate::theme::heading(ui, "Voice Catalog");
     ui.add_space(4.0);
     ui.label(
@@ -108,51 +110,91 @@ pub fn render(
                 ui.add_space(4.0);
 
                 let mut to_delete = None;
+                let selected = s.selected_voice;
                 for (i, voice) in s.voices.iter().enumerate() {
-                    crate::theme::info_card(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            // Index + name
-                            ui.label(
-                                egui::RichText::new(format!("{}", i + 1))
+                    let is_selected = selected == Some(i);
+                    let card_bg = if is_selected {
+                        egui::Color32::from_rgba_premultiplied(90, 60, 120, 60)
+                    } else {
+                        egui::Color32::from_rgba_premultiplied(40, 30, 60, 30)
+                    };
+                    egui::Frame::group(ui.style())
+                        .fill(card_bg)
+                        .stroke(egui::Stroke::new(
+                            if is_selected { 2.0 } else { 1.0 },
+                            if is_selected {
+                                crate::theme::colors::PINK
+                            } else {
+                                crate::theme::colors::BG_PANEL_LIGHT
+                            },
+                        ))
+                        .inner_margin(8.0)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                // Index + name
+                                let idx_str = format!("{}", i + 1);
+                                ui.label(
+                                    egui::RichText::new(if is_selected {
+                                        "★"
+                                    } else {
+                                        idx_str.as_str()
+                                    })
                                     .size(12.0)
-                                    .color(crate::theme::colors::LAVENDER)
+                                    .color(if is_selected {
+                                        crate::theme::colors::PINK_BRIGHT
+                                    } else {
+                                        crate::theme::colors::LAVENDER
+                                    })
                                     .monospace(),
-                            );
-                            ui.label(
-                                egui::RichText::new(&voice.name)
-                                    .size(14.0)
-                                    .strong()
-                                    .color(crate::theme::colors::TEXT),
-                            );
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    if crate::theme::icon_button(ui, icon_trash, "Remove", false) {
-                                        to_delete = Some(i);
-                                    }
-                                    if crate::theme::icon_button(ui, icon_play, "Play", true) {
-                                        if let Ok((wav, sr)) =
-                                            audio_playback::load_wav_mono(&voice.path)
-                                        {
-                                            let wav44 = audio_playback::resample_linear(&wav, sr);
-                                            let _ = audio_playback::AudioPlayer::play(wav44);
+                                );
+                                ui.label(
+                                    egui::RichText::new(&voice.name)
+                                        .size(14.0)
+                                        .strong()
+                                        .color(crate::theme::colors::TEXT),
+                                );
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if crate::theme::icon_button(
+                                            ui, icon_trash, "Remove", false,
+                                        ) {
+                                            to_delete = Some(i);
                                         }
-                                    }
-                                },
+                                        if crate::theme::icon_button(ui, icon_play, "Play", false) {
+                                            if let Ok((wav, sr)) =
+                                                audio_playback::load_wav_mono(&voice.path)
+                                            {
+                                                let wav44 =
+                                                    audio_playback::resample_linear(&wav, sr);
+                                                let _ = audio_playback::AudioPlayer::play(wav44);
+                                            }
+                                        }
+                                        // Select this voice as the Realtime reference.
+                                        let select_label =
+                                            if is_selected { "✓ Selected" } else { "Use" };
+                                        if crate::theme::pill_button(ui, select_label, is_selected)
+                                        {
+                                            on_select(i);
+                                        }
+                                    },
+                                );
+                            });
+                            ui.label(
+                                egui::RichText::new(voice.path.to_string_lossy().as_ref())
+                                    .size(10.0)
+                                    .color(crate::theme::colors::TEXT_MUTED),
                             );
                         });
-                        ui.label(
-                            egui::RichText::new(voice.path.to_string_lossy().as_ref())
-                                .size(10.0)
-                                .color(crate::theme::colors::TEXT_MUTED),
-                        );
-                    });
                     ui.add_space(4.0);
                 }
 
                 drop(s);
                 if let Some(idx) = to_delete {
                     let mut s = state.lock().unwrap();
+                    if s.selected_voice == Some(idx) {
+                        s.selected_voice = None;
+                    }
                     let name = s.voices[idx].name.clone();
                     s.voices.remove(idx);
                     s.status = format!("Removed voice: {name}");

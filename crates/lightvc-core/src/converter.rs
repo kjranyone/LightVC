@@ -31,25 +31,6 @@ pub(crate) fn linear_layer(
     Ok(candle_nn::Linear::new(weight, Some(bias)))
 }
 
-fn conv1d_layer(
-    in_ch: usize,
-    out_ch: usize,
-    kernel_size: usize,
-    dilation: usize,
-    vb: VarBuilder,
-) -> Result<Conv1d> {
-    let cfg = Conv1dConfig {
-        dilation,
-        padding: 0,
-        stride: 1,
-        groups: 1,
-        cudnn_fwd_algo: None,
-    };
-    let weight = vb.get((out_ch, in_ch, kernel_size), "weight")?;
-    let bias = vb.get((out_ch,), "bias")?;
-    Ok(Conv1d::new(weight, Some(bias), cfg))
-}
-
 fn layer_norm_layer(dim: usize, eps: f64, vb: VarBuilder) -> Result<LayerNorm> {
     let weight = vb.get((dim,), "weight")?;
     let bias = vb.get((dim,), "bias")?;
@@ -232,7 +213,9 @@ impl SpeakerEncoder {
         let t_len = ref_latent.dim(2)?;
         let mean = ref_latent.mean(D::Minus1)?;
         let std = {
-            let mean_b = mean.unsqueeze(D::Minus1)?.broadcast_as(ref_latent.shape())?;
+            let mean_b = mean
+                .unsqueeze(D::Minus1)?
+                .broadcast_as(ref_latent.shape())?;
             let diff = (ref_latent - &mean_b)?;
             let sum_sq = diff.sqr()?.sum(D::Minus1)?;
             // PyTorch std(unbiased=True) divides by (N-1), not N.
@@ -525,11 +508,8 @@ impl Converter {
         let latent_dim = config.latent_dim;
         let embed_dim = config.speaker_embed_dim;
 
-        let bottleneck = BottleneckEncoder::new(
-            latent_dim,
-            config.bottleneck_dim,
-            vb.pp("bottleneck"),
-        )?;
+        let bottleneck =
+            BottleneckEncoder::new(latent_dim, config.bottleneck_dim, vb.pp("bottleneck"))?;
         let film = FilmCond::new(embed_dim, latent_dim, vb.pp("film"))?;
         let speaker_encoder = SpeakerEncoder::new(latent_dim, embed_dim, vb.pp("speaker_encoder"))?;
 

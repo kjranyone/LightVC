@@ -27,7 +27,6 @@ pub struct RtMetrics {
 
 /// Control messages from UI to real-time inference thread.
 pub enum RtControl {
-    Start,
     /// Start with explicit device selection ([05-6]).
     /// `input_idx` / `output_idx` are indices into the cpal device list
     /// (same order as `DuplexStream::list_input_devices()`). `None` = default.
@@ -124,11 +123,6 @@ impl LightVcApp {
             asset_cache: Default::default(),
             splash_frames: 0,
         }
-    }
-
-    /// Spawn the real-time inference thread (once).
-    fn ensure_rt_thread(&mut self) {
-        Self::ensure_rt_thread_static(&self.state);
     }
 
     fn ensure_rt_thread_static(state: &Arc<Mutex<AppState>>) {
@@ -417,15 +411,29 @@ impl LightVcApp {
                     let play = self.asset_cache.icon_play(ctx).clone();
                     let trash = self.asset_cache.icon_trash(ctx).clone();
                     let empty = self.asset_cache.empty_stars(ctx).clone();
+                    let state = self.state.clone();
                     crate::voice_catalog::render(
                         ui,
                         ctx,
                         &mut self.file_dialog,
-                        &self.state,
+                        &state,
                         &folder,
                         &play,
                         &trash,
                         &empty,
+                        |idx| {
+                            // Load the selected voice as the Realtime reference.
+                            let mut s = state.lock().unwrap();
+                            if let Some(voice) = s.voices.get(idx).cloned() {
+                                s.selected_voice = Some(idx);
+                                if let Ok((wav, sr)) =
+                                    crate::audio_playback::load_wav_mono(&voice.path)
+                                {
+                                    let wav44 = crate::audio_playback::resample_linear(&wav, sr);
+                                    Self::send_control(&state, RtControl::LoadReference(wav44));
+                                }
+                            }
+                        },
                     );
                 });
             }

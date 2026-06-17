@@ -4,6 +4,7 @@ use eframe::egui;
 
 pub const ICON_256_PNG: &[u8] = include_bytes!("../assets/icons/icon_256.png");
 pub const LOGO_PNG: &[u8] = include_bytes!("../assets/logo/logo_header.png");
+#[allow(dead_code)] // Retina/HiDPI support not yet implemented (ASSETS_SPEC_V2 §Implementation Status)
 pub const LOGO_2X_PNG: &[u8] = include_bytes!("../assets/logo/logo_header@2x.png");
 pub const BG_TEXTURE_PNG: &[u8] = include_bytes!("../assets/textures/bg_texture.png");
 pub const KNOB_FRAMES_PNG: &[u8] = include_bytes!("../assets/knobs/knob_64_frames.png");
@@ -23,7 +24,6 @@ pub const EMPTY_STARS_PNG: &[u8] = include_bytes!("../assets/illustrations/empty
 
 /// Load RGBA image data from PNG bytes.
 pub fn load_image_from_png(data: &[u8]) -> Option<(usize, usize, Vec<u8>)> {
-    use std::io::Cursor;
     let img = image::load_from_memory(data).ok()?;
     let rgba = img.to_rgba8();
     let (w, h) = rgba.dimensions();

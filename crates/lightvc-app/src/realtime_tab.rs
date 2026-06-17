@@ -129,6 +129,27 @@ pub fn render(
                     crate::theme::colors::TEXT_MUTED
                 }),
         );
+
+        // Show the active reference voice (selected in the Catalog tab).
+        let ref_name = state.lock().map(|s| {
+            s.selected_voice
+                .and_then(|i| s.voices.get(i).map(|v| v.name.clone()))
+        });
+        if let Ok(Some(name)) = ref_name {
+            ui.separator();
+            ui.label(
+                egui::RichText::new(format!("★ Reference: {name}"))
+                    .size(12.0)
+                    .color(crate::theme::colors::PINK_BRIGHT),
+            );
+        } else if has_pipeline {
+            ui.separator();
+            ui.label(
+                egui::RichText::new("Reference: none (select in Catalog)")
+                    .size(11.0)
+                    .color(crate::theme::colors::TEXT_MUTED),
+            );
+        }
     });
 
     ui.add_space(12.0);
@@ -316,12 +337,12 @@ pub fn render(
             .color(crate::theme::colors::TEXT_DIM),
         );
         // Default option
-        let in_default = selected_input.is_none();
+        let _in_default = selected_input.is_none();
         if ui.radio_value(selected_input, None, "(default)").clicked() {
             *selected_input = None;
         }
         for (i, d) in inputs.iter().enumerate() {
-            let selected = *selected_input == Some(i);
+            let _selected = *selected_input == Some(i);
             let label = format!("{} ({}Hz, {}ch)", d.name, d.sample_rate, d.channels);
             if ui.radio_value(selected_input, Some(i), &label).clicked() {
                 *selected_input = Some(i);
@@ -404,7 +425,7 @@ pub fn inference_loop(
     loop {
         while let Ok(msg) = control_rx.try_recv() {
             match msg {
-                RtControl::Start | RtControl::StartWithDevices { .. } => {
+                RtControl::StartWithDevices { .. } => {
                     if running {
                         continue;
                     }
@@ -418,9 +439,9 @@ pub fn inference_loop(
                             input_idx: Some(ii),
                             output_idx: Some(oi),
                         } => {
-                            let inputs = lightvc_audio::DuplexStream::list_input_devices()
+                            let _inputs = lightvc_audio::DuplexStream::list_input_devices()
                                 .unwrap_or_default();
-                            let outputs = lightvc_audio::DuplexStream::list_output_devices()
+                            let _outputs = lightvc_audio::DuplexStream::list_output_devices()
                                 .unwrap_or_default();
                             let host = cpal::default_host();
                             let in_dev = host.input_devices().ok().and_then(|mut d| d.nth(ii));
