@@ -479,9 +479,19 @@ impl Converter {
     }
 
     /// One-step forward conversion.
+    ///
+    /// Accepts both batched `[B, D, T]` and unbatched `[D, T]` inputs,
+    /// matching the Python `Converter.forward` ([08-6]).
     pub fn forward(&self, src_latent: &Tensor, ref_latent: &Tensor) -> Result<Tensor> {
-        let speaker_embed = self.speaker_encoder.forward(ref_latent)?;
-        let z = self.film.forward(src_latent, &speaker_embed)?;
+        let was_unbatched = src_latent.rank() == 2;
+        let (src_latent, ref_latent) = if was_unbatched {
+            (src_latent.unsqueeze(0)?, ref_latent.unsqueeze(0)?)
+        } else {
+            (src_latent.clone(), ref_latent.clone())
+        };
+
+        let speaker_embed = self.speaker_encoder.forward(&ref_latent)?;
+        let z = self.film.forward(&src_latent, &speaker_embed)?;
 
         let timbre = if self.config.enable_timbre {
             if let Some(bank) = &self.timbre_bank {
@@ -504,7 +514,12 @@ impl Converter {
         }
 
         let delta = self.out_proj.forward(&z)?;
-        Ok((src_latent + &delta)?)
+        let result = (&src_latent + &delta)?;
+        if was_unbatched {
+            result.squeeze(0).map_err(Into::into)
+        } else {
+            Ok(result)
+        }
     }
 }
 

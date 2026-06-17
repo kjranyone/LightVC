@@ -225,12 +225,26 @@ impl FlowConverter {
     /// One-step inference (mean-flow, 1-NFE).
     ///
     /// `z_converted = z_src + v_pred(z_src, t=1, ref)`
+    ///
+    /// Accepts both batched `[B, D, T]` and unbatched `[D, T]` inputs,
+    /// matching the Python `FlowConverter.convert` ([08-6]).
     pub fn convert(&self, z_src: &Tensor, ref_latent: &Tensor) -> Result<Tensor> {
+        let was_unbatched = z_src.rank() == 2;
+        let (z_src, ref_latent) = if was_unbatched {
+            (z_src.unsqueeze(0)?, ref_latent.unsqueeze(0)?)
+        } else {
+            (z_src.clone(), ref_latent.clone())
+        };
         let batch = z_src.dim(0)?;
         let device = z_src.device();
         let t = Tensor::ones((batch,), candle_core::DType::F32, device)?;
-        let v = self.forward_velocity(z_src, &t, ref_latent)?;
-        Ok((z_src + &v)?)
+        let v = self.forward_velocity(&z_src, &t, &ref_latent)?;
+        let result = (&z_src + &v)?;
+        if was_unbatched {
+            result.squeeze(0).map_err(Into::into)
+        } else {
+            Ok(result)
+        }
     }
 
     pub fn speaker_embedding(&self, ref_latent: &Tensor) -> Result<Tensor> {
