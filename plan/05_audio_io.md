@@ -60,7 +60,7 @@
 - **受け入れ基準**: スレッド構成が ARCHITECTURE.md §1.1 の図と一致する。
 - **関連**: `crates/lightvc-app/src/realtime_tab.rs:291-477`, `ARCHITECTURE.md:11-49`
 
-### [05-4] (P0) リサンプリング・チャンクサイズ境界の整理
+### [05-4] (P0) ✅ リサンプリング・チャンクサイズ境界の整理
 - **現状**: `realtime_tab.rs:376-413` で以下の処理が混在:
   - `chunk_sz = pipeline.chunk_samples()`（44.1k 換算のサンプル数）
   - `needed = resampler.input_frames_needed_up()`（device_sr 揰りの必要フレーム数）

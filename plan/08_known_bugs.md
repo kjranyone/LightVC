@@ -22,7 +22,7 @@
 - **受け入れ基準**: ストリーミングエンコード結果がフルバッチと一致（誤差 1e-4 以内）。
 - **関連**: `crates/lightvc-core/src/dac_model.rs:78-99, 132-163, 183-220`, `crates/lightvc-core/src/streaming.rs:114-143`, [02_streaming_lookahead.md](02_streaming_lookahead.md) [02-4]
 
-### [08-2] (P1) realtime_tab のリサンプリング状態ドリフト（再掲）
+### [08-2] (P1) ✅ realtime_tab のリサンプリング状態ドリフト（再掲）
 - **詳細**: [05_audio_io.md の 05-4](05_audio_io.md) を参照。本ファイルでは「バグ」として明示。
 - **影響**: 長時間実行でピッチシフト・位相ズレが蓄積する可能性。
 
@@ -69,7 +69,7 @@
 - **受け入れ基準**: unbatched 入力時の挙動が Rust / Python で一致、または明文化。
 - **関連**: `crates/lightvc-core/src/converter.rs:461-471, 720-731`, `training/converter.py:427-451`
 
-### [08-7] (P1) 推論スレッドでのゼロ埋め過多
+### [08-7] (P1) ✅ 推論スレッドでのゼロ埋め過多
 - **現状**: `realtime_tab.rs:389-395` で capture 不足時に `cap.resize(needed, 0.0)`。CPAL バッファサイズに対して chunk サイズが大きいと頻繁にゼロ埋めが発生し、出力に無音区間が混入。
 - **影響**:
   - 動作はするが、聴感上「プツプツ」と無音が混入

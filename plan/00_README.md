@@ -78,7 +78,7 @@ LightVC プロジェクトの初期設計資料（DESIGN / ARCHITECTURE / MODEL_
 | 03-1 | P1 | ⬜ |
 | 03-2 | P2 | ⬜ |
 | 03-3 | P1 | ⬜ |
-| 03-4 | P2 | ⬜ |
+| 03-4 | P2 | ✅ |
 | 03-5 | P0 | ✅ |
 | 04-1 | P1 | ⬜ |
 | 04-2 | P0 | 🚧 (config 有効化、実機検証 pending) |
@@ -89,22 +89,22 @@ LightVC プロジェクトの初期設計資料（DESIGN / ARCHITECTURE / MODEL_
 | 05-1 | P0 | ✅ |
 | 05-2 | P1 | ⬜ |
 | 05-3 | P1 | ⬜ |
-| 05-4 | P0 | ⬜ |
+| 05-4 | P0 | ✅ ([08-2][08-7] 同時解消) |
 | 06-1 | P0 | ✅ |
 | 06-2 | P1 | ⬜ |
-| 06-3 | P2 | ⬜ |
+| 06-3 | P2 | ✅ |
 | 06-4 | P2 | ⬜ |
 | 07-1 | P2 | ⬜ |
 | 07-2 | P2 | ⬜ |
 | 07-3 | P2 | ⬜ |
 | 07-4 | P1 | ⬜ |
 | 08-1 | P0 | ✅ (02-1/02-2/02-4 で対応) |
-| 08-2 | P1 | ⬜ |
+| 08-2 | P1 | ✅ (05-4 で解消) |
 | 08-3 | P1 | ✅ (06-1 で解消) |
-| 08-4 | P1 | ⬜ |
-| 08-5 | P2 | ⬜ |
+| 08-4 | P1 | ✅ |
+| 08-5 | P2 | ✅ |
 | 08-6 | P2 | ⬜ |
-| 08-7 | P1 | ⬜ |
+| 08-7 | P1 | ✅ (05-4 で解消) |
 
 ステータス凡例: ⬜ 未着手 / 🚧 進行中 / ✅ 完了 / ❌ 中止
 
@@ -120,3 +120,10 @@ LightVC プロジェクトの初期設計資料（DESIGN / ARCHITECTURE / MODEL_
   - [02-1] FRC lookahead 実装 (Strict=0 / Balanced=2048 / Quality=4096 samples)
   - [02-2] lookahead + ENCODER_OVERLAP で streaming/non-streaming 等価性を確保。per-layer conv-state caching は性能最適化のため保留（別途対応）
   - [02-4] / [08-1] 対称パディング ↔ causal 矛盾を FRC で解消（Method A）
+- 2026-06-17: P0 全完了 + P1/P2 の小タスク
+  - [05-4] リサンプリング・チャンク境界整理: 3段バッファリング(in_accum → pcm_44k_accum → out_44k_accum)で各境界を分離、ゼロ埋め・truncate 廃止。[08-2][08-7] 同時解消
+  - [08-4] SpeakerEncoder GELU 不一致解消
+  - [08-5] TimeEmbed freqs を f64 計算後に f32 キャスト
+  - [03-4] CausalConv1d depthwise dead code 削除 (Rust/Python 両方)
+  - [06-3] README の `cargo xtask` → `cargo run -p lightvc-xtask --` 修正
+  - **P0 全 9 タスク完了** (残り [04-2] の実機検証のみ)
