@@ -57,10 +57,11 @@ class Snake1d(nn.Module):
 
 
 class CausalConv1d(nn.Module):
-    """Causal Conv1d with optional depthwise-separable mode.
+    """Causal Conv1d (standard conv, groups=1) for XPU compatibility.
 
-    Training uses groups=1 (standard conv) for XPU compatibility.
-    Set depthwise=True for lightweight DSConv (groups=in_ch).
+    The depthwise-separable variant was removed: CausalResBlock uses
+    groups=1 throughout, and the depthwise path was dead code that
+    fails on XPU backward (see AGENTS.md Known Issues).
     """
 
     def __init__(
@@ -69,23 +70,13 @@ class CausalConv1d(nn.Module):
         out_ch: int,
         kernel_size: int,
         dilation: int = 1,
-        depthwise: bool = False,
     ):
         super().__init__()
-        self.depthwise = depthwise
         self.pad = (kernel_size - 1) * dilation
-        if depthwise:
-            self.depthwise_conv = nn.Conv1d(
-                in_ch, in_ch, kernel_size, dilation=dilation, groups=in_ch
-            )
-            self.pointwise = nn.Conv1d(in_ch, out_ch, 1)
-        else:
-            self.conv = nn.Conv1d(in_ch, out_ch, kernel_size, dilation=dilation)
+        self.conv = nn.Conv1d(in_ch, out_ch, kernel_size, dilation=dilation)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = F.pad(x, (self.pad, 0))
-        if self.depthwise:
-            return self.pointwise(self.depthwise_conv(x))
         return self.conv(x)
 
 
@@ -358,12 +349,8 @@ class FlowConverter(nn.Module):
         self.vel_proj = CausalConv1d(D, D, 1)
 
         # Zero-init final projection so the model starts as identity
-        if hasattr(self.vel_proj, "conv"):
-            nn.init.zeros_(self.vel_proj.conv.weight)  # type: ignore
-            nn.init.zeros_(self.vel_proj.conv.bias)  # type: ignore
-        elif hasattr(self.vel_proj, "pointwise"):
-            nn.init.zeros_(self.vel_proj.pointwise.weight)  # type: ignore
-            nn.init.zeros_(self.vel_proj.pointwise.bias)  # type: ignore
+        nn.init.zeros_(self.vel_proj.conv.weight)  # type: ignore
+        nn.init.zeros_(self.vel_proj.conv.bias)  # type: ignore
 
         if config.enable_timbre:
             self.timbre = TimbreTokenBank(E, config.n_timbre_tokens)
