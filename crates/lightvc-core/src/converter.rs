@@ -98,13 +98,10 @@ impl CausalConv1d {
             groups: 1,
             cudnn_fwd_algo: None,
         };
-        // Try standard conv keys first, then depthwise keys
-        let weight = vb
-            .get((out_channels, in_channels, kernel_size), "weight")
-            .or_else(|_| vb.get((out_channels, in_channels, kernel_size), "conv.weight"))?;
-        let bias = vb
-            .get((out_channels,), "bias")
-            .or_else(|_| vb.get((out_channels,), "conv.bias"))?;
+        // Standard conv keys only. The depthwise fallback was dead code
+        // (CausalResBlock always uses groups=1 for XPU compatibility).
+        let weight = vb.get((out_channels, in_channels, kernel_size), "weight")?;
+        let bias = vb.get((out_channels,), "bias")?;
         let conv = Conv1d::new(weight, Some(bias), cfg);
         Ok(Self {
             conv,
@@ -225,7 +222,7 @@ impl SpeakerEncoder {
     pub fn forward(&self, ref_latent: &Tensor) -> Result<Tensor> {
         let pooled = ref_latent.mean(D::Minus1)?;
         let h = self.proj1.forward(&pooled)?;
-        let h = h.relu()?;
+        let h = h.gelu()?;
         Ok(self.proj2.forward(&h)?)
     }
 }
@@ -547,7 +544,7 @@ impl TimeEmbed {
         let half = embed_dim / 2;
         let device = vb.device();
         let freqs_data: Vec<f32> = (0..half)
-            .map(|i| (1.0f32 / 10000.0f32.powf(i as f32 / half as f32)))
+            .map(|i| (1.0f64 / 10000.0f64.powf(i as f64 / half as f64)) as f32)
             .collect();
         let freqs = Tensor::from_vec(freqs_data, half, device)?;
 
