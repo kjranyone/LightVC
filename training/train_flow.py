@@ -243,14 +243,25 @@ def train(config_path, data_dir, output_dir):
                 flush=True,
             )
 
-    # Optimizer: include adversary params if GRL is active.
-    opt_params = (
-        list(model.parameters()) + list(disentangled.adversary.parameters())
-        if disentangled is not None
-        else list(model.parameters())
-    )
+    # Parameter groups: cold-start modules get higher lr.
+    cold_keywords = {"vel_proj", "vel_heads", "timbre", "cond_mlp", "time_embed"}
+    warm_params, cold_params = [], []
+    for name, param in model.named_parameters():
+        if any(kw in name for kw in cold_keywords):
+            cold_params.append(param)
+        else:
+            warm_params.append(param)
+    cold_lr = train_cfg.get("cold_lr", train_cfg["learning_rate"] * 10)
+    param_groups = [
+        {"params": warm_params, "lr": train_cfg["learning_rate"]},
+        {"params": cold_params, "lr": cold_lr},
+    ]
+    if disentangled is not None:
+        param_groups.append(
+            {"params": list(disentangled.adversary.parameters()), "lr": train_cfg["learning_rate"]}
+        )
     optim = torch.optim.AdamW(
-        opt_params,
+        param_groups,
         lr=train_cfg["learning_rate"],
         betas=tuple(train_cfg.get("optimizer_betas", [0.8, 0.99])),
         weight_decay=train_cfg.get("weight_decay", 0.01),
@@ -309,10 +320,11 @@ def train(config_path, data_dir, output_dir):
         z_pred_end = z_0 + v_pred  # one-step estimate
         loss_l1 = F.l1_loss(z_pred_end, z_tgt) * loss_cfg.get("latent_l1", 2.0)
 
-        # Speaker similarity
+        # Speaker similarity (gradient flows through velocity field)
+        z_pred_clamped = z_pred_end.clamp(-6.0, 6.0)
         with torch.no_grad():
             tgt_embed = model.speaker_embedding(z_tgt)
-        pred_embed = model.speaker_embedding(z_pred_end)
+        pred_embed = model.speaker_embedding(z_pred_clamped)
         loss_spk = (
             1.0 - F.cosine_similarity(pred_embed, tgt_embed, dim=-1).mean()
         ) * loss_cfg.get("speaker_sim", 1.0)
@@ -325,9 +337,6 @@ def train(config_path, data_dir, output_dir):
         )
 
         # Content/speaker disentanglement via gradient reversal ([04-4]).
-        # The adversary tries to predict the source speaker from the content
-        # code; GRL flips the gradient so the bottleneck learns to remove
-        # speaker information.
         loss_grl = torch.tensor(0.0, device=device)
         if disentangled is not None and spk_to_idx is not None:
             spk_labels = torch.tensor(
@@ -338,10 +347,35 @@ def train(config_path, data_dir, output_dir):
 
         loss = loss_fm + loss_l1 + loss_spk + loss_content + loss_grl
 
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-        optim.step()
-        scheduler.step()
+        # Per-component NaN detection
+        for _name, _l in [("fm", loss_fm), ("l1", loss_l1), ("spk", loss_spk),
+                          ("content", loss_content), ("grl", loss_grl)]:
+            if torch.isnan(_l) or torch.isinf(_l):
+                print(f"step {step} | NaN/Inf in loss_{_name} "
+                      f"fm={loss_fm.item():.4f} l1={loss_l1.item():.4f} "
+                      f"spk={loss_spk.item():.4f} v_range=[{v_pred.min():.2f},{v_pred.max():.2f}]",
+                      flush=True)
+                optim.zero_grad()
+                break
+        else:
+            # Forward is clean — check gradients after backward
+            loss.backward()
+
+            grad_has_nan = False
+            for _name, _p in model.named_parameters():
+                if _p.grad is not None and (torch.isnan(_p.grad).any() or torch.isinf(_p.grad).any()):
+                    print(f"step {step} | NaN/Inf in grad: {_name}", flush=True)
+                    grad_has_nan = True
+                    break
+
+            if grad_has_nan:
+                optim.zero_grad()
+                grad_norm = float("nan")
+            else:
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                grad_norm = grad_norm.item()
+                optim.step()
+                scheduler.step()
 
         losses_log["total"].append(loss.item())
         losses_log["fm"].append(loss_fm.item())
@@ -352,11 +386,21 @@ def train(config_path, data_dir, output_dir):
 
         if step % 100 == 0:
             avg = {k: np.mean(v[-100:]) for k, v in losses_log.items()}
+            vel_norm = 0.0
+            vel_wnorm = 0.0
+            for _n, _p in model.named_parameters():
+                if "vel_proj" in _n:
+                    vel_wnorm += _p.data.norm().item() ** 2
+                    if _p.grad is not None:
+                        vel_norm += _p.grad.norm().item() ** 2
+            vel_norm = vel_norm ** 0.5
+            vel_wnorm = vel_wnorm ** 0.5
             print(
                 f"step {step}/{max_steps} | loss={avg['total']:.4f} "
                 f"fm={avg['fm']:.4f} l1={avg['l1']:.4f} "
                 f"spk={avg['spk']:.4f} grl={avg['grl']:.4f} "
-                f"lr={scheduler.get_last_lr()[0]:.2e}",
+                f"lr={scheduler.get_last_lr()[0]:.2e} "
+                f"gnorm={grad_norm:.2f} vel_grad={vel_norm:.6f} vel_wnorm={vel_wnorm:.4f}",
                 flush=True,
             )
 

@@ -2,7 +2,7 @@
 # Trains the TimbreTokenBank + CrossAttnBlock alongside the bottleneck AE.
 model:
   latent_dim: 1024
-  hidden_dim: 256
+  hidden_dim: 1024
   n_conv_blocks: 4
   speaker_embed_dim: 256
   enable_timbre: true

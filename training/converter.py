@@ -209,7 +209,10 @@ class SpeakerEncoder(nn.Module):
         self.p2 = nn.Linear(latent_dim // 2, embed_dim)
 
     def forward(self, ref_latent: torch.Tensor) -> torch.Tensor:
-        pooled = torch.cat([ref_latent.mean(dim=-1), ref_latent.std(dim=-1)], dim=-1)
+        mean = ref_latent.mean(dim=-1)
+        var = ref_latent.var(dim=-1, unbiased=False)
+        std = torch.sqrt(var + 1e-6)
+        pooled = torch.cat([mean, std], dim=-1)
         h = F.gelu(self.p1(pooled))
         return self.p2(h)
 
@@ -252,14 +255,19 @@ class CrossAttnBlock(nn.Module):
         self, z: torch.Tensor, keys: torch.Tensor, vals: torch.Tensor
     ) -> torch.Tensor:
         B, D, T = z.shape
+        orig_dtype = z.dtype
         z_t = z.transpose(1, 2)
 
         q = self.q(z_t).reshape(B, T, self.n_heads, self.attn_dim // self.n_heads).transpose(1, 2)
         k = self.k(keys).reshape(B, -1, self.n_heads, self.attn_dim // self.n_heads).transpose(1, 2)
         v = self.v(vals).reshape(B, -1, self.n_heads, self.attn_dim // self.n_heads).transpose(1, 2)
 
-        attn = torch.nn.functional.scaled_dot_product_attention(q, k, v)
-        attn = attn.transpose(1, 2).reshape(B, T, self.attn_dim)
+        # Manual attention (SDPA efficient kernel backward produces NaN).
+        scale = (self.attn_dim // self.n_heads) ** -0.5
+        scores = torch.matmul(q, k.transpose(-2, -1)) * scale  # [B,H,T_q,T_kv]
+        attn_weights = torch.softmax(scores, dim=-1)
+        attn = torch.matmul(attn_weights, v)  # [B,H,T_q,d]
+        attn = attn.to(orig_dtype).transpose(1, 2).reshape(B, T, self.attn_dim)
         out = self.o(attn)
 
         z_norm = self.norm(z_t)
@@ -448,8 +456,10 @@ class FlowConverter(nn.Module):
             self.vel_proj = None
         else:
             self.vel_proj = CausalConv1d(D, D, 1)
-            # Zero-init final projection so the model starts as identity
-            nn.init.zeros_(self.vel_proj.conv.weight)  # type: ignore
+            nn.init.eye_(
+                self.vel_proj.conv.weight.squeeze(-1)  # type: ignore
+            )
+            self.vel_proj.conv.weight.data *= 0.05  # type: ignore
             nn.init.zeros_(self.vel_proj.conv.bias)  # type: ignore
 
         if config.enable_timbre:
