@@ -340,6 +340,26 @@ merged output :  [...=====faded=====|new===]
   the fade would increase latency without audible benefit; left as a
   tuning knob if future ABX tests ([02-4] acceptance) reveal issues.
 
+#### 3.4.2 Converter left-context overlap
+
+The streaming codec handles DAC's receptive field, but the **converter**
+(`FlowConverter`) also has causal dilated convolutions (CausalResBlock
+with dilations [1, 3, 9], kernel 7 — effective receptive field ~313
+frames across 4 blocks). Without context, each chunk's first frames are
+zero-padded, producing discontinuities.
+
+`VcPipeline` caches the last N source-latent frames (`src_context`) and
+prepends them to each chunk's encoded latent before conversion. Because
+the converter is strictly causal when conditioned on a fixed reference,
+feeding `[context | new]` and trimming to the last `n_new` frames
+reproduces the non-chunked (offline) result near-exactly.
+
+Context sizes: Strict = 16, Balanced = 32, Quality = 64 latent frames.
+
+`process_full()` bypasses chunking entirely for offline file conversion
+(encode → convert → decode in one pass), giving exact Python parity
+(wave_corr > 0.997).
+
 ### 3.5 Latency / Quality Modes
 
 | Mode | Lookahead | Chunk Size | Total algorithmic latency | Use Case |
@@ -439,7 +459,12 @@ Training (Python `converter.py::FlowConverter`):
 
 Inference (Rust `FlowConverter::convert`, 1-NFE):
     v   = forward_velocity(z_src, t=1, z_ref)
-    z_out = z_src + v
+    z_out = z_src + velocity_scale * v
+
+`velocity_scale` (>1 amplifies speaker-translation effect, analogous to
+classifier-free guidance in diffusion models). Default 2.5, set via
+`VcPipeline::velocity_scale`. At 1.0 the output matches the training
+objective exactly.
 ```
 
 `AnyConverter::new(config, vb)` dispatches on `config.model_type`:
@@ -477,7 +502,7 @@ Target reference audio (5-30s)
                ▼
 ┌──────────────────────────────────────┐
 │  Global speaker embedding             │
-│  → temporal average pooling           │
+│  → mean+std statistical pooling        │
 │  → MLP → s [256]                      │
 └──────────────┬───────────────────────┘
                │
@@ -493,10 +518,16 @@ Target reference audio (5-30s)
 ┌──────────────────────────────────────┐
 │  Converter (Phase 1 + cross-attn)     │
 │  At each Conv block, insert:          │
-│    Q = z_src (queries)                │
-│    K,V = timbre tokens                 │
-│    z += CrossAttn(Q, K, V)            │
+│    Q = proj_q(z_src) [latent→attn]    │
+│    K = proj_k(tokens) [embed→attn]    │
+│    V = proj_v(tokens) [embed→attn]    │
+│    z += CrossAttn(Q, K, V) → proj_o   │
 └──────────────────────────────────────┘
+
+CrossAttnBlock uses separate q_dim (latent_dim=1024) and kv_dim
+(embed_dim=256) projections, meeting at a shared attn_dim. This
+resolves a dimension mismatch between the converter's latent-space
+queries and the timbre token bank's embedding-space keys/values.
 
 Additional parameters: ~8-15M (timbre encoder + cross-attn)
 Total Phase 2: ~16-27M
