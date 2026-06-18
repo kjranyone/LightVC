@@ -315,6 +315,19 @@ impl LightVcApp {
     }
 }
 
+impl eframe::App for LightVcApp {
+    /// Root UI entry point (eframe 0.34 required method). Wraps the
+    /// context-level render in a CentralPanel so that nested panels work.
+    #[allow(deprecated)]
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        // We render at the ctx level (top-level panels), so we don't use
+        // the passed `ui` directly. Add an empty area to satisfy the API.
+        ui.allocate_space(ui.available_size());
+        self.render(&ctx);
+    }
+}
+
 impl LightVcApp {
     // egui 0.34 deprecated CentralPanel::show/Panel::show in favor of
     // show_inside(), but migrating requires restructuring the entire app

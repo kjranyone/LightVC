@@ -299,10 +299,7 @@ pub fn run_gui(cmd: GuiCmd) -> Result<()> {
         viewport,
         ..Default::default()
     };
-    eframe::run_ui_native("LightVC", opts, move |ui, _frame| {
-        let ctx = ui.ctx().clone();
-        app.render(&ctx);
-    })?;
+    eframe::run_native("LightVC", opts, Box::new(move |_cc| Ok(Box::new(app))))?;
 
     Ok(())
 }

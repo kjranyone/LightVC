@@ -73,6 +73,7 @@ param(
     [switch]$Cuda,
     [switch]$Metal,
     [switch]$Roundtrip,
+    [switch]$Snap,
     [string]$Input,
     [string]$Output,
     [ValidateSet('offline', 'realtime', 'catalog')]
@@ -108,6 +109,7 @@ function Show-Menu {
     Write-Menu '  [5] スクショ撮影（タブ指定）'
     Write-Menu '  [6] DAC ラウンドトリップテスト'
     Write-Menu '  [7] ビルドのみ'
+    Write-Menu '  [8] 起動中アプリのスクショを撮る（on-demand）'
     Write-Menu '  [Q] 終了'
     Write-Host ''
     return (Read-Host '番号を選択')
@@ -123,6 +125,15 @@ function Pick-DemoTab {
     if ($tab -eq '2') { return 'realtime' }
     if ($tab -eq '3') { return 'catalog' }
     return $null
+}
+
+# --- Snap: capture running window only (no build, no launch) ---------------
+if ($Snap) {
+    $snapScript = Join-Path $repoRoot 'tools\snap.ps1'
+    $snapArgs = @()
+    if ($Output) { $snapArgs += '-Out'; $snapArgs += $Output }
+    & $snapScript @snapArgs
+    exit $LASTEXITCODE
 }
 
 $hasAction = $BuildOnly -or $Cuda -or $Metal -or $Roundtrip -or $Demo -or $Screenshot -or $Input -or $Output
@@ -151,6 +162,9 @@ if (-not $hasAction) {
     } elseif ($choice -eq '7') {
         $BuildOnly = $true
         $action = 'buildonly'
+    } elseif ($choice -eq '8') {
+        $Snap = $true
+        $action = 'snap'
     } elseif ($choice -eq 'q' -or $choice -eq 'Q') {
         exit 0
     } else {
