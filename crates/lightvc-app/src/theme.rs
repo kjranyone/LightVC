@@ -181,11 +181,13 @@ pub fn form_label(ui: &mut egui::Ui, text: &str) {
     );
 }
 
-/// Full-width single-line path input. Always fills the remaining row width
-/// so long paths stay visible instead of being clipped.
+/// Flexible-width path input. Uses a fraction of the available row width
+/// (0.7 = 70%) so the Browse button next to it always has room. Direct
+/// `available_width()` would squeeze the button to near-zero.
 pub fn path_text_edit(ui: &mut egui::Ui, buf: &mut String, hint: &str) {
+    let w = (ui.available_width() * 0.7).max(120.0);
     ui.add_sized(
-        [ui.available_width(), FIELD_HEIGHT],
+        [w, FIELD_HEIGHT],
         egui::TextEdit::singleline(buf).hint_text(hint),
     );
 }

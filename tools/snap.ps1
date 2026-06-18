@@ -60,29 +60,19 @@ public class Win32 {
 }
 "@
 
-$hwnd = [Win32]::FindWindow($null, 'LightVC')
-if ($hwnd -eq [IntPtr]::Zero) {
+# Find the LightVC process and bring it to the foreground.
+$proc = Get-Process -Name "lightvc-app" -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $proc -or $proc.MainWindowHandle -eq [IntPtr]::Zero) {
     Write-Error "LightVC ウィンドウが見つかりません。アプリを起動してから実行してください。"
     exit 1
 }
-
-# Restore if minimized, then focus.
+$hwnd = $proc.MainWindowHandle
 [Win32]::ShowWindow($hwnd, 9) | Out-Null  # SW_RESTORE
 [Win32]::SetForegroundWindow($hwnd) | Out-Null
 Start-Sleep -Milliseconds $WaitMs
 
-$rect = New-Object Win32+RECT
-[Win32]::GetWindowRect($hwnd, [ref]$rect) | Out-Null
-$bounds = New-Object System.Drawing.Rectangle(
-    $rect.Left, $rect.Top,
-    $rect.Right - $rect.Left,
-    $rect.Bottom - $rect.Top
-)
-
-if ($bounds.Width -le 0 -or $bounds.Height -le 0) {
-    Write-Error "ウィンドウサイズが無効です ($($bounds.Width)x$($bounds.Height))"
-    exit 1
-}
+# Capture the full primary screen (window is now foregrounded).
+$bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
 
 $bmp = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
 $gfx = [System.Drawing.Graphics]::FromImage($bmp)

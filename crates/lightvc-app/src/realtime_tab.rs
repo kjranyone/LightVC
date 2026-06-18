@@ -72,11 +72,15 @@ pub fn render(
             });
 
             ui.add_space(crate::theme::space::SMALL);
-            if crate::theme::pill_button(ui, "Load Converter", !conv_path.is_empty())
-                && !conv_path.is_empty()
-            {
-                on_load(conv_path, conv_cfg);
-            }
+            ui.horizontal_centered(|ui| {
+                ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                    if crate::theme::pill_button(ui, "Load Converter", !conv_path.is_empty())
+                        && !conv_path.is_empty()
+                    {
+                        on_load(conv_path, conv_cfg);
+                    }
+                });
+            });
 
             ui.add_space(crate::theme::space::SMALL + 2.0);
             ui.label(

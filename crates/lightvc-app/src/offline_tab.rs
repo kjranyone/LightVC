@@ -247,10 +247,10 @@ pub fn render(
                 && has_converter
                 && !offline.converting;
 
-            ui.horizontal(|ui| {
+            ui.horizontal_centered(|ui| {
                 let btn = egui::Button::image_and_text(
                     egui::Image::from_texture(icon_convert)
-                        .fit_to_exact_size(egui::vec2(18.0, 18.0)),
+                        .fit_to_exact_size(egui::vec2(16.0, 16.0)),
                     egui::RichText::new("Convert")
                         .size(18.0)
                         .strong()
@@ -266,7 +266,7 @@ pub fn render(
                     crate::theme::colors::BG_PANEL
                 })
                 .stroke(egui::Stroke::new(
-                    2.0,
+                    1.0,
                     if can_convert {
                         crate::theme::colors::PINK_BRIGHT
                     } else {
@@ -277,9 +277,6 @@ pub fn render(
 
                 ui.add_enabled_ui(can_convert, |ui| {
                     if ui.add(btn).clicked() {
-                        // Clear any previous result so the next completion is
-                        // picked up ([F3]). Previously the is_none() guard
-                        // blocked updates on the 2nd+ conversion.
                         offline.converted_samples = None;
                         offline.player = None;
                         {
