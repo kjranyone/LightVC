@@ -1,0 +1,43 @@
+# kNN-VC distillation: learn temporal speaker transformation from WavLM-matched targets.
+# WavLM L6 features used ONLY during training (for kNN matching).
+# Inference: DAC encode → FlowConverter → DAC decode (no WavLM).
+model:
+  latent_dim: 1024
+  hidden_dim: 1024
+  n_conv_blocks: 4
+  speaker_embed_dim: 256
+  enable_timbre: true
+  n_timbre_tokens: 32
+  n_attn_heads: 8
+  bottleneck_dim: 256
+  time_embed_dim: 128
+
+training:
+  init_from: checkpoints/phase_b_distill/best.pt
+  batch_size: 16
+  learning_rate: 1.0e-4
+  cold_lr: 3.0e-3
+  optimizer_betas: [0.8, 0.99]
+  weight_decay: 0.01
+  lr_scheduler_gamma: 0.9999
+  gradient_clip: 10.0
+  max_steps: 30000
+  knn_k: 4
+
+losses:
+  latent_l1: 1.0
+  fm_velocity: 0.5
+  content_inv: 1.0
+
+data:
+  sample_rate: 44100
+  latent_frame_rate: 86
+  max_utterance_frames: 200
+  min_utterance_frames: 30
+  wavlm_dir: data/wavlm_l6
+
+checkpoint:
+  save_every_steps: 5000
+
+hardware:
+  device: auto
