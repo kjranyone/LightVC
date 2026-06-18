@@ -1,5 +1,9 @@
 # AGENTS.md - Project Rules
 
+## Communication
+
+- **AIエージェントは常に日本語で応答すること**
+
 ## Environment
 
 - **Python環境分離は必ず uv で行う**
