@@ -504,14 +504,13 @@ struct RtMetrics {
 
 ### 7.5 egui temporary/persistent data
 
+FilePick 化により、かつて存在した `rt_pick` / `catalog_pick` / `catalog_import` / `pick_target` は廃止済み。現在残っている egui temp/persistent data は以下のみ:
+
 | キー | 種別 | 用途 |
 |------|------|------|
-| `"rt_pick"` | temp | `"converter"` or `"config"` 選別 |
-| `"rt_mode_knob"` | persistent Id | knob 状態保持 |
-| `"catalog_new_name"` | temp | ボイス名入力バッファ |
-| `"catalog_pick"` | temp | Browse トリガフラグ |
-| `"catalog_picked"` | temp | 選択パス |
-| `"catalog_import"` | temp | Import トリガフラグ |
+| `"rt_mode_knob"` | persistent Id | Realtime Quality ノブの状態保持（`make_persistent_id`） |
+| `"catalog_new_name"` | temp | Catalog のボイス名入力バッファ（`TextEdit::singleline` の参照先） |
+| `"catalog_picked"` | temp | Catalog の Browse 結果（`add_pick.take()` で得た `PathBuf`）。Add ボタン押下時に消費して voice 追加 |
 
 ---
 
@@ -550,11 +549,12 @@ struct RtMetrics {
 
 ### 8.5 ファイルダイアログ
 
-| ライブラリ | 用途 |
-|-----------|------|
-| `rfd::FileDialog`（バックグラウンドスレッド） | Browse / Import / Save 系すべて |
+| 操作 | ライブラリ / 実行方式 |
+|------|----------------------|
+| Browse / Import（ファイル選択） | `FilePick::open(ctx)` → バックグラウンドスレッドで `rfd::FileDialog::pick_file()`。完了時に `ctx.request_repaint()` |
+| Save As... / Export（保存） | UI スレッドから直接 `rfd::FileDialog::new().save_file()`（同期・モーダル） |
 
-egui-file-dialog は egui 0.31 を引き込んで egui 0.34 と二重化する問題があったため廃止。代わりに `file_pick::FilePick`（`Arc<Mutex<Option<PathBuf>>>` + バックグラウンド `rfd::FileDialog`）を導入。UI スレッドをブロックせず、毎フレーム `take()` で結果をポーリングする。各 picker はタブ/用途ごとに独立インスタンス（Offline: source/reference, Realtime: converter/config, Catalog: add/import）。
+egui-file-dialog は egui 0.31 を引き込んで egui 0.34 と二重化する問題があったため廃止済み（依存から削除）。代わりに `file_pick::FilePick`（`Arc<Mutex<Option<PathBuf>>>` + バックグラウンド `rfd::FileDialog`）を導入。UI スレッドをブロックせず、毎フレーム `take()` で結果をポーリングする。各 picker はタブ/用途ごとに独立インスタンス（Offline: source/reference, Realtime: converter/config, Catalog: add/import）。
 
 **完了通知の repaint**: `FilePick::open(ctx)` はバックグラウンドスレッドでダイアログを開き、ユーザーが選択を確定した瞬間に `ctx.request_repaint()` を呼ぶ。これにより、連続再描画されない Offline/Catalog タブ（イベント駆動）でも、選択結果が次の偶然の repaint まで遅れずに即座に `take()` で拾われる。
 
