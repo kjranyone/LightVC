@@ -14,6 +14,9 @@ use crate::file_pick::FilePick;
 #[derive(Default)]
 pub struct CatalogState {
     pub player: Option<AudioPlayer>,
+    /// Index of the voice currently being previewed, so only that row shows
+    /// the Stop button. `None` when nothing is playing.
+    pub playing_voice: Option<usize>,
 }
 
 pub fn render(
@@ -62,7 +65,7 @@ pub fn render(
             );
             ui.add_sized([120.0, 20.0], egui::TextEdit::singleline(&mut name_buf));
             if crate::theme::icon_button(ui, icon_folder, "Browse", false) {
-                add_pick.open();
+                add_pick.open(ctx);
             }
             // Receive the picked path from the background rfd thread.
             if let Some(path) = add_pick.take() {
@@ -172,28 +175,45 @@ pub fn render(
                                         ) {
                                             to_delete = Some(i);
                                         }
-                                        // Play / Stop toggle ([F4]).
-                                        let playing_idx = catalog
-                                            .player
-                                            .as_ref()
-                                            .map(|p| p.is_playing())
-                                            .unwrap_or(false);
-                                        let play_label =
-                                            if playing_idx { "■ Stop" } else { "▶ Play" };
+                                        // Play / Stop toggle ([F4]). Only the row whose
+                                        // index matches playing_voice shows Stop; all
+                                        // other rows show Play.
+                                        let is_this_playing = catalog.playing_voice == Some(i)
+                                            && catalog
+                                                .player
+                                                .as_ref()
+                                                .map(|p| p.is_playing())
+                                                .unwrap_or(false);
+                                        // Auto-clear when playback finished on its own.
+                                        if !is_this_playing && catalog.playing_voice == Some(i) {
+                                            catalog.playing_voice = None;
+                                            catalog.player = None;
+                                        }
+                                        let play_label = if is_this_playing {
+                                            "■ Stop"
+                                        } else {
+                                            "▶ Play"
+                                        };
                                         if crate::theme::icon_button(
                                             ui, icon_play, play_label, false,
                                         ) {
-                                            if playing_idx {
+                                            if is_this_playing {
                                                 if let Some(p) = catalog.player.take() {
                                                     p.stop();
                                                 }
+                                                catalog.playing_voice = None;
                                             } else if let Ok((wav, sr)) =
                                                 audio_playback::load_wav_mono(&voice.path)
                                             {
+                                                // Stop any previous preview first.
+                                                if let Some(p) = catalog.player.take() {
+                                                    p.stop();
+                                                }
                                                 let wav44 =
                                                     audio_playback::resample_linear(&wav, sr);
                                                 catalog.player =
                                                     audio_playback::AudioPlayer::play(wav44).ok();
+                                                catalog.playing_voice = Some(i);
                                             }
                                         }
                                         // Select this voice as the Realtime reference.
@@ -220,6 +240,23 @@ pub fn render(
                     let mut s = state.lock().unwrap();
                     if s.selected_voice == Some(idx) {
                         s.selected_voice = None;
+                    }
+                    // Adjust selected_voice index for the removal shift.
+                    if let Some(v) = s.selected_voice.as_mut() {
+                        if *v > idx {
+                            *v -= 1;
+                        }
+                    }
+                    // Stop preview if the deleted voice was playing.
+                    if catalog.playing_voice == Some(idx) {
+                        if let Some(p) = catalog.player.take() {
+                            p.stop();
+                        }
+                        catalog.playing_voice = None;
+                    } else if let Some(v) = catalog.playing_voice.as_mut() {
+                        if *v > idx {
+                            *v -= 1;
+                        }
                     }
                     let name = s.voices[idx].name.clone();
                     s.voices.remove(idx);
@@ -250,7 +287,7 @@ pub fn render(
                     }
                 }
                 if crate::theme::icon_button(ui, icon_folder, "Import", true) {
-                    import_pick.open();
+                    import_pick.open(ctx);
                 }
             });
         },

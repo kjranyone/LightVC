@@ -35,7 +35,7 @@ pub struct OfflineState {
 #[allow(clippy::too_many_arguments)]
 pub fn render(
     ui: &mut egui::Ui,
-    _ctx: &egui::Context,
+    ctx: &egui::Context,
     state: &Arc<Mutex<AppState>>,
     offline: &mut OfflineState,
     icon_folder: &egui::TextureHandle,
@@ -96,7 +96,7 @@ pub fn render(
                         }
                         ui.add_space(4.0);
                         if crate::theme::icon_button(ui, icon_folder, "Browse", true) {
-                            offline.source_pick.open();
+                            offline.source_pick.open(ctx);
                         }
                     });
                 });
@@ -146,7 +146,7 @@ pub fn render(
                         }
                         ui.add_space(4.0);
                         if crate::theme::icon_button(ui, icon_folder, "Browse", true) {
-                            offline.reference_pick.open();
+                            offline.reference_pick.open(ctx);
                         }
                     });
                 });

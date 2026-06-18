@@ -19,7 +19,7 @@ use crate::widgets;
 #[allow(clippy::too_many_arguments)]
 pub fn render(
     ui: &mut egui::Ui,
-    _ctx: &egui::Context,
+    ctx: &egui::Context,
     converter_pick: &FilePick,
     config_pick: &FilePick,
     state: &Arc<Mutex<AppState>>,
@@ -61,7 +61,7 @@ pub fn render(
                 );
                 ui.text_edit_singleline(conv_path);
                 if crate::theme::pill_button(ui, "Browse", false) {
-                    converter_pick.open();
+                    converter_pick.open(ctx);
                 }
             });
 
@@ -73,7 +73,7 @@ pub fn render(
                 );
                 ui.text_edit_singleline(conv_cfg);
                 if crate::theme::pill_button(ui, "Browse", false) {
-                    config_pick.open();
+                    config_pick.open(ctx);
                 }
             });
 

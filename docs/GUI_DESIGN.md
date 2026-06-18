@@ -465,6 +465,13 @@ struct AppState {
 }
 ```
 
+**`pipeline` と `pipeline_slot` の不変条件（invariant）:**
+
+- `pipeline` は Offline 変換（`run_offline_conversion`）が参照する。UI スレッドからのみ読み書きされる。
+- `pipeline_slot` は Realtime 推論スレッド（`inference_loop`）が参照する。UI スレッドと推論スレッドの両方から読み書きされる。
+- **`load_converter_static` は両方に**常に同じ `Arc<Mutex<VcPipeline>>` を同時にセットする。片方だけを更新してはならない。この invariant が破られると、Offline と Realtime で異なるモデルを使う事故（例: reload 後に片方だけ古い重みで動く）が起きる。
+- 将来 reload/unload を実装する際は、必ず `s.pipeline = new_arc; *s.pipeline_slot.lock() = Some(new_arc);` の2行セットで更新すること。
+
 ### 7.3 UI → 推論スレッド通信
 
 ```rust
@@ -532,7 +539,13 @@ struct RtMetrics {
 
 全 Play ボタンは再生中 `"■ Stop"` に切替。`AudioPlayer` を各タブの状態フィールドに保持し、Stop クリックで `stop()` 呼出：
 - **Offline**: `OfflineState.player` / `.source_preview` / `.reference_preview`
-- **Catalog**: `CatalogState.player`（単一、最後に再生した音声）
+- **Catalog**: `CatalogState.player` + `CatalogState.playing_voice: Option<usize>`
+  - 単一プレイヤーのため、`playing_voice` で「現在どの行が再生中か」を追跡する
+  - 再生中の行（`playing_voice == Some(i)` かつ `player.is_playing()`）のみ Stop ボタン表示、他行は Play のまま
+  - 別行の Play を押すと前の再生を `stop()` してから新しく再生開始
+  - 再生が自然終了した場合、次フレームで `is_playing()==false` を検知して `playing_voice` / `player` を自動クリア
+  - voice 削除時は `playing_voice` のインデックスをシフト（削除された行が再生中なら停止、より後の行なら `-1`）
+  - Catalog タブ表示中かつ `playing_voice.is_some()` の間は `ctx.request_repaint()` で連続再描画（Stop → Play の自動切替のため）
 - **Realtime**: Stop ボタンは変換停止（プレビュー再生ではない）
 
 ### 8.5 ファイルダイアログ
@@ -542,6 +555,10 @@ struct RtMetrics {
 | `rfd::FileDialog`（バックグラウンドスレッド） | Browse / Import / Save 系すべて |
 
 egui-file-dialog は egui 0.31 を引き込んで egui 0.34 と二重化する問題があったため廃止。代わりに `file_pick::FilePick`（`Arc<Mutex<Option<PathBuf>>>` + バックグラウンド `rfd::FileDialog`）を導入。UI スレッドをブロックせず、毎フレーム `take()` で結果をポーリングする。各 picker はタブ/用途ごとに独立インスタンス（Offline: source/reference, Realtime: converter/config, Catalog: add/import）。
+
+**完了通知の repaint**: `FilePick::open(ctx)` はバックグラウンドスレッドでダイアログを開き、ユーザーが選択を確定した瞬間に `ctx.request_repaint()` を呼ぶ。これにより、連続再描画されない Offline/Catalog タブ（イベント駆動）でも、選択結果が次の偶然の repaint まで遅れずに即座に `take()` で拾われる。
+
+**Save ダイアログは同期**: 出力保存（Save As... / Export）は `rfd::FileDialog::new().save_file()` を UI スレッドから直接呼ぶ同期版。保存ダイアログはモーダルで開かれ、結果取得まで UI が一時停止するが、保存処理自体が軽量（ファイル書き込み 1 回）のため許容する。Open/Import のようにバックグラウンド化すると「保存先未決定のまま次フレームに進む」状態管理が複雑になるため、あえて同期としている。
 
 ---
 
@@ -663,8 +680,7 @@ crates/lightvc-app/src/
 | クレート | バージョン | 用途 |
 |---------|-----------|------|
 | `eframe` | 0.34 | egui フレームワーク |
-| `egui-file-dialog` | 0.10 | ファイル選択ダイアログ |
-| `rfd` | 0.15 | ネイティブ Save ダイアログ |
+| `rfd` | 0.15 | ネイティブファイルダイアログ（Open/Import/Save 全て） |
 | `crossbeam-channel` | — | 推論スレッド通信 |
 | `rtrb` | — | SPSC オーディオリングバッファ |
 | `cpal` | 0.18 | オーディオ I/O |

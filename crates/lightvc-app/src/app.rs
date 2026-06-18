@@ -522,8 +522,12 @@ impl LightVcApp {
             }
         }
 
-        // Only request continuous repaint during realtime mode
-        if self.current_tab == Tab::Realtime {
+        // Only request continuous repaint during realtime mode, or while a
+        // Catalog preview is playing (so the Stop button reverts to Play on
+        // natural finish).
+        if self.current_tab == Tab::Realtime
+            || (self.current_tab == Tab::Catalog && self.catalog.playing_voice.is_some())
+        {
             ctx.request_repaint();
         }
     }
