@@ -41,6 +41,10 @@ pub enum RtControl {
     },
     Stop,
     SetMode(lightvc_core::converter::LatencyMode),
+    SetProsody {
+        mode: lightvc_core::converter::ProsodyMode,
+        blend: f64,
+    },
     Bypass(bool),
     LoadReference(Vec<f32>), // 44.1kHz mono PCM
 }
@@ -91,6 +95,8 @@ pub struct LightVcApp {
     rt_running: bool,
     rt_bypass: bool,
     rt_mode: lightvc_core::converter::LatencyMode,
+    rt_prosody_mode: lightvc_core::converter::ProsodyMode,
+    rt_prosody_blend: f32,
     rt_metrics: RtMetrics,
     /// Selected input device index (None = default) ([05-6]).
     rt_selected_input: Option<usize>,
@@ -129,11 +135,16 @@ impl LightVcApp {
         Self {
             state,
             current_tab: Tab::Offline,
-            offline: Default::default(),
+            offline: crate::offline_tab::OfflineState {
+                prosody_blend: 0.5,
+                ..Default::default()
+            },
             catalog: Default::default(),
             rt_running: false,
             rt_bypass: false,
             rt_mode: lightvc_core::converter::LatencyMode::Balanced,
+            rt_prosody_mode: lightvc_core::converter::ProsodyMode::default(),
+            rt_prosody_blend: 0.5,
             rt_metrics: RtMetrics::default(),
             rt_selected_input: None,
             rt_selected_output: None,
@@ -405,6 +416,8 @@ impl LightVcApp {
                 let mut rt_running = self.rt_running;
                 let mut rt_bypass = self.rt_bypass;
                 let mut rt_mode = self.rt_mode;
+                let mut rt_prosody_mode = self.rt_prosody_mode;
+                let mut rt_prosody_blend = self.rt_prosody_blend;
                 let mut rt_sel_in = self.rt_selected_input;
                 let mut rt_sel_out = self.rt_selected_output;
                 let metrics = self.rt_metrics.clone();
@@ -430,6 +443,8 @@ impl LightVcApp {
                                 &mut rt_running,
                                 &mut rt_bypass,
                                 &mut rt_mode,
+                                &mut rt_prosody_mode,
+                                &mut rt_prosody_blend,
                                 &mut rt_sel_in,
                                 &mut rt_sel_out,
                                 &metrics,
@@ -447,6 +462,8 @@ impl LightVcApp {
                 self.rt_running = rt_running;
                 self.rt_bypass = rt_bypass;
                 self.rt_mode = rt_mode;
+                self.rt_prosody_mode = rt_prosody_mode;
+                self.rt_prosody_blend = rt_prosody_blend;
                 self.rt_selected_input = rt_sel_in;
                 self.rt_selected_output = rt_sel_out;
             }

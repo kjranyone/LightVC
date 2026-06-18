@@ -25,6 +25,9 @@ pub struct OfflineState {
     /// One picker per potential target — avoids a shared mutable flag.
     pub source_pick: FilePick,
     pub reference_pick: FilePick,
+    /// Prosody controls ([07-2]). Applied in run_offline_conversion.
+    pub prosody_mode: lightvc_core::converter::ProsodyMode,
+    pub prosody_blend: f32,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -171,6 +174,68 @@ pub fn render(
 
             ui.add_space(12.0);
 
+            // --- Prosody controls ([07-2]) ---
+            crate::theme::info_card(ui, |ui| {
+                ui.label(
+                    egui::RichText::new("Prosody")
+                        .size(13.0)
+                        .strong()
+                        .color(crate::theme::colors::CYAN),
+                );
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("Mode")
+                            .size(12.0)
+                            .color(crate::theme::colors::TEXT_DIM),
+                    );
+                    egui::ComboBox::from_id_salt("offline_prosody_mode")
+                        .selected_text(format!("{:?}", offline.prosody_mode))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut offline.prosody_mode,
+                                lightvc_core::converter::ProsodyMode::ImitateTarget,
+                                "Imitate target",
+                            );
+                            ui.selectable_value(
+                                &mut offline.prosody_mode,
+                                lightvc_core::converter::ProsodyMode::PreserveSource,
+                                "Preserve source",
+                            );
+                            ui.selectable_value(
+                                &mut offline.prosody_mode,
+                                lightvc_core::converter::ProsodyMode::Blend,
+                                "Blend",
+                            );
+                            ui.selectable_value(
+                                &mut offline.prosody_mode,
+                                lightvc_core::converter::ProsodyMode::FlattenPrivacy,
+                                "Flatten (privacy)",
+                            );
+                        });
+                });
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("Blend")
+                            .size(12.0)
+                            .color(crate::theme::colors::TEXT_DIM),
+                    );
+                    ui.add_enabled_ui(
+                        offline.prosody_mode == lightvc_core::converter::ProsodyMode::Blend,
+                        |ui| {
+                            ui.add(
+                                egui::Slider::new(&mut offline.prosody_blend, 0.0..=1.0)
+                                    .text("source ← → target")
+                                    .fixed_decimals(2),
+                            );
+                        },
+                    );
+                });
+            });
+
+            ui.add_space(12.0);
+
             // --- Convert CTA ---
             let can_convert = !offline.source_path.is_empty()
                 && !offline.reference_path.is_empty()
@@ -220,7 +285,11 @@ pub fn render(
                         let st = state.clone();
                         let src = offline.source_path.clone();
                         let refp = offline.reference_path.clone();
-                        std::thread::spawn(move || run_offline_conversion(st, &src, &refp));
+                        let pm = offline.prosody_mode;
+                        let pb = offline.prosody_blend;
+                        std::thread::spawn(move || {
+                            run_offline_conversion(st, &src, &refp, pm, pb);
+                        });
                     }
                 });
 
@@ -331,7 +400,13 @@ fn play_audio(path_str: &str) -> Option<AudioPlayer> {
     None
 }
 
-fn run_offline_conversion(state: Arc<Mutex<AppState>>, source_path: &str, reference_path: &str) {
+fn run_offline_conversion(
+    state: Arc<Mutex<AppState>>,
+    source_path: &str,
+    reference_path: &str,
+    prosody_mode: lightvc_core::converter::ProsodyMode,
+    prosody_blend: f32,
+) {
     {
         let mut s = state.lock().unwrap();
         s.status = "Converting...".to_string();
@@ -357,6 +432,7 @@ fn run_offline_conversion(state: Arc<Mutex<AppState>>, source_path: &str, refere
         let mut p = pipeline.lock().unwrap();
         p.reset();
         p.set_target(&ref_padded)?;
+        p.set_prosody(prosody_mode, prosody_blend as f64);
 
         // [06-10]: Use process_full for exact offline conversion (no chunk
         // boundary artifacts, no last-chunk zero-padding). This matches

@@ -230,6 +230,32 @@ style.spacing.button_padding = (16.0, 8.0);
 - グローリング: dragged時のみ `2.0 × PINK`, radius `30.7`
 - ラベル: ノブ下 6px, `FontId::proportional(11.0)`, `TEXT_DIM`
 
+### 5.9 Prosody 制御（`ProsodyMode` + ブレンドスライダー）— [07-2]
+
+音声の抑揚（エネルギーエンベロープ = フレームごとのL2ノルム）を4モードで制御。
+**Offline / Realtime 両タブに配置**（converter ロード時のみ表示）。
+
+| モード | 動作 | ブレンド値 |
+|--------|------|-----------|
+| `ImitateTarget`（デフォルト） | 変換モデル推定のターゲット抑揚をそのまま適用 | 無効 |
+| `PreserveSource` | 元話者の抑揚・テンポ・強弱を完全維持 | 無効 |
+| `Blend` | ソース抑揚とターゲット抑揚を `blend` 比率でミックス | `0.0`=ソース → `1.0`=ターゲット |
+| `FlattenPrivacy` | 抑揚をほぼ平坦化（匿名化音声） | 無効 |
+
+**UI 構成**:
+- `info_card` 内に "Prosody" 見出し（size 13, strong, `CYAN`）
+- **Mode**: `egui::ComboBox`（`selectable_value` × 4）。変更時 `RtControl::SetProsody` 送信
+- **Blend**: `egui::Slider::new(0.0..=1.0)`。`Blend` モード時のみ有効（`add_enabled_ui`）。変更時 `RtControl::SetProsody` 送信
+
+**実装連携**:
+- `VcPipeline.prosody_mode` / `.prosody_blend` フィールド（公開）
+- `VcPipeline::set_prosody(mode, blend)` / `prosody_mode()` / `prosody_blend()` アクセサ
+- `process_chunk` / `process_full` 両方で `apply_prosody_mode()` 適用（元々 `process_full` は未適用だったバグを修正）
+- Realtime: `RtControl::SetProsody { mode, blend }` → `inference_loop` で pipeline に反映
+- Offline: `run_offline_conversion(prosody_mode, prosody_blend)` 引数で渡し `process_full` 前に `set_prosody`
+
+---
+
 ---
 
 ## 6. スクリーン仕様
@@ -256,6 +282,11 @@ style.spacing.button_padding = (16.0, 8.0);
 │                                                 │
 │  Or pick from Voice Catalog:                    │
 │  [Voice A] [Voice B] [Voice C] ...              │
+│                                                 │
+│  ┌─ Prosody ────────────────────────────────┐  │
+│  │ Mode: [Imitate target ▾]                  │  │
+│  │ Blend: [─────●─────] source ← → target    │  │  ← Blend モード時のみ有効
+│  └──────────────────────────────────────────┘  │
 │                                                 │
 │  ┌──────────────────────────────────────────┐  │
 │  │          ✦  Convert   (CTA, 160×42)      │  │
@@ -330,6 +361,11 @@ style.spacing.button_padding = (16.0, 8.0);
 │  ┌──────┐  Mode                                 │
 │  │  ◐   │  Balanced                            │  ← knob (Quality モード選択)
 │  └──────┘  ~46ms lookahead                      │
+│                                                 │
+│  ┌─ Prosody ────────────────────────────────┐  │
+│  │ Mode: [Blend ▾]                           │  │  ← [07-2] 抑揚制御
+│  │ Blend: [─────●─────] source ← → target    │  │
+│  └──────────────────────────────────────────┘  │
 │                                                 │
 │  [Bypass]                                       │
 │  [■ Stop]                                       │
@@ -414,6 +450,7 @@ enum RtControl {
     StartWithDevices { input_idx: Option<usize>, output_idx: Option<usize> },
     Stop,
     SetMode(LatencyMode),     // Strict / Balanced / Quality
+    SetProsody { mode: ProsodyMode, blend: f64 },  // [07-2] 抑揚制御
     Bypass(bool),
     LoadReference(Vec<f32>),  // 44.1kHz mono PCM
 }

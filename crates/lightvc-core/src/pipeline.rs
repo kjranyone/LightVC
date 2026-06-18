@@ -200,6 +200,19 @@ impl VcPipeline {
         self.mode
     }
 
+    pub fn prosody_mode(&self) -> ProsodyMode {
+        self.prosody_mode
+    }
+
+    pub fn prosody_blend(&self) -> f64 {
+        self.prosody_blend
+    }
+
+    pub fn set_prosody(&mut self, mode: ProsodyMode, blend: f64) {
+        self.prosody_mode = mode;
+        self.prosody_blend = blend.clamp(0.0, 1.0);
+    }
+
     /// Updates the streaming codec's chunk size + lookahead and resets all
     /// streaming state to avoid frame-index mismatch from the mode change.
     pub fn set_mode(&mut self, mode: LatencyMode) {
@@ -229,6 +242,9 @@ impl VcPipeline {
         let converted = self
             .converter
             .convert(&latent, ref_latent, self.velocity_scale)?;
+        // Apply prosody factorization, consistent with process_chunk ([07-2]).
+        let converted =
+            apply_prosody_mode(&converted, &latent, self.prosody_mode, self.prosody_blend)?;
         let pcm_out = self.stream_codec.codec().decode_to_pcm(&converted)?;
         Ok(pcm_out)
     }

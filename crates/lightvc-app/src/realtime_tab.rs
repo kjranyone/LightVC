@@ -28,6 +28,8 @@ pub fn render(
     running: &mut bool,
     bypass: &mut bool,
     mode: &mut lightvc_core::converter::LatencyMode,
+    prosody_mode: &mut lightvc_core::converter::ProsodyMode,
+    prosody_blend: &mut f32,
     selected_input: &mut Option<usize>,
     selected_output: &mut Option<usize>,
     metrics: &RtMetrics,
@@ -263,6 +265,85 @@ pub fn render(
                     on_control(RtControl::SetMode(*mode));
                 }
             }
+        });
+    }
+
+    // Prosody controls — visible only when a converter is loaded.
+    if !force_bypass {
+        ui.add_space(8.0);
+        crate::theme::info_card(ui, |ui| {
+            ui.label(
+                egui::RichText::new("Prosody")
+                    .size(13.0)
+                    .strong()
+                    .color(crate::theme::colors::CYAN),
+            );
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("Mode")
+                        .size(12.0)
+                        .color(crate::theme::colors::TEXT_DIM),
+                );
+                let old = *prosody_mode;
+                egui::ComboBox::from_id_salt("rt_prosody_mode")
+                    .selected_text(format!("{:?}", prosody_mode))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            prosody_mode,
+                            lightvc_core::converter::ProsodyMode::ImitateTarget,
+                            "Imitate target",
+                        );
+                        ui.selectable_value(
+                            prosody_mode,
+                            lightvc_core::converter::ProsodyMode::PreserveSource,
+                            "Preserve source",
+                        );
+                        ui.selectable_value(
+                            prosody_mode,
+                            lightvc_core::converter::ProsodyMode::Blend,
+                            "Blend",
+                        );
+                        ui.selectable_value(
+                            prosody_mode,
+                            lightvc_core::converter::ProsodyMode::FlattenPrivacy,
+                            "Flatten (privacy)",
+                        );
+                    });
+                if *prosody_mode != old {
+                    on_control(RtControl::SetProsody {
+                        mode: *prosody_mode,
+                        blend: *prosody_blend as f64,
+                    });
+                }
+            });
+            // Blend slider — only meaningful in Blend mode, but always shown
+            // so the user can pre-set it before switching modes.
+            ui.add_space(2.0);
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("Blend")
+                        .size(12.0)
+                        .color(crate::theme::colors::TEXT_DIM),
+                );
+                let old_b = *prosody_blend;
+                ui.add_enabled_ui(
+                    *prosody_mode == lightvc_core::converter::ProsodyMode::Blend,
+                    |ui| {
+                        ui.add(
+                            egui::Slider::new(prosody_blend, 0.0..=1.0)
+                                .text("source ← → target")
+                                .fixed_decimals(2),
+                        );
+                    },
+                );
+                if *prosody_blend != old_b {
+                    on_control(RtControl::SetProsody {
+                        mode: *prosody_mode,
+                        blend: *prosody_blend as f64,
+                    });
+                }
+            });
         });
     }
 
@@ -544,6 +625,16 @@ pub fn inference_loop(
                                 lightvc_core::streaming::ChunkMode::Quality
                             }
                         });
+                    }
+                }
+                RtControl::SetProsody { mode, blend } => {
+                    if let Some(mut p) = pipeline_slot
+                        .lock()
+                        .unwrap()
+                        .as_ref()
+                        .and_then(|p| p.lock().ok())
+                    {
+                        p.set_prosody(mode, blend);
                     }
                 }
                 RtControl::Bypass(b) => bypass = b,
