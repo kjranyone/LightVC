@@ -12,14 +12,14 @@ model:
   time_embed_dim: 128
 
 training:
-  init_from: checkpoints/phase_b_utte_1024/best.pt
+  init_from: checkpoints/phase_b_distill/best.pt
   batch_size: 16
   learning_rate: 1.0e-4
-  cold_lr: 1.0e-2
+  cold_lr: 3.0e-3
   optimizer_betas: [0.8, 0.99]
   weight_decay: 0.01
   lr_scheduler_gamma: 0.9999
-  gradient_clip: 5.0
+  gradient_clip: 10.0
   max_steps: 30000
   timbre_shift_prob: 0.0
 

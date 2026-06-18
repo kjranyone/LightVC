@@ -25,6 +25,7 @@ losses:
   speaker_consistency: 0.5
   content_preservation: 0.3
   speaker_classify: 0.5
+  distill_cosine: 1.0
 
 role_assignment:
   cross_speaker: 0.0

@@ -233,14 +233,47 @@ def train(config_path, data_dir, output_dir):
     spk_classifier = torch.nn.Linear(model_cfg.speaker_embed_dim, num_speakers).to(device)
     print(f"Speaker classifier: {num_speakers} speakers", flush=True)
 
+    # WavLM-SV teacher distillation (09-B2): train-only projection head.
+    # SpeakerEncoder output (256-dim) → projection → 768-dim → cosine loss vs teacher.
+    # At inference, only SpeakerEncoder (p1,p2) is used. Projection is discarded.
+    wavlm_cache_path = os.path.join(os.path.dirname(data_dir.rstrip("/")), "wavlm_sv_embeddings.pkl")
+    distill_proj = None
+    idx2teacher = None
+    if os.path.exists(wavlm_cache_path):
+        import pickle
+        with open(wavlm_cache_path, "rb") as f:
+            wavlm_cache = pickle.load(f)
+        spk_avg = {}
+        for key, emb in wavlm_cache.items():
+            spk = key.split("/")[0]
+            spk_avg.setdefault(spk, []).append(emb)
+        idx2teacher = torch.zeros(num_speakers, 768)
+        idx2spk = {v: k for k, v in spk2idx.items()}
+        for i in range(num_speakers):
+            spk = idx2spk[i]
+            if spk in spk_avg:
+                idx2teacher[i] = torch.from_numpy(np.mean(spk_avg[spk], axis=0))
+        idx2teacher = F.normalize(idx2teacher, dim=-1).to(device)
+        distill_proj = torch.nn.Linear(model_cfg.speaker_embed_dim, 768).to(device)
+        torch.nn.init.xavier_normal_(distill_proj.weight)
+        torch.nn.init.zeros_(distill_proj.bias)
+        distill_weight = loss_cfg.get("distill_cosine", 1.0)
+        print(f"WavLM-SV distillation: {len(spk_avg)} speakers, weight={distill_weight}", flush=True)
+    else:
+        distill_weight = 0.0
+        print("WavLM-SV cache not found, skipping distillation", flush=True)
+
     # Init from checkpoint if specified
     if "init_from" in train_cfg and train_cfg["init_from"]:
         ckpt = torch.load(train_cfg["init_from"], map_location=device)
         model.load_state_dict(ckpt["model"], strict=False)
         print(f"Initialized from {train_cfg['init_from']}", flush=True)
 
+    optim_params = list(model.parameters()) + list(spk_classifier.parameters())
+    if distill_proj is not None:
+        optim_params += list(distill_proj.parameters())
     optim = torch.optim.AdamW(
-        list(model.parameters()) + list(spk_classifier.parameters()),
+        optim_params,
         lr=train_cfg["learning_rate"],
         betas=tuple(train_cfg.get("optimizer_betas", [0.8, 0.99])),
         weight_decay=train_cfg.get("weight_decay", 0.01),
@@ -256,7 +289,7 @@ def train(config_path, data_dir, output_dir):
 
     model.train()
     spk_classifier.train()
-    losses_log = {"total": [], "recon": [], "spk": [], "content": [], "cls": []}
+    losses_log = {"total": [], "recon": [], "spk": [], "content": [], "cls": [], "distill": []}
 
     print(f"Starting warm-start training for {max_steps} steps...", flush=True)
     for step in range(1, max_steps + 1):
@@ -302,7 +335,16 @@ def train(config_path, data_dir, output_dir):
             "speaker_classify", 0.5
         )
 
-        loss = loss_recon + loss_spk + loss_content + loss_cls
+        # 5. WavLM-SV distillation (09-B2): project SpeakerEncoder output
+        #    to 768-dim and match teacher speaker-level average embedding.
+        loss_distill = torch.tensor(0.0, device=device)
+        if distill_proj is not None and distill_weight > 0:
+            ref_embed_for_distill = model.speaker_embedding(ref)
+            projected = F.normalize(distill_proj(ref_embed_for_distill), dim=-1)
+            teacher = idx2teacher[ref_idx]
+            loss_distill = (1.0 - F.cosine_similarity(projected, teacher, dim=-1).mean()) * distill_weight
+
+        loss = loss_recon + loss_spk + loss_content + loss_cls + loss_distill
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
         optim.step()
@@ -313,6 +355,7 @@ def train(config_path, data_dir, output_dir):
         losses_log["spk"].append(loss_spk.item())
         losses_log["content"].append(loss_content.item())
         losses_log["cls"].append(loss_cls.item())
+        losses_log["distill"].append(loss_distill.item())
 
         if step % 100 == 0:
             avg = {k: np.mean(v[-100:]) for k, v in losses_log.items()}
@@ -320,6 +363,7 @@ def train(config_path, data_dir, output_dir):
                 f"step {step}/{max_steps} | loss={avg['total']:.4f} "
                 f"recon={avg['recon']:.4f} spk={avg['spk']:.4f} "
                 f"content={avg['content']:.4f} cls={avg['cls']:.4f} "
+                f"distill={avg['distill']:.4f} "
                 f"lr={scheduler.get_last_lr()[0]:.2e}",
                 flush=True,
             )
