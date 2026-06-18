@@ -105,18 +105,18 @@ pub fn render(
 
     on_ensure_thread();
 
-    // Status
+    // --- Status row: badge + reference voice ---
     ui.horizontal(|ui| {
-        let (dot_color, label) = if *running {
+        let (color, label) = if *running {
             if *bypass {
-                (crate::theme::colors::YELLOW, "BYPASS")
+                (crate::theme::colors::LEMON, "BYPASS")
             } else {
                 (crate::theme::colors::MINT, "● LIVE")
             }
         } else {
             (crate::theme::colors::TEXT_MUTED, "STOPPED")
         };
-        crate::theme::status_dot(ui, *running, dot_color);
+        crate::theme::status_dot(ui, *running, color);
         ui.label(
             egui::RichText::new(label)
                 .size(16.0)
@@ -128,7 +128,7 @@ pub fn render(
                 }),
         );
 
-        // Show the active reference voice (selected in the Catalog tab).
+        // Active reference voice
         let ref_name = state.lock().map(|s| {
             s.selected_voice
                 .and_then(|i| s.voices.get(i).map(|v| v.name.clone()))
@@ -136,59 +136,66 @@ pub fn render(
         if let Ok(Some(name)) = ref_name {
             ui.separator();
             ui.label(
-                egui::RichText::new(format!("★ Reference: {name}"))
+                egui::RichText::new(format!("✦ {name}"))
                     .size(12.0)
                     .color(crate::theme::colors::PINK_BRIGHT),
             );
         } else if has_pipeline {
             ui.separator();
             ui.label(
-                egui::RichText::new("Reference: none (select in Catalog)")
+                egui::RichText::new("Reference: none")
                     .size(11.0)
                     .color(crate::theme::colors::TEXT_MUTED),
             );
         }
     });
 
-    ui.add_space(crate::theme::space::LARGE);
+    ui.add_space(crate::theme::space::MEDIUM);
 
-    // Level meters
+    // --- Signal card: meters + metrics ---
     crate::theme::info_card(ui, |ui| {
-        crate::theme::level_meter(ui, metrics.input_rms, "Input");
-        crate::theme::level_meter(ui, metrics.output_rms, "Output");
+        crate::theme::level_meter(ui, metrics.input_rms, "In ");
+        ui.add_space(crate::theme::space::TIGHT);
+        crate::theme::level_meter(ui, metrics.output_rms, "Out");
 
         ui.add_space(crate::theme::space::SMALL);
-        ui.label(
-            egui::RichText::new(format!(
-                "Latency: {:.0} ms  |  RTF: {:.2}",
-                metrics.latency_ms, metrics.rtf
-            ))
-            .size(12.0)
-            .color(crate::theme::colors::TEXT_DIM),
-        );
-        if metrics.overrun > 0 || metrics.underrun > 0 {
+        ui.horizontal(|ui| {
             ui.label(
-                egui::RichText::new(format!(
-                    "xruns: {} over / {} under",
-                    metrics.overrun, metrics.underrun
-                ))
-                .size(11.0)
-                .color(crate::theme::colors::YELLOW),
+                egui::RichText::new(format!("Latency {:.0} ms", metrics.latency_ms))
+                    .size(11.0)
+                    .color(crate::theme::colors::TEXT_DIM)
+                    .monospace(),
             );
-        }
-        if metrics.auto_degraded {
+            ui.separator();
             ui.label(
-                egui::RichText::new(format!(
-                    "⚠ Auto-degraded to {:?} (underruns)",
-                    metrics.current_mode
-                ))
-                .size(11.0)
-                .color(crate::theme::colors::YELLOW),
+                egui::RichText::new(format!("RTF {:.2}", metrics.rtf))
+                    .size(11.0)
+                    .color(crate::theme::colors::TEXT_DIM)
+                    .monospace(),
             );
-        }
+            if metrics.overrun > 0 || metrics.underrun > 0 {
+                ui.separator();
+                ui.label(
+                    egui::RichText::new(format!(
+                        "xruns ↑{} ↓{}",
+                        metrics.overrun, metrics.underrun
+                    ))
+                    .size(10.0)
+                    .color(crate::theme::colors::LEMON),
+                );
+            }
+            if metrics.auto_degraded {
+                ui.separator();
+                ui.label(
+                    egui::RichText::new(format!("⚠ {:?}", metrics.current_mode))
+                        .size(10.0)
+                        .color(crate::theme::colors::LEMON),
+                );
+            }
+        });
     });
 
-    ui.add_space(crate::theme::space::LARGE);
+    ui.add_space(crate::theme::space::MEDIUM);
 
     // Quality mode — knob or pill buttons (hidden when no converter loaded)
     if !force_bypass {

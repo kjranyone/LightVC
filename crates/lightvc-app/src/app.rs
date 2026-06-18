@@ -385,8 +385,8 @@ impl LightVcApp {
         egui::Panel::top("tabs")
             .frame(
                 egui::Frame::NONE
-                    .fill(egui::Color32::from_rgba_premultiplied(28, 22, 38, 220))
-                    .inner_margin(egui::Margin::same(12)),
+                    .fill(crate::theme::with_alpha(crate::theme::colors::BG_DEEP, 220))
+                    .inner_margin(egui::Margin::same(10)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -395,12 +395,18 @@ impl LightVcApp {
                     let logo = self.asset_cache.logo(ctx);
                     let avail = ui.available_width();
                     let logo_w = avail.min(140.0).max(80.0);
-                    let logo_h = logo_w * (30.0 / 320.0); // maintain aspect ratio
+                    let logo_h = logo_w * (30.0 / 320.0);
                     ui.add(
                         egui::Image::from_texture(logo)
                             .fit_to_exact_size(egui::Vec2::new(logo_w, logo_h)),
                     );
-                    ui.add_space(8.0);
+                    // Subtitle — kawaii tagline next to logo
+                    ui.label(
+                        egui::RichText::new("✦ Realtime Voice Changer")
+                            .size(10.0)
+                            .color(crate::theme::colors::LAVENDER),
+                    );
+                    ui.add_space(crate::theme::space::MEDIUM);
 
                     // Tabs — distribute remaining width
                     let tab_labels = [
@@ -423,13 +429,13 @@ impl LightVcApp {
             egui::Panel::bottom("status")
                 .frame(
                     egui::Frame::NONE
-                        .fill(egui::Color32::from_rgba_premultiplied(42, 32, 56, 180))
+                        .fill(crate::theme::with_alpha(crate::theme::colors::BG_DARK, 200))
                         .inner_margin(egui::Margin::same(8)),
                 )
                 .show(ctx, |ui| {
                     ui.horizontal(|ui| {
                         let (dot_color, msg) = if let Some(ref err) = st.error {
-                            (egui::Color32::from_rgb(255, 100, 100), err.clone())
+                            (crate::theme::colors::ERROR, err.clone())
                         } else {
                             (crate::theme::colors::MINT, st.status.clone())
                         };
