@@ -10,6 +10,33 @@ use eframe::egui;
 use egui::Color32;
 
 // ---------------------------------------------------------------------------
+// Design tokens — spacing, sizing, layout constants
+// ---------------------------------------------------------------------------
+
+/// Vertical spacing tiers. Use these instead of raw `add_space(N)` so the
+/// whole app stays on a consistent rhythm.
+pub mod space {
+    /// Tight intra-row spacing (e.g. between a label and its slider).
+    pub const TIGHT: f32 = 2.0;
+    /// Small gap inside a card (e.g. heading → first control).
+    pub const SMALL: f32 = 4.0;
+    /// Default gap between adjacent cards in a column.
+    pub const MEDIUM: f32 = 8.0;
+    /// Large gap before a major section or CTA.
+    pub const LARGE: f32 = 12.0;
+}
+
+/// Standard label column width for form rows.
+pub const LABEL_WIDTH: f32 = 80.0;
+/// Standard form field height.
+pub const FIELD_HEIGHT: f32 = 20.0;
+/// Unified button height for icon_button / pill_button / tab_button so
+/// they align when placed on the same row.
+pub const BUTTON_HEIGHT: f32 = 30.0;
+/// CTA button height (primary action: Convert, Start).
+pub const CTA_HEIGHT: f32 = 38.0;
+
+// ---------------------------------------------------------------------------
 // Color palette
 // ---------------------------------------------------------------------------
 
@@ -111,7 +138,7 @@ pub fn icon_button(
     )
     .fill(fill)
     .stroke(egui::Stroke::new(1.0, stroke_color))
-    .min_size(egui::vec2(80.0, 30.0));
+    .min_size(egui::vec2(80.0, BUTTON_HEIGHT));
 
     ui.add(btn).clicked()
 }
@@ -122,14 +149,45 @@ pub fn icon_button(
 
 /// A kawaii-styled section heading.
 pub fn heading(ui: &mut egui::Ui, text: &str) {
-    ui.add_space(4.0);
+    ui.add_space(space::SMALL);
     ui.label(
         egui::RichText::new(text)
             .size(20.0)
             .strong()
             .color(colors::PINK_BRIGHT),
     );
-    ui.add_space(2.0);
+    ui.add_space(space::TIGHT);
+}
+
+/// A card-level subheading. Use this instead of ad-hoc RichText so all
+/// subheadings share the same size (13), weight (strong), color (CYAN),
+/// and bottom spacing.
+pub fn subheading(ui: &mut egui::Ui, text: &str) {
+    ui.label(
+        egui::RichText::new(text)
+            .size(13.0)
+            .strong()
+            .color(colors::CYAN),
+    );
+    ui.add_space(space::SMALL);
+}
+
+/// Standard form-row label (fixed width, dim text). Pairs with
+/// [`path_text_edit`] to keep label columns aligned across tabs.
+pub fn form_label(ui: &mut egui::Ui, text: &str) {
+    ui.add_sized(
+        [LABEL_WIDTH, FIELD_HEIGHT],
+        egui::Label::new(egui::RichText::new(text).size(13.0).color(colors::TEXT_DIM)),
+    );
+}
+
+/// Full-width single-line path input. Always fills the remaining row width
+/// so long paths stay visible instead of being clipped.
+pub fn path_text_edit(ui: &mut egui::Ui, buf: &mut String, hint: &str) {
+    ui.add_sized(
+        [ui.available_width(), FIELD_HEIGHT],
+        egui::TextEdit::singleline(buf).hint_text(hint),
+    );
 }
 
 /// A pill-shaped button with glow.
@@ -148,7 +206,7 @@ pub fn pill_button(ui: &mut egui::Ui, text: &str, active: bool) -> bool {
     )
     .fill(fill)
     .stroke(egui::Stroke::new(1.0, stroke_color))
-    .min_size(egui::vec2(80.0, 32.0));
+    .min_size(egui::vec2(80.0, BUTTON_HEIGHT));
 
     ui.add(btn).clicked()
 }
@@ -164,7 +222,7 @@ pub fn tab_button(ui: &mut egui::Ui, text: &str, selected: bool) -> bool {
     let btn = egui::Button::new(egui::RichText::new(text).size(14.0).strong().color(fg))
         .fill(bg)
         .stroke(egui::Stroke::new(1.0, stroke))
-        .min_size(egui::vec2(70.0, 30.0));
+        .min_size(egui::vec2(80.0, BUTTON_HEIGHT));
 
     ui.add(btn).clicked()
 }

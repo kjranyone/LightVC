@@ -41,7 +41,7 @@ pub fn render(
     on_control: impl Fn(RtControl),
 ) {
     crate::theme::heading(ui, "Real-time Voice Conversion");
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::space::MEDIUM);
 
     let has_pipeline = state.lock().unwrap().pipeline.is_some();
     // When no converter is loaded, force bypass mode so the audio path
@@ -54,37 +54,31 @@ pub fn render(
             crate::theme::heading(ui, "Load Model");
 
             ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("Converter")
-                        .size(13.0)
-                        .color(crate::theme::colors::TEXT_DIM),
-                );
-                ui.text_edit_singleline(conv_path);
+                crate::theme::form_label(ui, "Converter");
+                crate::theme::path_text_edit(ui, conv_path, "converter .safetensors");
+                ui.add_space(crate::theme::space::SMALL);
                 if crate::theme::pill_button(ui, "Browse", false) {
                     converter_pick.open(ctx);
                 }
             });
 
             ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("Config")
-                        .size(13.0)
-                        .color(crate::theme::colors::TEXT_DIM),
-                );
-                ui.text_edit_singleline(conv_cfg);
+                crate::theme::form_label(ui, "Config");
+                crate::theme::path_text_edit(ui, conv_cfg, "config .json (optional)");
+                ui.add_space(crate::theme::space::SMALL);
                 if crate::theme::pill_button(ui, "Browse", false) {
                     config_pick.open(ctx);
                 }
             });
 
-            ui.add_space(4.0);
+            ui.add_space(crate::theme::space::SMALL);
             if crate::theme::pill_button(ui, "Load Converter", !conv_path.is_empty())
                 && !conv_path.is_empty()
             {
                 on_load(conv_path, conv_cfg);
             }
 
-            ui.add_space(6.0);
+            ui.add_space(crate::theme::space::SMALL + 2.0);
             ui.label(
                 egui::RichText::new(
                     "No converter loaded — Start will run in BYPASS mode (passthrough).",
@@ -152,14 +146,14 @@ pub fn render(
         }
     });
 
-    ui.add_space(12.0);
+    ui.add_space(crate::theme::space::LARGE);
 
     // Level meters
     crate::theme::info_card(ui, |ui| {
         crate::theme::level_meter(ui, metrics.input_rms, "Input");
         crate::theme::level_meter(ui, metrics.output_rms, "Output");
 
-        ui.add_space(4.0);
+        ui.add_space(crate::theme::space::SMALL);
         ui.label(
             egui::RichText::new(format!(
                 "Latency: {:.0} ms  |  RTF: {:.2}",
@@ -190,7 +184,7 @@ pub fn render(
         }
     });
 
-    ui.add_space(12.0);
+    ui.add_space(crate::theme::space::LARGE);
 
     // Quality mode — knob or pill buttons (hidden when no converter loaded)
     if !force_bypass {
@@ -271,15 +265,9 @@ pub fn render(
 
     // Prosody controls — visible only when a converter is loaded.
     if !force_bypass {
-        ui.add_space(8.0);
+        ui.add_space(crate::theme::space::MEDIUM);
         crate::theme::info_card(ui, |ui| {
-            ui.label(
-                egui::RichText::new("Prosody")
-                    .size(13.0)
-                    .strong()
-                    .color(crate::theme::colors::CYAN),
-            );
-            ui.add_space(4.0);
+            crate::theme::subheading(ui, "Prosody");
             ui.horizontal(|ui| {
                 ui.label(
                     egui::RichText::new("Mode")
@@ -320,7 +308,7 @@ pub fn render(
             });
             // Blend slider — only meaningful in Blend mode, but always shown
             // so the user can pre-set it before switching modes.
-            ui.add_space(2.0);
+            ui.add_space(crate::theme::space::TIGHT);
             ui.horizontal(|ui| {
                 ui.label(
                     egui::RichText::new("Blend")
@@ -348,15 +336,9 @@ pub fn render(
         });
 
         // Velocity scale slider — flow-matching conversion strength.
-        ui.add_space(4.0);
+        ui.add_space(crate::theme::space::SMALL);
         crate::theme::info_card(ui, |ui| {
-            ui.label(
-                egui::RichText::new("Conversion Strength")
-                    .size(13.0)
-                    .strong()
-                    .color(crate::theme::colors::CYAN),
-            );
-            ui.add_space(2.0);
+            crate::theme::subheading(ui, "Conversion Strength");
             ui.horizontal(|ui| {
                 let old = *velocity_scale;
                 ui.add(
@@ -382,7 +364,7 @@ pub fn render(
         });
     }
 
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::space::MEDIUM);
 
     // Bypass — styled toggle button (disabled when no converter loaded)
     if force_bypass {
@@ -402,7 +384,7 @@ pub fn render(
         }
     }
 
-    ui.add_space(12.0);
+    ui.add_space(crate::theme::space::LARGE);
 
     // Start/Stop
     ui.horizontal(|ui| {
@@ -435,7 +417,7 @@ pub fn render(
         }
     });
 
-    ui.add_space(12.0);
+    ui.add_space(crate::theme::space::LARGE);
 
     // Audio devices ([05-6]: interactive selection) — default open
     egui::CollapsingHeader::new(
@@ -471,7 +453,7 @@ pub fn render(
                 *selected_input = Some(i);
             }
         }
-        ui.add_space(4.0);
+        ui.add_space(crate::theme::space::SMALL);
         ui.label(
             egui::RichText::new(format!(
                 "Outputs  ({} = default)",

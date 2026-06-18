@@ -9,8 +9,6 @@ use crate::app::AppState;
 use crate::audio_playback::{self, AudioPlayer};
 use crate::file_pick::FilePick;
 
-const LABEL_WIDTH: f32 = 80.0;
-
 #[derive(Default)]
 pub struct OfflineState {
     pub source_path: String,
@@ -47,7 +45,7 @@ pub fn render(
     let has_converter = state.lock().unwrap().converter_weights.is_some();
 
     crate::theme::heading(ui, "Offline Voice Conversion");
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::space::MEDIUM);
 
     ui.vertical_centered(|ui| {
         egui::Frame::NONE.show(ui, |ui| {
@@ -62,21 +60,14 @@ pub fn render(
                             egui::Image::from_texture(icon_mic)
                                 .fit_to_exact_size(egui::vec2(16.0, 16.0)),
                         );
-                        ui.add_sized(
-                            [LABEL_WIDTH, 20.0],
-                            egui::Label::new(
-                                egui::RichText::new("Source")
-                                    .size(13.0)
-                                    .color(crate::theme::colors::TEXT_DIM),
-                            ),
-                        );
-                        ui.add_sized(
-                            [ui.available_width(), 20.0],
-                            egui::TextEdit::singleline(&mut offline.source_path)
-                                .hint_text("source audio file"),
+                        crate::theme::form_label(ui, "Source");
+                        crate::theme::path_text_edit(
+                            ui,
+                            &mut offline.source_path,
+                            "source audio file",
                         );
                     });
-                    ui.add_space(6.0);
+                    ui.add_space(crate::theme::space::SMALL + 2.0);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let src_playing = offline
                             .source_preview
@@ -94,7 +85,7 @@ pub fn render(
                                 offline.source_preview = play_audio(&offline.source_path);
                             }
                         }
-                        ui.add_space(4.0);
+                        ui.add_space(crate::theme::space::SMALL);
                         if crate::theme::icon_button(ui, icon_folder, "Browse", true) {
                             offline.source_pick.open(ctx);
                         }
@@ -102,7 +93,7 @@ pub fn render(
                 });
             });
 
-            ui.add_space(8.0);
+            ui.add_space(crate::theme::space::MEDIUM);
 
             // --- Reference ---
             crate::theme::info_card(ui, |ui| {
@@ -112,21 +103,14 @@ pub fn render(
                             egui::Image::from_texture(icon_speaker)
                                 .fit_to_exact_size(egui::vec2(16.0, 16.0)),
                         );
-                        ui.add_sized(
-                            [LABEL_WIDTH, 20.0],
-                            egui::Label::new(
-                                egui::RichText::new("Reference")
-                                    .size(13.0)
-                                    .color(crate::theme::colors::TEXT_DIM),
-                            ),
-                        );
-                        ui.add_sized(
-                            [ui.available_width(), 20.0],
-                            egui::TextEdit::singleline(&mut offline.reference_path)
-                                .hint_text("target voice reference"),
+                        crate::theme::form_label(ui, "Reference");
+                        crate::theme::path_text_edit(
+                            ui,
+                            &mut offline.reference_path,
+                            "target voice reference",
                         );
                     });
-                    ui.add_space(6.0);
+                    ui.add_space(crate::theme::space::SMALL + 2.0);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let ref_playing = offline
                             .reference_preview
@@ -144,7 +128,7 @@ pub fn render(
                                 offline.reference_preview = play_audio(&offline.reference_path);
                             }
                         }
-                        ui.add_space(4.0);
+                        ui.add_space(crate::theme::space::SMALL);
                         if crate::theme::icon_button(ui, icon_folder, "Browse", true) {
                             offline.reference_pick.open(ctx);
                         }
@@ -152,7 +136,7 @@ pub fn render(
                 });
             });
 
-            ui.add_space(8.0);
+            ui.add_space(crate::theme::space::MEDIUM);
 
             // --- Voice catalog quick-pick ---
             {
@@ -163,7 +147,7 @@ pub fn render(
                             .size(12.0)
                             .color(crate::theme::colors::CYAN),
                     );
-                    ui.add_space(2.0);
+                    ui.add_space(crate::theme::space::TIGHT);
                     ui.horizontal_wrapped(|ui| {
                         for voice in &s.voices {
                             if crate::theme::pill_button(ui, &voice.name, false) {
@@ -174,17 +158,11 @@ pub fn render(
                 }
             }
 
-            ui.add_space(12.0);
+            ui.add_space(crate::theme::space::LARGE);
 
             // --- Prosody controls ([07-2]) ---
             crate::theme::info_card(ui, |ui| {
-                ui.label(
-                    egui::RichText::new("Prosody")
-                        .size(13.0)
-                        .strong()
-                        .color(crate::theme::colors::CYAN),
-                );
-                ui.add_space(4.0);
+                crate::theme::subheading(ui, "Prosody");
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new("Mode")
@@ -216,7 +194,7 @@ pub fn render(
                             );
                         });
                 });
-                ui.add_space(2.0);
+                ui.add_space(crate::theme::space::TIGHT);
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new("Blend")
@@ -236,17 +214,11 @@ pub fn render(
                 });
             });
 
-            ui.add_space(8.0);
+            ui.add_space(crate::theme::space::MEDIUM);
 
             // --- Conversion strength slider ---
             crate::theme::info_card(ui, |ui| {
-                ui.label(
-                    egui::RichText::new("Conversion Strength")
-                        .size(13.0)
-                        .strong()
-                        .color(crate::theme::colors::CYAN),
-                );
-                ui.add_space(2.0);
+                crate::theme::subheading(ui, "Conversion Strength");
                 ui.horizontal(|ui| {
                     ui.add(
                         egui::Slider::new(&mut offline.velocity_scale, 0.0..=2.0)
@@ -267,7 +239,7 @@ pub fn render(
                 });
             });
 
-            ui.add_space(12.0);
+            ui.add_space(crate::theme::space::LARGE);
 
             // --- Convert CTA ---
             let can_convert = !offline.source_path.is_empty()
@@ -301,7 +273,7 @@ pub fn render(
                         crate::theme::colors::TEXT_MUTED
                     },
                 ))
-                .min_size(egui::vec2(160.0, 42.0));
+                .min_size(egui::vec2(160.0, crate::theme::CTA_HEIGHT));
 
                 ui.add_enabled_ui(can_convert, |ui| {
                     if ui.add(btn).clicked() {
@@ -337,18 +309,13 @@ pub fn render(
                 }
             });
 
-            ui.add_space(8.0);
+            ui.add_space(crate::theme::space::MEDIUM);
 
             // --- Output ---
             if let Some(ref samples) = offline.converted_samples {
                 crate::theme::info_card(ui, |ui| {
                     ui.vertical(|ui| {
-                        ui.label(
-                            egui::RichText::new("Output")
-                                .size(14.0)
-                                .strong()
-                                .color(crate::theme::colors::MINT),
-                        );
+                        crate::theme::subheading(ui, "Output");
                         ui.label(
                             egui::RichText::new(format!(
                                 "{} samples ({:.1}s)",
@@ -358,8 +325,10 @@ pub fn render(
                             .size(12.0)
                             .color(crate::theme::colors::TEXT_DIM),
                         );
-                        ui.add_space(6.0);
-                        ui.horizontal(|ui| {
+                        ui.add_space(crate::theme::space::SMALL + 2.0);
+                        // right_to_left so Play stays on the right,
+                        // matching Source/Reference cards.
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let out_playing = offline
                                 .player
                                 .as_ref()
@@ -379,7 +348,7 @@ pub fn render(
                                     offline.player = AudioPlayer::play(samples.clone()).ok();
                                 }
                             }
-                            ui.add_space(4.0);
+                            ui.add_space(crate::theme::space::SMALL);
                             if crate::theme::icon_button(ui, icon_speaker, "Save As...", true) {
                                 if let Some(path) = rfd::FileDialog::new().save_file() {
                                     let _ = audio_playback::save_wav_mono(&path, samples, 44100);
@@ -391,7 +360,7 @@ pub fn render(
             }
 
             if !has_converter {
-                ui.add_space(8.0);
+                ui.add_space(crate::theme::space::MEDIUM);
                 ui.label(
                     egui::RichText::new("No converter loaded. Set model in Realtime tab.")
                         .size(12.0)

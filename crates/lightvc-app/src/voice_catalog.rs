@@ -34,23 +34,17 @@ pub fn render(
 ) {
     let mut on_select = on_select;
     crate::theme::heading(ui, "Voice Catalog");
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::space::SMALL);
     ui.label(
         egui::RichText::new("Register reference audio for zero-shot voice conversion")
             .size(12.0)
             .color(crate::theme::colors::TEXT_DIM),
     );
-    ui.add_space(10.0);
+    ui.add_space(crate::theme::space::MEDIUM + 2.0);
 
     // Add new voice — kawaii card
     crate::theme::info_card(ui, |ui| {
-        ui.label(
-            egui::RichText::new("Add Voice")
-                .size(14.0)
-                .strong()
-                .color(crate::theme::colors::PINK_BRIGHT),
-        );
-        ui.add_space(4.0);
+        crate::theme::subheading(ui, "Add Voice");
 
         ui.horizontal(|ui| {
             let new_name = ctx.data_mut(|d| {
@@ -58,12 +52,12 @@ pub fn render(
                     .clone()
             });
             let mut name_buf = new_name;
-            ui.label(
-                egui::RichText::new("Name")
-                    .size(12.0)
-                    .color(crate::theme::colors::TEXT_DIM),
+            crate::theme::form_label(ui, "Name");
+            ui.add_sized(
+                [crate::theme::LABEL_WIDTH * 2.0, crate::theme::FIELD_HEIGHT],
+                egui::TextEdit::singleline(&mut name_buf),
             );
-            ui.add_sized([120.0, 20.0], egui::TextEdit::singleline(&mut name_buf));
+            ui.add_space(crate::theme::space::SMALL);
             if crate::theme::icon_button(ui, icon_folder, "Browse", false) {
                 add_pick.open(ctx);
             }
@@ -91,7 +85,7 @@ pub fn render(
         });
     });
 
-    ui.add_space(10.0);
+    ui.add_space(crate::theme::space::MEDIUM + 2.0);
 
     // Voice list (scrollable)
     egui::ScrollArea::vertical()
@@ -100,14 +94,14 @@ pub fn render(
             let s = state.lock().unwrap();
             if s.voices.is_empty() {
                 // Empty state with illustration
-                ui.add_space(20.0);
+                ui.add_space(crate::theme::space::LARGE + 8.0);
                 ui.vertical_centered(|ui| {
                     ui.add(
                         egui::Image::from_texture(empty_stars)
                             .fit_to_exact_size(egui::vec2(120.0, 120.0))
                             .tint(egui::Color32::from_rgba_premultiplied(170, 140, 255, 180)),
                     );
-                    ui.add_space(8.0);
+                    ui.add_space(crate::theme::space::MEDIUM);
                     ui.label(
                         egui::RichText::new("No voices registered yet.")
                             .size(13.0)
@@ -121,7 +115,7 @@ pub fn render(
                         .strong()
                         .color(crate::theme::colors::CYAN),
                 );
-                ui.add_space(4.0);
+                ui.add_space(crate::theme::space::SMALL);
 
                 let mut to_delete = None;
                 let selected = s.selected_voice;
@@ -232,7 +226,7 @@ pub fn render(
                                     .color(crate::theme::colors::TEXT_MUTED),
                             );
                         });
-                    ui.add_space(4.0);
+                    ui.add_space(crate::theme::space::SMALL);
                 }
 
                 drop(s);
@@ -265,7 +259,7 @@ pub fn render(
             }
         });
 
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::space::MEDIUM);
 
     // Import / Export
     ui.collapsing(

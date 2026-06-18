@@ -138,7 +138,39 @@ style.spacing.item_spacing   = (8.0, 8.0);
 style.spacing.button_padding = (16.0, 8.0);
 ```
 
-セクション間隔は `ui.add_space(...)` で個別指定（4, 6, 8, 10, 12 を文脈で使い分け）。
+セクション間隔は **デザイントークン定数** を使う（`theme.rs::space`）。生値の `add_space(N)` は禁止:
+
+```rust
+pub mod space {
+    pub const TIGHT: f32  = 2.0;   // 行内（ラベル↔スライダ等）
+    pub const SMALL: f32  = 4.0;   // カード内小间隙
+    pub const MEDIUM: f32 = 8.0;   // カード間
+    pub const LARGE: f32  = 12.0;  // 大段落前・CTA 前
+}
+```
+
+使用例: `ui.add_space(crate::theme::space::MEDIUM)`
+
+### 4.4b レイアウト定数・ヘルパ（`theme.rs`）
+
+| トークン | 値 | 用途 |
+|---------|-----|------|
+| `LABEL_WIDTH` | 80.0 | フォーム行のラベル列幅（全タブ共通） |
+| `FIELD_HEIGHT` | 20.0 | TextEdit / Label の高さ |
+| `BUTTON_HEIGHT` | 30.0 | `icon_button` / `pill_button` / `tab_button` の統一高さ |
+| `CTA_HEIGHT` | 38.0 | Convert / Start 等の主操作ボタン高さ |
+
+| ヘルパ | 役割 |
+|--------|------|
+| `heading(text)` | ページ見出し (20px, PINK_BRIGHT) |
+| `subheading(text)` | カード小見出し (13px, strong, CYAN)。全カードで統一 |
+| `form_label(text)` | フォームラベル (`LABEL_WIDTH` 固定幅, TEXT_DIM) |
+| `path_text_edit(buf, hint)` | フル幅パス入力 (`available_width()`) |
+
+**原則:**
+- 全サブ見出しは `subheading()` を使う（色・サイズのバラつき禁止）
+- 全フォーム行は `form_label()` + `path_text_edit()` のペア（ラベル幅・入力幅の統一）
+- 全ボタンの高さは `BUTTON_HEIGHT`（並べた時に揃う）。CTA のみ `CTA_HEIGHT`
 
 ### 4.5 レスポンシブ
 
@@ -266,7 +298,8 @@ style.spacing.button_padding = (16.0, 8.0);
 | `> 1.1` | 強変換（ターゲットに強く引き寄せ、歪みリスクあり） | `→ strong` |
 
 **UI 構成**:
-- `info_card` 内に "Conversion Strength" 見出し（size 13, strong, `CYAN`）
+- **ボタン行は全て `right_to_left` レイアウト** — Play/Stop が常に右端、Browse/Save が左に来る。カード間で Play の位置が変わらない統一ルール
+- `info_card` 内に "Conversion Strength" 見出し（`subheading()` = 13px, strong, CYAN）
 - `egui::Slider::new(0.0..=2.0).fixed_decimals(2)` + 補助ラベル
 - 変更時 `RtControl::SetVelocityScale` 送信（Realtime）、`run_offline_conversion` 引数（Offline）
 
