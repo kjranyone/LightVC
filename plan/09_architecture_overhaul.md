@@ -439,28 +439,54 @@ Phase A (診断)
         ▼
 Phase B (WavLM-SV teacher 蒸留) ← ablation
    + Phase C (target 設計修正)
-   ※ B と C-4 は並行実施可能
+   ※ B と C は並行実施可能
         │
         ▼
    [DP-BC] SECS > 0.50 達成? (held-out speakers で評価)
-        ├─ Yes → Phase D で更に改善、またはリリース判断
+        ├─ Yes → Phase E へ (★研究の核心★)
         └─ No  → Phase C の残案を実施、γ(凍結)を再評価
         │
         ▼
-Phase D (WavLM 補助 loss) ← 推論コスト増なし・学習コスト大
+Phase E (★分離性・表現力検証★) ← LightVC の研究価値の核心
+  詳細: docs/INNOVATION.md §3 (Q2)
+        │
+        ▼
+Phase D (WavLM 補助 loss) ← E 結果を見て fine-tune判断
 ```
+
+### Phase E: 分離性・表現力検証（研究の核心）
+
+> **目標**: depth\_strengths で音色・ブレス・質感を独立に制御できるかを実証する。  
+> これが確認できれば、DAC latent-space VC の優位性が初めて証明される。  
+> 詳細な背景は [docs/INNOVATION.md](../docs/INNOVATION.md) 参照。
+
+| ID | タスク | 内容 | 所要 |
+|---|---|---|---|
+| **09-E1** | depth\_strengths 分離性テスト | Phase C モデルで depth\_strengths を (1,0,0) / (1,1,0) / (0,1,1) 等に変え、変換後の音声を比較。スペクトル傾斜変化・F0 レンジ変化を定量測定 | 1日 |
+| **09-E2** | ProsodyMode 制御テスト | PreserveSource / ImitateTarget / Blend(0.3/0.5/0.7) で抑揚が切り替わるか。F0 コンターチャンジを定量測定 | 1日 |
+| **09-E3** | 男性→女性 ABX 評估 | held-out の男性話者→女性参照で変換。「女性らしさ」「ブレス感」「自然さ」を独立評価。各 depth\_strengths / ProsodyMode 設定で 5-10 サンプル | 2日 |
+| **09-E4** | 分離性判定 + **判断 (DP-E)** | E1-E3 の結果をまとめ、depth\_strengths による独立制御が成立しているか判定 | 1日 |
+
+**DP-E 判断基準**:
+
+| 結果 | 判断 |
+|---|---|
+| coarse-only で音色変化、fine-only で質感変化が**独立に**確認 | **SUCCESS**: latent-space VC の分離制御を実証。論文・発表の核。Phase D で更に品質向上。 |
+| 変換はできるが depth\_strengths による違いが聴取/測定で判別不能 | **PARTIAL**: 品質はあるが分離性なし。単一の velocity\_scale のみ提供。実用 VC としては成立。 |
+| 変換自体が不十分（SECS < 0.50 のまま） | **FAIL**: Phase C の残案または γ 凍結解除 |
 
 ### 7.4 評価指標
 
-| 指標 | Phase 0 | Phase A | Phase B (ablation) | Phase C | 最終目標 |
-|---|---|---|---|---|---|
-| SECS (held-out) | 診断 | 診断 | >0.20 (儲けもの) | >0.50 | **>0.70** |
-| UTMOS | — | — | — | >3.0 | **>3.5** |
-| WER | — | 0% (= no-op) | <5% | <5% | **<5%** |
-| fm loss | — | plateau確認 | 変化なしOK | **下降を確認** | — |
-| timbre_shift FM | — | 下降を確認 | — | — | — |
-| SpeakerEncoder cos_sim (held-out) | >0.5 目標 | — | — | — | — |
-| same-text speaker_shift ratio (DTW後) | >10% 目標 | — | — | — | — |
+| 指標 | Phase 0 | Phase A | Phase B | Phase C | Phase E | 最終目標 |
+|---|---|---|---|---|---|---|
+| SECS (held-out) | 診断 | 診断 | >0.20 | >0.50 | 確認 | **>0.70** |
+| UTMOS | — | — | — | >3.0 | 確認 | **>3.5** |
+| WER | — | 0% | <5% | <5% | <5% | **<5%** |
+| fm loss | — | plateau | — | 下降確認 | — | — |
+| SpeakerEncoder cos\_sim | 0.95 ✅ | — | — | — | — | — |
+| same-text ratio (DTW後) | 1.5% ✅ | — | — | — | — | — |
+| **depth\_strengths 分離性** | — | — | — | — | **coarse/fine 独立変化** | **独立制御** |
+| **ProsodyMode 効き** | — | — | — | — | **F0/energy 有意差** | **制御可能** |
 
 ---
 
@@ -569,6 +595,17 @@ Phase D (WavLM 補助 loss) ← 推論コスト増なし・学習コスト大
 | 09-D2 | WavLM content preservation loss 実装 | P1 | D1 | 1日 |
 | 09-D3 | Phase C best model に統合して再学習 | P1 | C7, D2 | ~6-8h (学習時間増含む、09-D0 実測値参照) |
 
+### Phase E: 分離性・表現力検証（研究の核心）
+
+> LightVC の研究価値の核心。詳細は [docs/INNOVATION.md](../docs/INNOVATION.md) 参照。
+
+| ID | タスク | 優先度 | 依存 | 所要 |
+|---|---|---|---|---|
+| **09-E1** | depth\_strengths 分離性テスト: (1,0,0)/(1,1,0)/(0,1,1) でスペクトル傾斜・F0レンジ変化を定量測定 | **P0** | DP-BC OK | 1日 |
+| **09-E2** | ProsodyMode 制御テスト: PreserveSource/ImitateTarget/Blend で F0/energy コンターチャンジ測定 | **P0** | DP-BC OK | 1日 |
+| **09-E3** | 男性→女性 ABX 評估: 「女性らしさ」「ブレス感」「自然さ」を独立評価 | **P1** | E1, E2 | 2日 |
+| **09-E4** | 分離性判定 + **判断 (DP-E)** | **P0** | E1, E2 (E3 optional) | 1日 |
+
 ### 凍結
 
 | ID | タスク | 優先度 | 備考 |
@@ -610,6 +647,14 @@ Phase D (WavLM 補助 loss) ← 推論コスト増なし・学習コスト大
 |---|---|
 | いずれかの案で SECS > 0.50 (held-out) | その案を採用し Phase D へ |
 | 全案で SECS < 0.50 (held-out) | DAC latent の限界が疑われる → γ(凍結) の再評価条件を満たす |
+
+### DP-E: 分離性判定（09-E4）
+
+| 結果 | 判断 |
+|---|---|
+| coarse/fine で独立した音響変化が確認（スペクトル・F0 で有意差） | **SUCCESS**: latent-space VC の分離制御を実証。Phase D で品質更向上。論文・発表の核。 |
+| 変換はできるが depth\_strengths の違いが判別不能 | **PARTIAL**: 単一 velocity\_scale のみ提供。実用 VC としては成立するが、研究新規性は薄い。 |
+| 変換自体が不十分 | **FAIL**: Phase C 残案または γ 凍結解除 |
 
 ---
 
@@ -674,6 +719,11 @@ Phase D (WavLM 補助 loss) ← 推論コスト増なし・学習コスト大
 - 2026-06-18: 設計レビュー第6ラウンド対応 (2件修正 — 指標の精密化):
   - **[P2]** DP-0 判定基準の 09-02a を "DTW後" → "selected DTW cost (09-02c で確定) 後" に精密化。
   - **[P2]** 09-01 の cosine similarity を "held-out話者のcosine similarity" → "`mean cos(pred_embed, teacher_embed)` on held-out utterances" に明確化。
+- 2026-06-18: 実験プロジェクト枠組みの導入 + Phase E 新設:
+  - **Phase E**（分離性・表現力検証）を Phase D の前に新設。depth\_strengths で音色・ブレス・質感を独立に制御できるかが LightVC の研究価値の核心。
+  - [docs/INNOVATION.md](../docs/INNOVATION.md) に革新価値・実験意義を整理。
+  - Phase 0 実測結果を評価指標表に反映（09-01 cos=0.95 PASS、09-02a ratio=1.5% FAIL → C-1 主軸）。
+  - DP-E（分離性判定）を意思決定ポイントに追加。
 - 2026-06-18: 設計レビュー第7ラウンド対応 (3件修正):
   - **[P1]** 09-B2: 蒸留 loss を train-only module とし、推論時の SpeakerEncoder アーキテクチャ・重み key 構成を不変にする旨を明記。Rust 側更新不要・AGENTS.md キー名一致ルール遵守を明文化。
   - **[P2]** リスク表の C-2 を "identity FM" → "denoising FM" に修正（本文・タスクリストと整合）。

@@ -21,6 +21,7 @@ dependencies = [
     "asyncio>=4.0.0",
     "pyworld>=0.3.5",
     "setuptools<70",
+    "dtw-python>=1.7.5",
 ]
 
 [project.optional-dependencies]
