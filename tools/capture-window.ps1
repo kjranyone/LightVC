@@ -60,6 +60,7 @@ $proc = Start-Process -FilePath $bin `
 Start-Sleep -Milliseconds $WaitMs
 
 Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName System.Windows.Forms
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -75,13 +76,19 @@ public class Win32 {
 }
 "@
 
-$hwnd = [Win32]::FindWindow($null, 'LightVC')
+# eframe 0.34 may delay setting the window title; retry for up to 5s.
+$hwnd = [IntPtr]::Zero
+for ($i = 0; $i -lt 10; $i++) {
+    $hwnd = [Win32]::FindWindow($null, 'LightVC')
+    if ($hwnd -ne [IntPtr]::Zero) { break }
+    Start-Sleep -Milliseconds 500
+}
 if ($hwnd -eq [IntPtr]::Zero) {
-    Write-Warning "Window 'LightVC' not found; saving full primary screen instead."
+    Write-Warning "Window 'LightVC' not found after 5s; saving full primary screen instead."
     $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
 } else {
     [Win32]::SetForegroundWindow($hwnd) | Out-Null
-    Start-Sleep -Milliseconds 200
+    Start-Sleep -Milliseconds 300
     $rect = New-Object Win32+RECT
     [Win32]::GetWindowRect($hwnd, [ref]$rect) | Out-Null
     $bounds = New-Object System.Drawing.Rectangle(
