@@ -99,6 +99,8 @@ pub struct LightVcApp {
     rt_prosody_mode: lightvc_core::converter::ProsodyMode,
     rt_prosody_blend: f32,
     rt_velocity_scale: f32,
+    /// Demo mode for screenshot capture (None = normal operation).
+    demo: Option<crate::cli::DemoState>,
     rt_metrics: RtMetrics,
     /// Selected input device index (None = default) ([05-6]).
     rt_selected_input: Option<usize>,
@@ -160,6 +162,72 @@ impl LightVcApp {
             catalog_import_pick: Default::default(),
             asset_cache: Default::default(),
             splash_frames: 0,
+            demo: None,
+        }
+    }
+
+    /// Enable demo mode for screenshot capture. Injects mock data so the
+    /// GUI renders fully without a model or audio devices.
+    pub fn enable_demo(&mut self, demo: crate::cli::DemoState) {
+        self.demo = Some(demo);
+        // Skip the splash animation so the screenshot is immediate.
+        self.splash_frames = 60;
+        // Pretend a converter is loaded so tabs show their full UI.
+        {
+            let mut s = self.state.lock().unwrap();
+            s.converter_weights = Some(std::path::PathBuf::from("models/converter.safetensors"));
+            s.converter_config = Some(std::path::PathBuf::from("configs/phase_c.yaml"));
+            // Register sample voices for the Catalog tab.
+            s.voices = vec![
+                crate::app::VoiceEntry {
+                    name: "Venus (warm)".into(),
+                    path: "samples/venus.wav".into(),
+                },
+                crate::app::VoiceEntry {
+                    name: "Mars (bright)".into(),
+                    path: "samples/mars.wav".into(),
+                },
+                crate::app::VoiceEntry {
+                    name: "Lyra (soft)".into(),
+                    path: "samples/lyra.wav".into(),
+                },
+            ];
+            s.selected_voice = Some(0);
+            s.status = "Demo mode".into();
+        }
+        match demo {
+            crate::cli::DemoState::Offline => {
+                self.current_tab = Tab::Offline;
+                self.offline.source_path = "samples/source_male.wav".into();
+                self.offline.reference_path = "samples/venus.wav".into();
+                self.offline.prosody_mode = lightvc_core::converter::ProsodyMode::Blend;
+                self.offline.prosody_blend = 0.4;
+                self.offline.velocity_scale = 1.0;
+                self.offline.converted_samples = Some(vec![0.0; 44_100]);
+            }
+            crate::cli::DemoState::Realtime => {
+                self.current_tab = Tab::Realtime;
+                self.rt_running = true;
+                self.rt_bypass = false;
+                self.rt_mode = lightvc_core::converter::LatencyMode::Balanced;
+                self.rt_prosody_mode = lightvc_core::converter::ProsodyMode::ImitateTarget;
+                self.rt_prosody_blend = 0.5;
+                self.rt_velocity_scale = 1.0;
+                self.rt_metrics = RtMetrics {
+                    input_rms: 0.18,
+                    output_rms: 0.12,
+                    latency_ms: 46.0,
+                    rtf: 0.34,
+                    disconnected: false,
+                    overrun: 0,
+                    underrun: 2,
+                    current_mode: lightvc_core::converter::LatencyMode::Balanced,
+                    auto_degraded: false,
+                };
+            }
+            crate::cli::DemoState::Catalog => {
+                self.current_tab = Tab::Catalog;
+            }
         }
     }
 

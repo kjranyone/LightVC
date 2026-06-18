@@ -57,6 +57,20 @@ the Realtime tab once training completes.
 .\dev.ps1 -Roundtrip -Input a.wav # validate DAC encode/decode
 ```
 
+### Screenshots (demo mode)
+
+The GUI has a `--demo-state` mode that renders with mock data — no model,
+no audio devices needed. Used for documentation screenshots and visual
+regression checks:
+
+```powershell
+cargo build --release -p lightvc-app
+.\tools\capture-window.ps1 -DemoState realtime
+.\tools\capture-window.ps1 -DemoState offline
+.\tools\capture-window.ps1 -DemoState catalog
+# → docs/screenshots/{realtime,offline,catalog}.png
+```
+
 ### Manual build
 
 ### Prerequisites

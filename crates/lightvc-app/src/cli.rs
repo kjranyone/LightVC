@@ -36,11 +36,27 @@ pub enum Command {
 #[derive(Parser)]
 pub struct GuiCmd {
     #[arg(long, env = "LIGHTVC_DAC_WEIGHTS")]
-    pub dac_weights: PathBuf,
+    pub dac_weights: Option<PathBuf>,
     #[arg(long)]
     pub cuda: bool,
     #[arg(long)]
     pub metal: bool,
+    /// Launch the GUI with mock data for screenshot capture. No model,
+    /// no audio devices required. Useful for documentation screenshots
+    /// and visual regression checks.
+    #[arg(long, value_enum)]
+    pub demo_state: Option<DemoState>,
+}
+
+/// Demo state injected into the GUI for screenshot capture.
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub enum DemoState {
+    /// Offline tab with source/reference paths, converted output visible.
+    Offline,
+    /// Realtime tab with a loaded converter, LIVE status, active meters.
+    Realtime,
+    /// Catalog tab with sample voices registered.
+    Catalog,
 }
 
 #[derive(Parser)]
@@ -266,7 +282,13 @@ pub fn run_gui(cmd: GuiCmd) -> Result<()> {
 
     let icon = crate::assets::load_icon();
 
-    let mut app = crate::app::LightVcApp::new(cmd.dac_weights);
+    let dac_weights = cmd
+        .dac_weights
+        .unwrap_or_else(|| std::path::PathBuf::from("models/dac_44khz.safetensors"));
+    let mut app = crate::app::LightVcApp::new(dac_weights);
+    if let Some(demo) = cmd.demo_state {
+        app.enable_demo(demo);
+    }
     let mut viewport = eframe::egui::ViewportBuilder::default()
         .with_inner_size([800.0, 600.0])
         .with_title("LightVC");
