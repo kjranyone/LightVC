@@ -77,7 +77,7 @@ param(
     [string]$Input,
     [string]$Output,
     [ValidateSet('offline', 'realtime', 'catalog')]
-    [string]$Demo,
+    [switch]$Demo,
     [string]$Screenshot
 )
 
@@ -113,18 +113,6 @@ function Show-Menu {
     return (Read-Host '番号を選択')
 }
 
-function Pick-DemoTab {
-    Write-Host '  タブを選択:' -ForegroundColor Yellow
-    Write-Menu '  [1] Offline'
-    Write-Menu '  [2] Realtime'
-    Write-Menu '  [3] Catalog'
-    $tab = Read-Host '番号'
-    if ($tab -eq '1') { return 'offline' }
-    if ($tab -eq '2') { return 'realtime' }
-    if ($tab -eq '3') { return 'catalog' }
-    return $null
-}
-
 # --- Snap: capture running window only (no build, no launch) ---------------
 if ($Snap) {
     $snapScript = Join-Path $repoRoot 'tools\snap.ps1'
@@ -144,7 +132,7 @@ if (-not $hasAction) {
         $NoBuild = $true
         $action = 'gui'
     } elseif ($choice -eq '3') {
-        $Demo = Pick-DemoTab
+        $Demo = $true
         $action = 'demo'
     } elseif ($choice -eq '4') {
         $Roundtrip = $true
@@ -162,7 +150,6 @@ if (-not $hasAction) {
         Write-Err ('無効な選択: ' + $choice)
         exit 1
     }
-    if ($action -eq 'demo' -and -not $Demo) { Write-Err 'キャンセル'; exit 1 }
     if ($action -eq 'roundtrip' -and -not $Input) { exit 1 }
 }
 
@@ -266,9 +253,9 @@ if ($Cuda)  { $deviceFlags += '--cuda' }
 if ($Metal) { $deviceFlags += '--metal' }
 
 if ($Demo) {
-    Write-Step "Launching LightVC GUI in demo mode ($Demo)"
-    Write-Host  '    (mock data, no model/DAC required)' -ForegroundColor DarkGray
-    & $binPath gui --demo-state $Demo @deviceFlags
+    Write-Step 'Launching LightVC GUI in demo mode'
+    Write-Host  '    (mock data, no model/DAC required; tabs switchable inside the app)' -ForegroundColor DarkGray
+    & $binPath gui --demo @deviceFlags
 } else {
     Write-Step 'Launching LightVC GUI'
     Write-Host  '    (converter weights optional — load later via Realtime tab)' -ForegroundColor DarkGray

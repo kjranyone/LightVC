@@ -42,21 +42,9 @@ pub struct GuiCmd {
     #[arg(long)]
     pub metal: bool,
     /// Launch the GUI with mock data for screenshot capture. No model,
-    /// no audio devices required. Useful for documentation screenshots
-    /// and visual regression checks.
-    #[arg(long, value_enum)]
-    pub demo_state: Option<DemoState>,
-}
-
-/// Demo state injected into the GUI for screenshot capture.
-#[derive(Clone, Copy, Debug, clap::ValueEnum)]
-pub enum DemoState {
-    /// Offline tab with source/reference paths, converted output visible.
-    Offline,
-    /// Realtime tab with a loaded converter, LIVE status, active meters.
-    Realtime,
-    /// Catalog tab with sample voices registered.
-    Catalog,
+    /// no audio devices required. The user switches tabs inside the app.
+    #[arg(long)]
+    pub demo: bool,
 }
 
 #[derive(Parser)]
@@ -286,8 +274,8 @@ pub fn run_gui(cmd: GuiCmd) -> Result<()> {
         .dac_weights
         .unwrap_or_else(|| std::path::PathBuf::from("models/dac_44khz.safetensors"));
     let mut app = crate::app::LightVcApp::new(dac_weights);
-    if let Some(demo) = cmd.demo_state {
-        app.enable_demo(demo);
+    if cmd.demo {
+        app.enable_demo();
     }
     let mut viewport = eframe::egui::ViewportBuilder::default()
         .with_inner_size([800.0, 600.0])
