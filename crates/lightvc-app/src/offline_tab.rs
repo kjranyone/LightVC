@@ -68,7 +68,7 @@ pub fn render(
                         );
                     });
                     ui.add_space(crate::theme::space::SMALL + 2.0);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                         let src_playing = offline
                             .source_preview
                             .as_ref()
@@ -111,7 +111,7 @@ pub fn render(
                         );
                     });
                     ui.add_space(crate::theme::space::SMALL + 2.0);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                         let ref_playing = offline
                             .reference_preview
                             .as_ref()
@@ -328,7 +328,7 @@ pub fn render(
                         ui.add_space(crate::theme::space::SMALL + 2.0);
                         // right_to_left so Play stays on the right,
                         // matching Source/Reference cards.
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                             let out_playing = offline
                                 .player
                                 .as_ref()

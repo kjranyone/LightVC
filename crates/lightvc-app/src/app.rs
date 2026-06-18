@@ -373,7 +373,7 @@ impl LightVcApp {
             Tab::Offline => {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
+                        .auto_shrink([false, true])
                         .show(ui, |ui| {
                             let folder = self.asset_cache.icon_folder(ctx).clone();
                             let play = self.asset_cache.icon_play(ctx).clone();
@@ -435,7 +435,7 @@ impl LightVcApp {
 
                 egui::CentralPanel::default().show(ctx, |ui| {
                     egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
+                        .auto_shrink([false, true])
                         .show(ui, |ui| {
                             crate::realtime_tab::render(
                                 ui,
@@ -478,7 +478,7 @@ impl LightVcApp {
                 let mut catalog = std::mem::take(&mut self.catalog);
                 egui::CentralPanel::default().show(ctx, |ui| {
                     egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
+                        .auto_shrink([false, true])
                         .show(ui, |ui| {
                             let folder = self.asset_cache.icon_folder(ctx).clone();
                             let play = self.asset_cache.icon_play(ctx).clone();

@@ -162,7 +162,7 @@ pub fn render(
                                         .color(crate::theme::colors::TEXT),
                                 );
                                 ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    egui::Layout::right_to_left(egui::Align::Min),
                                     |ui| {
                                         if crate::theme::icon_button(
                                             ui, icon_trash, "Remove", false,
