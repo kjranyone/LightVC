@@ -1,4 +1,4 @@
-<#
+﻿﻿<#
 .SYNOPSIS
     LightVC development helper — one-command GUI launch with auto DAC weights.
 
@@ -95,9 +95,7 @@ function Write-Err($msg)  { Write-Host "    $msg" -ForegroundColor Red }
 function Write-Menu($msg) { Write-Host $msg -ForegroundColor Yellow }
 
 # --- 0. Interactive menu (when no action flags given) -----------------------
-$hasAction = $BuildOnly -or $Cuda -or $Metal -or $Roundtrip `
-    -or $Demo -or $Screenshot -or $Input -or $Output
-if (-not $hasAction) {
+function Show-Menu {
     Write-Host ''
     Write-Host '  ╔══════════════════════════════════════════╗' -ForegroundColor Magenta
     Write-Host '  ║          LightVC Development             ║' -ForegroundColor Magenta
@@ -112,43 +110,56 @@ if (-not $hasAction) {
     Write-Menu '  [7] ビルドのみ'
     Write-Menu '  [Q] 終了'
     Write-Host ''
-    $choice = Read-Host '番号を選択'
-    switch ($choice) {
-        '1' { }
-        '2' { $NoBuild = $true }
-        '3' {
-            Write-Host ''
-            Write-Host '  タブを選択:' -ForegroundColor Yellow
-            Write-Menu '  [1] Offline'
-            Write-Menu '  [2] Realtime'
-            Write-Menu '  [3] Catalog'
-            $tab = Read-Host '番号'
-            $Demo = switch ($tab) {
-                '1' { 'offline' }
-                '2' { 'realtime' }
-                '3' { 'catalog' }
-                default { Write-Err 'キャンセル'; exit 1 }
-            }
-        }
-        '4' { $Screenshot = 'all' }
-        '5' {
-            Write-Host ''
-            Write-Host '  カンマ区切りで指定 (例: offline,realtime):' -ForegroundColor Yellow
-            Write-Host '  選択肢: offline, realtime, catalog, all'
-            $Screenshot = Read-Host 'タブ'
-            if (-not $Screenshot) { Write-Err 'キャンセル'; exit 1 }
-        }
-        '6' {
-            $Roundtrip = $true
-            $Input = Read-Host 'WAV ファイルパス'
-            if (-not $Input) { Write-Err 'キャンセル'; exit 1 }
-        }
-        '7' { $BuildOnly = $true }
-        'q' { exit 0 }
-        'Q' { exit 0 }
-        default { Write-Err "無効な選択: $choice"; exit 1 }
-    }
+    return (Read-Host '番号を選択')
+}
+
+function Pick-DemoTab {
+    Write-Host '  タブを選択:' -ForegroundColor Yellow
+    Write-Menu '  [1] Offline'
+    Write-Menu '  [2] Realtime'
+    Write-Menu '  [3] Catalog'
+    $tab = Read-Host '番号'
+    if ($tab -eq '1') { return 'offline' }
+    if ($tab -eq '2') { return 'realtime' }
+    if ($tab -eq '3') { return 'catalog' }
+    return $null
+}
+
+$hasAction = $BuildOnly -or $Cuda -or $Metal -or $Roundtrip -or $Demo -or $Screenshot -or $Input -or $Output
+if (-not $hasAction) {
+    $choice = Show-Menu
     Write-Host ''
+    if ($choice -eq '1') {
+        $action = 'gui'
+    } elseif ($choice -eq '2') {
+        $NoBuild = $true
+        $action = 'gui'
+    } elseif ($choice -eq '3') {
+        $Demo = Pick-DemoTab
+        $action = 'demo'
+    } elseif ($choice -eq '4') {
+        $Screenshot = 'all'
+        $action = 'screenshot'
+    } elseif ($choice -eq '5') {
+        Write-Host '  カンマ区切りで指定 例: offline,realtime' -ForegroundColor Yellow
+        $Screenshot = Read-Host 'タブ'
+        $action = 'screenshot'
+    } elseif ($choice -eq '6') {
+        $Roundtrip = $true
+        $Input = Read-Host 'WAV ファイルパス'
+        $action = 'roundtrip'
+    } elseif ($choice -eq '7') {
+        $BuildOnly = $true
+        $action = 'buildonly'
+    } elseif ($choice -eq 'q' -or $choice -eq 'Q') {
+        exit 0
+    } else {
+        Write-Err ('無効な選択: ' + $choice)
+        exit 1
+    }
+    if ($action -eq 'demo' -and -not $Demo) { Write-Err 'キャンセル'; exit 1 }
+    if ($action -eq 'screenshot' -and -not $Screenshot) { exit 1 }
+    if ($action -eq 'roundtrip' -and -not $Input) { exit 1 }
 }
 
 # Demo mode needs neither DAC weights nor a model.

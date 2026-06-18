@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Capture a window screenshot for documentation / visual regression.
 
