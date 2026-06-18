@@ -30,6 +30,7 @@ pub fn render(
     mode: &mut lightvc_core::converter::LatencyMode,
     prosody_mode: &mut lightvc_core::converter::ProsodyMode,
     prosody_blend: &mut f32,
+    velocity_scale: &mut f32,
     selected_input: &mut Option<usize>,
     selected_output: &mut Option<usize>,
     metrics: &RtMetrics,
@@ -345,6 +346,40 @@ pub fn render(
                 }
             });
         });
+
+        // Velocity scale slider — flow-matching conversion strength.
+        ui.add_space(4.0);
+        crate::theme::info_card(ui, |ui| {
+            ui.label(
+                egui::RichText::new("Conversion Strength")
+                    .size(13.0)
+                    .strong()
+                    .color(crate::theme::colors::CYAN),
+            );
+            ui.add_space(2.0);
+            ui.horizontal(|ui| {
+                let old = *velocity_scale;
+                ui.add(
+                    egui::Slider::new(velocity_scale, 0.0..=2.0)
+                        .text("velocity scale")
+                        .fixed_decimals(2),
+                );
+                ui.label(
+                    egui::RichText::new(if *velocity_scale < 0.9 {
+                        "← mild (source remains)"
+                    } else if *velocity_scale > 1.1 {
+                        "→ strong (target pull)"
+                    } else {
+                        "default"
+                    })
+                    .size(10.0)
+                    .color(crate::theme::colors::TEXT_MUTED),
+                );
+                if *velocity_scale != old {
+                    on_control(RtControl::SetVelocityScale(*velocity_scale as f64));
+                }
+            });
+        });
     }
 
     ui.add_space(8.0);
@@ -635,6 +670,16 @@ pub fn inference_loop(
                         .and_then(|p| p.lock().ok())
                     {
                         p.set_prosody(mode, blend);
+                    }
+                }
+                RtControl::SetVelocityScale(scale) => {
+                    if let Some(mut p) = pipeline_slot
+                        .lock()
+                        .unwrap()
+                        .as_ref()
+                        .and_then(|p| p.lock().ok())
+                    {
+                        p.set_velocity_scale(scale);
                     }
                 }
                 RtControl::Bypass(b) => bypass = b,

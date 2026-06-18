@@ -254,6 +254,28 @@ style.spacing.button_padding = (16.0, 8.0);
 - Realtime: `RtControl::SetProsody { mode, blend }` → `inference_loop` で pipeline に反映
 - Offline: `run_offline_conversion(prosody_mode, prosody_blend)` 引数で渡し `process_full` 前に `set_prosody`
 
+### 5.10 変換強度（`velocity_scale` スライダー）
+
+フローマッチング推論の速度ベクトルに乗算するスケール因子。
+**Offline / Realtime 両タブに配置**（converter ロード時のみ表示）。
+
+| 値 | 効果 | 補助ラベル |
+|----|------|-----------|
+| `< 0.9` | マイルド変換（元話者の声質が残る） | `← mild` |
+| `0.9–1.1` | 標準 | `default` |
+| `> 1.1` | 強変換（ターゲットに強く引き寄せ、歪みリスクあり） | `→ strong` |
+
+**UI 構成**:
+- `info_card` 内に "Conversion Strength" 見出し（size 13, strong, `CYAN`）
+- `egui::Slider::new(0.0..=2.0).fixed_decimals(2)` + 補助ラベル
+- 変更時 `RtControl::SetVelocityScale` 送信（Realtime）、`run_offline_conversion` 引数（Offline）
+
+**実装連携**:
+- `VcPipeline.velocity_scale: pub f64`（デフォルト 1.0）
+- `VcPipeline::set_velocity_scale(scale)` / `velocity_scale()` アクセサ
+- `process_chunk` / `process_full` 両方で `convert(..., velocity_scale)` に渡す
+- 変換式: `変換後 = z_src + v_pred × velocity_scale`
+
 ---
 
 ---
@@ -451,6 +473,7 @@ enum RtControl {
     Stop,
     SetMode(LatencyMode),     // Strict / Balanced / Quality
     SetProsody { mode: ProsodyMode, blend: f64 },  // [07-2] 抑揚制御
+    SetVelocityScale(f64),    // 変換強度 (0.0–2.0)
     Bypass(bool),
     LoadReference(Vec<f32>),  // 44.1kHz mono PCM
 }

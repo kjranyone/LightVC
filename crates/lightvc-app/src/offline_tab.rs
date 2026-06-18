@@ -28,6 +28,8 @@ pub struct OfflineState {
     /// Prosody controls ([07-2]). Applied in run_offline_conversion.
     pub prosody_mode: lightvc_core::converter::ProsodyMode,
     pub prosody_blend: f32,
+    /// Flow-matching velocity scale (conversion strength).
+    pub velocity_scale: f32,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -234,6 +236,37 @@ pub fn render(
                 });
             });
 
+            ui.add_space(8.0);
+
+            // --- Conversion strength slider ---
+            crate::theme::info_card(ui, |ui| {
+                ui.label(
+                    egui::RichText::new("Conversion Strength")
+                        .size(13.0)
+                        .strong()
+                        .color(crate::theme::colors::CYAN),
+                );
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::Slider::new(&mut offline.velocity_scale, 0.0..=2.0)
+                            .text("velocity scale")
+                            .fixed_decimals(2),
+                    );
+                    ui.label(
+                        egui::RichText::new(if offline.velocity_scale < 0.9 {
+                            "← mild"
+                        } else if offline.velocity_scale > 1.1 {
+                            "→ strong"
+                        } else {
+                            "default"
+                        })
+                        .size(10.0)
+                        .color(crate::theme::colors::TEXT_MUTED),
+                    );
+                });
+            });
+
             ui.add_space(12.0);
 
             // --- Convert CTA ---
@@ -287,8 +320,9 @@ pub fn render(
                         let refp = offline.reference_path.clone();
                         let pm = offline.prosody_mode;
                         let pb = offline.prosody_blend;
+                        let vs = offline.velocity_scale;
                         std::thread::spawn(move || {
-                            run_offline_conversion(st, &src, &refp, pm, pb);
+                            run_offline_conversion(st, &src, &refp, pm, pb, vs);
                         });
                     }
                 });
@@ -406,6 +440,7 @@ fn run_offline_conversion(
     reference_path: &str,
     prosody_mode: lightvc_core::converter::ProsodyMode,
     prosody_blend: f32,
+    velocity_scale: f32,
 ) {
     {
         let mut s = state.lock().unwrap();
@@ -433,6 +468,7 @@ fn run_offline_conversion(
         p.reset();
         p.set_target(&ref_padded)?;
         p.set_prosody(prosody_mode, prosody_blend as f64);
+        p.set_velocity_scale(velocity_scale as f64);
 
         // [06-10]: Use process_full for exact offline conversion (no chunk
         // boundary artifacts, no last-chunk zero-padding). This matches

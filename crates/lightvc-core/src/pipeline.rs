@@ -213,6 +213,17 @@ impl VcPipeline {
         self.prosody_blend = blend.clamp(0.0, 1.0);
     }
 
+    pub fn velocity_scale(&self) -> f64 {
+        self.velocity_scale
+    }
+
+    /// Set the flow-matching velocity scale. Values < 1.0 produce milder
+    /// conversion (more of the source voice remains); > 1.0 pulls harder
+    /// toward the target but may introduce artifacts. Typical range 0.0–2.0.
+    pub fn set_velocity_scale(&mut self, scale: f64) {
+        self.velocity_scale = scale.max(0.0);
+    }
+
     /// Updates the streaming codec's chunk size + lookahead and resets all
     /// streaming state to avoid frame-index mismatch from the mode change.
     pub fn set_mode(&mut self, mode: LatencyMode) {
