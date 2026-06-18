@@ -261,9 +261,13 @@ pub fn level_meter(ui: &mut egui::Ui, level: f32, label: &str) {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(meter_width, 16.0), egui::Sense::hover());
         let painter = ui.painter_at(rect);
 
-        painter.rect_filled(rect, 8.0, colors::BG_DARK);
+        // Background track — slightly lighter than BG_DARK so the bar
+        // stands out even at low levels.
+        painter.rect_filled(rect, 8.0, colors::BG_PANEL_LIGHT);
 
-        let bar_level = (level * 10.0).min(1.0).max(0.0);
+        // RMS levels in VC are typically 0.05-0.3; ×5 maps that to 0.25-1.5
+        // so normal speech shows CYAN/MINT, not always PINK (clip).
+        let bar_level = (level * 5.0).min(1.0).max(0.0);
         let bar_width = rect.width() * bar_level;
         if bar_width > 1.0 {
             let color = if bar_level > 0.85 {
@@ -290,10 +294,18 @@ pub fn level_meter(ui: &mut egui::Ui, level: f32, label: &str) {
                         egui::vec2(12.0, rect.height()),
                     ),
                     8.0,
-                    Color32::from_rgba_premultiplied(color.r(), color.g(), color.b(), 60),
+                    Color32::from_rgba_premultiplied(color.r(), color.g(), color.b(), 80),
                 );
             }
         }
+
+        // Subtle border so the track is visible even at zero level.
+        painter.rect_stroke(
+            rect,
+            8.0,
+            egui::Stroke::new(1.0, colors::BG_PANEL_LIGHT),
+            egui::StrokeKind::Outside,
+        );
 
         let db = if level > 0.0 {
             20.0 * level.log10()
