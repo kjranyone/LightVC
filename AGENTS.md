@@ -48,8 +48,9 @@ uv run python export_weights.py --checkpoint checkpoints/phase_c/best.pt --outpu
 - **推論は全て Rust (Candle)** — Pythonランタイム不要
 - **学習は全て PyTorch (uv環境)** — Rustコードに依存しない
 - **PyTorchのconverter.pyとRustのconverter.rsはキー名完全一致** — 変更時は両方更新
-- **Teacher蒸留は使わない** — flow matching直接学習のみ
-- **VC teacher不要** — target latent = 実音声のDACエンコード
+- **VC teacher蒸留は禁止** — 別VCモデルの変換音声を target とする synthetic parallel distillation は使わない
+- **補助モデルによる表現監督は許可** — WavLM-SV/ECAPA 等を speaker loss・評価・SpeakerEncoder 蒸留に使ってよい。ただし推論時依存にしない
+- **VC teacher不要** — target latent = 実音声または信号処理/同一内容ペア由来のDACエンコード
 
 ## Licensing
 

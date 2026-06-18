@@ -23,13 +23,14 @@ import os
 from pathlib import Path
 
 import soundfile as sf
-from datasets import load_dataset
+from datasets import load_dataset, Audio
 from tqdm import tqdm
 
 DATASETS = {
     "libritts": {
-        "repo": "openslr/libritts",
-        "split": "train.clean",
+        "repo": "blabble-io/libritts",
+        "config": "clean",
+        "split": "train.clean.100",
         "audio_col": "audio",
         "speaker_col": "speaker_id",
         "utt_col": "id",
@@ -71,16 +72,21 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    import io
+
     spec = DATASETS[args.dataset]
     out_root = Path(args.output)
     out_root.mkdir(parents=True, exist_ok=True)
 
-    print(f"Streaming {spec['repo']} ({spec['split']}) -> {out_root}")
+    config_str = f" ({spec['config']})" if "config" in spec else ""
+    print(f"Streaming {spec['repo']}{config_str} ({spec['split']}) -> {out_root}")
     ds = load_dataset(
         spec["repo"],
+        name=spec.get("config"),
         split=spec["split"],
         streaming=True,
     )
+    ds = ds.cast_column(spec["audio_col"], Audio(decode=False))
 
     counts: dict[str, int] = {}
     speakers_seen = 0
@@ -103,8 +109,10 @@ def main() -> None:
         counts[spk] = counts.get(spk, 0) + 1
 
         audio = ex[spec["audio_col"]]
-        wav = audio["array"]
-        sr = audio["sampling_rate"]
+        if audio.get("bytes") is not None:
+            wav, sr = sf.read(io.BytesIO(audio["bytes"]))
+        else:
+            wav, sr = sf.read(audio["path"])
 
         utt_id = str(ex.get(spec["utt_col"], f"{spk}_{written:08d}"))
         utt_id = Path(utt_id).stem
