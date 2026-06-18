@@ -370,6 +370,35 @@ wheels = [
 ]
 
 [[package]]
+name = "dtw-python"
+version = "1.7.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fc/ac/e0967e71019959197e2f8a4e99937f043f35fa1efc2ac30294ecc8b3df77/dtw_python-1.7.5.tar.gz", hash = "sha256:650dec798812dcda3aab059a5dcf5954d34d33903479df00b90d33956b7b04b3", size = 274203, upload-time = "2026-06-12T12:01:02.056Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/86/e5/7ca5760e2b9c7e94c1029a0702472954ed99ac53fe77a5cce52f458c4e3d/dtw_python-1.7.5-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:b649f37596bf7ba615a14fb41e83a84b13feefc1ca06fe680d0b2dea3a62718c", size = 363477, upload-time = "2026-06-12T12:00:03.914Z" },
+    { url = "https://files.pythonhosted.org/packages/56/04/f3e965087533fad623bf0166810449e23c3514d3ad653e0c3c44b5d0423c/dtw_python-1.7.5-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:6f7ddc56db5e825d6968462d99b3a4bd7ab45c4bd5bb390163b2b997c5aa53aa", size = 354066, upload-time = "2026-06-12T12:00:05.633Z" },
+    { url = "https://files.pythonhosted.org/packages/f9/cf/a3ec465c72a7d01f58d28bfc25fb384b04016e8a803fd465394940a58e2d/dtw_python-1.7.5-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:ccf21008a159569f3c15f3c82ef73eeb22a29bdc19436c28f795a8c4bca00be2", size = 776156, upload-time = "2026-06-12T12:00:07.58Z" },
+    { url = "https://files.pythonhosted.org/packages/8c/df/75e5aa5e14dc9fe4f5ac7f01688fcd780eb3cf6fb4c446ee35a83851ab90/dtw_python-1.7.5-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:0af359c570e7fb1c1bc3dd6d9bb82ece60f32d9f50459616199823c2b0ab4abd", size = 782056, upload-time = "2026-06-12T12:00:09.377Z" },
+    { url = "https://files.pythonhosted.org/packages/93/b9/ba98f91c75c7db36c5de0886ce17015869cbd9e945db97eb0fcca44667db/dtw_python-1.7.5-cp310-cp310-win_amd64.whl", hash = "sha256:c214bf468f3f712b29791ae8375be1728b51e28d91d526e7c151ebdd58904054", size = 355322, upload-time = "2026-06-12T12:00:10.945Z" },
+    { url = "https://files.pythonhosted.org/packages/a2/67/525d4ffdea5c5f6108b902836f999bc2d976024d0ee51aaca3f5c7c72304/dtw_python-1.7.5-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:ba1833e86fd6c242686a60ab17f68c4dcad0a5893d4ee9592199bc4bb13542e9", size = 362862, upload-time = "2026-06-12T12:00:12.657Z" },
+    { url = "https://files.pythonhosted.org/packages/83/c6/171b45921c90fe5bd7578f9cad28223087948a4c399e7efad2dc992c0e26/dtw_python-1.7.5-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:ff683ff4f59168c28b408f6eda5df9a8f3961ec3505df55d97c4ccb64ed3c143", size = 353355, upload-time = "2026-06-12T12:00:14.164Z" },
+    { url = "https://files.pythonhosted.org/packages/0a/c6/1885f820b1c3a685577f8dc95b47195e4a970fc3a7f0cad0c30d2051f3be/dtw_python-1.7.5-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:4ab61eac7124f406117b209f328802b1227327c48ce1226544d732a77a5da887", size = 804376, upload-time = "2026-06-12T12:00:15.869Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/d4/1a7ab2834b7def8012ed0723c0fa53fa555bf636e934daffdbcd78da0f77/dtw_python-1.7.5-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:0895c9e808917bc028093970d38fffe7b588aaba873bb1762cddc9048967b302", size = 810839, upload-time = "2026-06-12T12:00:17.494Z" },
+    { url = "https://files.pythonhosted.org/packages/5d/c1/3d11f3076fb512ad3342b73f6f5d806c72ed2bcf46fa1c6ed7f662f4a0bc/dtw_python-1.7.5-cp311-cp311-win_amd64.whl", hash = "sha256:97b525f28f714809aa87af6b34e2642d7a34b34a489475aa0e55f7a079f3c376", size = 355061, upload-time = "2026-06-12T12:00:18.889Z" },
+    { url = "https://files.pythonhosted.org/packages/65/af/fc153af0859cfc72877e10e69e01c6e2a853883572f4e3e54446e0a92c57/dtw_python-1.7.5-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:b68a2e2214a563f2d501db98f4f1bc66b8086a7099b9a79b7e5bcf9fb58478b7", size = 363216, upload-time = "2026-06-12T12:00:20.332Z" },
+    { url = "https://files.pythonhosted.org/packages/77/1a/a4d45bbf24f3a65db351067113c763caa2f1a94e0f92238baf938fa52ff7/dtw_python-1.7.5-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:fe7d328b15a23ae84d627e9b17a6caa837130daa11704f73edcf92f722f6a847", size = 352937, upload-time = "2026-06-12T12:00:21.721Z" },
+    { url = "https://files.pythonhosted.org/packages/30/83/031fcbb1c01b95257bfc428e2a734492ed8380e852e64aa6d8be3f3d7ae9/dtw_python-1.7.5-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:cd71e57352c1890751c9747a440c2b97e1f21c69126dcd6761451e12aefd0e03", size = 798160, upload-time = "2026-06-12T12:00:23.436Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/84/faff713299bf94fff1d881b34bcd526945605f8f0a0b7e9546bc1e2d0b29/dtw_python-1.7.5-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:07c6e461be79290048c39c67b75bb668d44adfe4140ec90fbe0bd69d17c9ec8f", size = 808882, upload-time = "2026-06-12T12:00:25.209Z" },
+    { url = "https://files.pythonhosted.org/packages/60/f3/dda5a0eb3e3e4a8355dd088b8cdaef3ba81ad5865bd4c0b117b82fef7c67/dtw_python-1.7.5-cp312-cp312-win_amd64.whl", hash = "sha256:ee8fabda2d7ce6719706f225fb24c3c74ac3b132499d9f100a0f9fe8db62223d", size = 355363, upload-time = "2026-06-12T12:00:26.807Z" },
+]
+
+[[package]]
 name = "edge-tts"
 version = "7.2.8"
 source = { registry = "https://pypi.org/simple" }
@@ -661,6 +690,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "asyncio" },
     { name = "datasets" },
+    { name = "dtw-python" },
     { name = "edge-tts" },
     { name = "einops" },
     { name = "huggingface-hub" },
@@ -690,6 +720,7 @@ eval = [
 requires-dist = [
     { name = "asyncio", specifier = ">=4.0.0" },
     { name = "datasets" },
+    { name = "dtw-python", specifier = ">=1.7.5" },
     { name = "edge-tts", specifier = ">=7.2.8" },
     { name = "einops", specifier = ">=0.7.0" },
     { name = "huggingface-hub", specifier = ">=1.19.0" },
