@@ -12,8 +12,8 @@
     Realtime tab once the training agent finishes.
 
     Demo mode (--Demo) renders with mock data and needs no DAC weights or
-    model, useful for layout review. --Screenshot launches demo mode,
-    captures the window to PNG, and exits.
+    model, useful for layout review. Tabs are switchable inside the app.
+    Use --Snap to capture the running window to PNG on demand.
 
 .PARAMETER NoBuild
     Skip the cargo build step (use the existing binary).
@@ -34,13 +34,12 @@
     WAV file for -Roundtrip.
 
 .PARAMETER Demo
-    Launch the GUI in demo mode with mock data (offline/realtime/catalog).
-    No DAC weights or model required. Useful for layout review.
+    Launch the GUI in demo mode with mock data. No DAC weights or model
+    required. Tabs are switchable inside the app.
 
-.PARAMETER Screenshot
-    Capture screenshots for the given demo state(s) and exit.
-    Accepts a comma-separated list: 'offline,realtime,catalog' or 'all'.
-    Saves to docs/screenshots/<state>.png.
+.PARAMETER Snap
+    Capture the running LightVC window to PNG (does not launch the app).
+    Saves to docs/screenshots/snap-<timestamp>.png.
 
 .EXAMPLE
     .\dev.ps1
@@ -55,16 +54,12 @@
     Validate DAC encode/decode on a sample.
 
 .EXAMPLE
-    .\dev.ps1 -Demo realtime
-    Launch GUI in demo mode (no model/DAC needed) to review the Realtime tab.
+    .\dev.ps1 -Demo
+    Launch GUI in demo mode (no model/DAC needed). Switch tabs in the app.
 
 .EXAMPLE
-    .\dev.ps1 -Screenshot all
-    Capture all three tabs to docs/screenshots/.
-
-.EXAMPLE
-    .\dev.ps1 -Screenshot offline,realtime -NoBuild
-    Capture two tabs using the existing binary.
+    .\dev.ps1 -Snap
+    Capture the running window to docs/screenshots/.
 #>
 [CmdletBinding()]
 param(
@@ -76,9 +71,7 @@ param(
     [switch]$Snap,
     [string]$Input,
     [string]$Output,
-    [ValidateSet('offline', 'realtime', 'catalog')]
-    [switch]$Demo,
-    [string]$Screenshot
+    [switch]$Demo
 )
 
 $ErrorActionPreference = 'Stop'
@@ -122,7 +115,7 @@ if ($Snap) {
     exit $LASTEXITCODE
 }
 
-$hasAction = $BuildOnly -or $Cuda -or $Metal -or $Roundtrip -or $Demo -or $Screenshot -or $Input -or $Output
+$hasAction = $BuildOnly -or $Cuda -or $Metal -or $Roundtrip -or $Demo -or $Input -or $Output
 if (-not $hasAction) {
     $choice = Show-Menu
     Write-Host ''
@@ -154,7 +147,7 @@ if (-not $hasAction) {
 }
 
 # Demo mode needs neither DAC weights nor a model.
-$skipDac = $Demo -or $Screenshot
+$skipDac = $Demo
 
 # --- 1. Build ---------------------------------------------------------------
 if (-not $NoBuild) {
@@ -205,37 +198,10 @@ if (-not $skipDac) {
         Write-Ok 'DAC weights downloaded.'
     } else {
         Write-Ok "DAC weights present: $dacPath"
-    }
+     }
 }
 
-# --- 3. Screenshot capture (build + capture + exit) -------------------------
-if ($Screenshot) {
-    $states = if ($Screenshot -eq 'all') {
-        @('offline', 'realtime', 'catalog')
-    } else {
-        $Screenshot -split ',' | ForEach-Object { $_.Trim() }
-    }
-    $validStates = @('offline', 'realtime', 'catalog')
-    foreach ($s in $states) {
-        if ($validStates -notcontains $s) {
-            Write-Err "Invalid screenshot state: '$s'. Valid: offline, realtime, catalog."
-            exit 1
-        }
-    }
-    $captureScript = Join-Path $repoRoot 'tools\capture-window.ps1'
-    foreach ($s in $states) {
-        Write-Step "Capturing screenshot: $s"
-        & $captureScript -DemoState $s
-        if ($LASTEXITCODE -ne 0) {
-            Write-Err "Capture failed for $s"
-            exit $LASTEXITCODE
-        }
-    }
-    Write-Ok "Screenshots saved to docs\screenshots\"
-    exit 0
-}
-
-# --- 4. Roundtrip test ------------------------------------------------------
+# --- 3. Roundtrip test ------------------------------------------------------
 if ($Roundtrip) {
     if (-not $Input) {
         Write-Err '-Roundtrip requires -Input <wav>'
