@@ -137,7 +137,9 @@ impl VcPipeline {
             Some(ctx) => Tensor::cat(&[ctx, &latent], 2)?,
             None => latent.clone(),
         };
-        let converted = self.converter.convert(&full_src, ref_latent, self.velocity_scale)?;
+        let converted = self
+            .converter
+            .convert(&full_src, ref_latent, self.velocity_scale)?;
 
         // Keep only newly produced frames for the decoder.
         let n_new = latent.dim(2)?;
@@ -194,6 +196,10 @@ impl VcPipeline {
 
     /// Switch latency/quality mode at runtime ([06-6]).
     ///
+    pub fn mode(&self) -> LatencyMode {
+        self.mode
+    }
+
     /// Updates the streaming codec's chunk size + lookahead and resets all
     /// streaming state to avoid frame-index mismatch from the mode change.
     pub fn set_mode(&mut self, mode: LatencyMode) {
@@ -220,7 +226,9 @@ impl VcPipeline {
         }
         let ref_latent = &self.target.as_ref().unwrap().ref_latent;
         let latent = self.stream_codec.encode_full(source_pcm)?;
-        let converted = self.converter.convert(&latent, ref_latent, self.velocity_scale)?;
+        let converted = self
+            .converter
+            .convert(&latent, ref_latent, self.velocity_scale)?;
         let pcm_out = self.stream_codec.codec().decode_to_pcm(&converted)?;
         Ok(pcm_out)
     }

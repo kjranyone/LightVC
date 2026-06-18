@@ -1529,21 +1529,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "directories"
-version = "6.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16f5094c54661b38d03bd7e50df373292118db60b585c08a411c6d840017fe7d"
-dependencies = [
- "dirs-sys 0.5.0",
-]
-
-[[package]]
 name = "dirs"
 version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "44c45a9d03d6676652bcb5e724c7e988de1acad23a711b5217ab9cbecbec2225"
 dependencies = [
- "dirs-sys 0.4.1",
+ "dirs-sys",
 ]
 
 [[package]]
@@ -1554,20 +1545,8 @@ checksum = "520f05a5cbd335fae5a99ff7a6ab8627577660ee5cfd6a94a6a929b52ff0321c"
 dependencies = [
  "libc",
  "option-ext",
- "redox_users 0.4.6",
+ "redox_users",
  "windows-sys 0.48.0",
-]
-
-[[package]]
-name = "dirs-sys"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e01a3366d27ee9890022452ee61b2b63a67e6f13f58900b651ff5665f0bb1fab"
-dependencies = [
- "libc",
- "option-ext",
- "redox_users 0.5.2",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1630,12 +1609,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
-name = "dunce"
-version = "1.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
-
-[[package]]
 name = "dyn-stack"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1653,21 +1626,12 @@ checksum = "e1d926b4d407d372f141f93bb444696142c29d32962ccbd3531117cf3aa0bfa9"
 
 [[package]]
 name = "ecolor"
-version = "0.31.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc4feb366740ded31a004a0e4452fbf84e80ef432ecf8314c485210229672fd1"
-dependencies = [
- "emath 0.31.1",
-]
-
-[[package]]
-name = "ecolor"
 version = "0.34.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a05fbfa222ffb51989d5ccf33e5f7aebfcf96c5023413856b0c3618a7f79896e"
 dependencies = [
  "bytemuck",
- "emath 0.34.3",
+ "emath",
 ]
 
 [[package]]
@@ -1679,7 +1643,7 @@ dependencies = [
  "ahash",
  "bytemuck",
  "document-features",
- "egui 0.34.3",
+ "egui",
  "egui-wgpu",
  "egui-winit",
  "egui_glow",
@@ -1708,20 +1672,6 @@ dependencies = [
 
 [[package]]
 name = "egui"
-version = "0.31.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25dd34cec49ab55d85ebf70139cb1ccd29c977ef6b6ba4fe85489d6877ee9ef3"
-dependencies = [
- "ahash",
- "bitflags 2.13.0",
- "emath 0.31.1",
- "epaint 0.31.1",
- "nohash-hasher",
- "profiling",
-]
-
-[[package]]
-name = "egui"
 version = "0.34.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42112be0ae157289312b92b3dfaf20e911b5a3c4c65d4aab0e7c47fbc0ce16e3"
@@ -1729,8 +1679,8 @@ dependencies = [
  "accesskit",
  "ahash",
  "bitflags 2.13.0",
- "emath 0.34.3",
- "epaint 0.34.3",
+ "emath",
+ "epaint",
  "log",
  "nohash-hasher",
  "profiling",
@@ -1746,26 +1696,13 @@ checksum = "d6cb16bc376fa2a9039fb65b31d91940b853f9b64f49429b61b5eda830a1300c"
 dependencies = [
  "baseview",
  "copypasta",
- "egui 0.34.3",
+ "egui",
  "egui_glow",
  "keyboard-types",
  "nice-plug-core",
  "open",
  "raw-window-handle 0.5.2",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "egui-file-dialog"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "490e34981a9905b303e3f8dc90f59776d399d5a38120cfccd6aba00fb49a14b0"
-dependencies = [
- "directories",
- "dunce",
- "egui 0.31.1",
- "serde",
- "sysinfo",
 ]
 
 [[package]]
@@ -1777,8 +1714,8 @@ dependencies = [
  "ahash",
  "bytemuck",
  "document-features",
- "egui 0.34.3",
- "epaint 0.34.3",
+ "egui",
+ "epaint",
  "log",
  "profiling",
  "thiserror 2.0.18",
@@ -1797,7 +1734,7 @@ dependencies = [
  "accesskit_winit",
  "arboard",
  "bytemuck",
- "egui 0.34.3",
+ "egui",
  "log",
  "objc2 0.6.4",
  "objc2-foundation 0.3.2",
@@ -1817,7 +1754,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62b652957fa7e1ab01e8fecbfbf4e35f6e43a53fa98af8a562b50d5403cd44b9"
 dependencies = [
  "bytemuck",
- "egui 0.34.3",
+ "egui",
  "glow",
  "log",
  "memoffset",
@@ -1832,12 +1769,6 @@ name = "either"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
-
-[[package]]
-name = "emath"
-version = "0.31.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e4cadcff7a5353ba72b7fea76bf2122b5ebdbc68e8155aa56dfdea90083fe1b"
 
 [[package]]
 name = "emath"
@@ -1901,31 +1832,15 @@ checksum = "c7f84e12ccf0a7ddc17a6c41c93326024c42920d7ee630d04950e6926645c0fe"
 
 [[package]]
 name = "epaint"
-version = "0.31.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41fcc0f5a7c613afd2dee5e4b30c3e6acafb8ad6f0edb06068811f708a67c562"
-dependencies = [
- "ab_glyph",
- "ahash",
- "ecolor 0.31.1",
- "emath 0.31.1",
- "epaint_default_fonts 0.31.1",
- "nohash-hasher",
- "parking_lot",
- "profiling",
-]
-
-[[package]]
-name = "epaint"
 version = "0.34.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6675898a291ec212fc3df04f537d177fce8496120244590e6359dcaa4c25da79"
 dependencies = [
  "ahash",
  "bytemuck",
- "ecolor 0.34.3",
- "emath 0.34.3",
- "epaint_default_fonts 0.34.3",
+ "ecolor",
+ "emath",
+ "epaint_default_fonts",
  "font-types",
  "log",
  "nohash-hasher",
@@ -1936,12 +1851,6 @@ dependencies = [
  "smallvec",
  "vello_cpu",
 ]
-
-[[package]]
-name = "epaint_default_fonts"
-version = "0.31.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc7e7a64c02cf7a5b51e745a9e45f60660a286f151c238b9d397b3e923f5082f"
 
 [[package]]
 name = "epaint_default_fonts"
@@ -3129,7 +3038,6 @@ dependencies = [
  "cpal",
  "crossbeam-channel",
  "eframe",
- "egui-file-dialog",
  "hound",
  "image",
  "lightvc-audio",
@@ -3158,7 +3066,7 @@ dependencies = [
  "candle-core",
  "clap-wrapper",
  "crossbeam-channel",
- "egui 0.34.3",
+ "egui",
  "lightvc-core",
  "nice-plug",
  "nice-plug-egui",
@@ -3508,7 +3416,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29487e846af3ebbc75bdcc96a597b79089dde9544d8a41301ce3c4f7bb6e522b"
 dependencies = [
  "crossbeam",
- "egui 0.34.3",
+ "egui",
  "egui-baseview",
  "nice-plug-core",
  "parking_lot",
@@ -3900,16 +3808,6 @@ dependencies = [
  "block2 0.6.2",
  "libc",
  "objc2 0.6.4",
- "objc2-core-foundation",
-]
-
-[[package]]
-name = "objc2-io-kit"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33fafba39597d6dc1fb709123dfa8289d39406734be322956a69f0931c73bb15"
-dependencies = [
- "libc",
  "objc2-core-foundation",
 ]
 
@@ -4770,17 +4668,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "redox_users"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4e608c6638b9c18977b00b475ac1f28d14e84b27d8d42f70e0bf1e3dec127ac"
-dependencies = [
- "getrandom 0.2.17",
- "libredox",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "regex"
 version = "1.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5423,18 +5310,6 @@ dependencies = [
  "libc",
  "thiserror 1.0.69",
  "walkdir",
-]
-
-[[package]]
-name = "sysinfo"
-version = "0.35.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c3ffa3e4ff2b324a57f7aeb3c349656c7b127c3c189520251a648102a92496e"
-dependencies = [
- "libc",
- "objc2-core-foundation",
- "objc2-io-kit",
- "windows 0.61.3",
 ]
 
 [[package]]

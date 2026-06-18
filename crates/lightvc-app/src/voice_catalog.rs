@@ -4,17 +4,25 @@
 use std::sync::{Arc, Mutex};
 
 use eframe::egui;
-use egui_file_dialog::FileDialog;
 
 use crate::app::AppState;
 use crate::app::VoiceEntry;
-use crate::audio_playback;
+use crate::audio_playback::{self, AudioPlayer};
+use crate::file_pick::FilePick;
+
+/// Catalog tab state. Holds the currently-playing preview so it can be stopped.
+#[derive(Default)]
+pub struct CatalogState {
+    pub player: Option<AudioPlayer>,
+}
 
 pub fn render(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
-    file_dialog: &mut FileDialog,
+    add_pick: &FilePick,
+    import_pick: &FilePick,
     state: &Arc<Mutex<AppState>>,
+    catalog: &mut CatalogState,
     icon_folder: &egui::TextureHandle,
     icon_play: &egui::TextureHandle,
     icon_trash: &egui::TextureHandle,
@@ -54,8 +62,11 @@ pub fn render(
             );
             ui.add_sized([120.0, 20.0], egui::TextEdit::singleline(&mut name_buf));
             if crate::theme::icon_button(ui, icon_folder, "Browse", false) {
-                file_dialog.pick_file();
-                ctx.data_mut(|d| d.insert_temp("catalog_pick".into(), true));
+                add_pick.open();
+            }
+            // Receive the picked path from the background rfd thread.
+            if let Some(path) = add_pick.take() {
+                ctx.data_mut(|d| d.insert_temp("catalog_picked".into(), path));
             }
             if crate::theme::pill_button(ui, "Add", !name_buf.is_empty()) && !name_buf.is_empty() {
                 let picked =
@@ -161,13 +172,28 @@ pub fn render(
                                         ) {
                                             to_delete = Some(i);
                                         }
-                                        if crate::theme::icon_button(ui, icon_play, "Play", false) {
-                                            if let Ok((wav, sr)) =
+                                        // Play / Stop toggle ([F4]).
+                                        let playing_idx = catalog
+                                            .player
+                                            .as_ref()
+                                            .map(|p| p.is_playing())
+                                            .unwrap_or(false);
+                                        let play_label =
+                                            if playing_idx { "■ Stop" } else { "▶ Play" };
+                                        if crate::theme::icon_button(
+                                            ui, icon_play, play_label, false,
+                                        ) {
+                                            if playing_idx {
+                                                if let Some(p) = catalog.player.take() {
+                                                    p.stop();
+                                                }
+                                            } else if let Ok((wav, sr)) =
                                                 audio_playback::load_wav_mono(&voice.path)
                                             {
                                                 let wav44 =
                                                     audio_playback::resample_linear(&wav, sr);
-                                                let _ = audio_playback::AudioPlayer::play(wav44);
+                                                catalog.player =
+                                                    audio_playback::AudioPlayer::play(wav44).ok();
                                             }
                                         }
                                         // Select this voice as the Realtime reference.
@@ -224,38 +250,30 @@ pub fn render(
                     }
                 }
                 if crate::theme::icon_button(ui, icon_folder, "Import", true) {
-                    file_dialog.pick_file();
-                    ctx.data_mut(|d| d.insert_temp("catalog_import".into(), true));
+                    import_pick.open();
                 }
             });
         },
     );
 
-    // Handle file dialog
-    if let Some(path) = file_dialog.take_picked() {
-        let is_import =
-            ctx.data_mut(|d| d.get_temp::<bool>("catalog_import".into()).unwrap_or(false));
-        if is_import {
-            if let Ok(json) = std::fs::read_to_string(&path) {
-                if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(&json) {
-                    let count = arr.len();
-                    let mut s = state.lock().unwrap();
-                    for entry in arr {
-                        if let (Some(name), Some(path_str)) =
-                            (entry["name"].as_str(), entry["path"].as_str())
-                        {
-                            s.voices.push(VoiceEntry {
-                                name: name.to_string(),
-                                path: std::path::PathBuf::from(path_str),
-                            });
-                        }
+    // Handle import pick.
+    if let Some(path) = import_pick.take() {
+        if let Ok(json) = std::fs::read_to_string(&path) {
+            if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(&json) {
+                let count = arr.len();
+                let mut s = state.lock().unwrap();
+                for entry in arr {
+                    if let (Some(name), Some(path_str)) =
+                        (entry["name"].as_str(), entry["path"].as_str())
+                    {
+                        s.voices.push(VoiceEntry {
+                            name: name.to_string(),
+                            path: std::path::PathBuf::from(path_str),
+                        });
                     }
-                    s.status = format!("Imported {} voices", count);
                 }
+                s.status = format!("Imported {} voices", count);
             }
-            ctx.data_mut(|d| d.remove_temp::<bool>("catalog_import".into()));
-        } else {
-            ctx.data_mut(|d| d.insert_temp("catalog_picked".into(), path));
         }
     }
 }

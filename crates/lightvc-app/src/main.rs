@@ -9,6 +9,7 @@ mod app;
 mod assets;
 mod audio_playback;
 mod cli;
+mod file_pick;
 mod offline_tab;
 mod realtime_tab;
 mod theme;

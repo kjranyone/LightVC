@@ -23,6 +23,11 @@ pub struct RtMetrics {
     pub overrun: u64,
     /// Playback underrun count since start ([07-4]).
     pub underrun: u64,
+    /// Current effective mode ([F5]). May differ from the user-selected
+    /// mode when auto-degradation kicked in.
+    pub current_mode: lightvc_core::converter::LatencyMode,
+    /// True when the mode was auto-downgraded due to underruns ([F5]).
+    pub auto_degraded: bool,
 }
 
 /// Control messages from UI to real-time inference thread.
@@ -40,12 +45,19 @@ pub enum RtControl {
     LoadReference(Vec<f32>), // 44.1kHz mono PCM
 }
 
+/// Type alias for the shared pipeline slot.
+pub type PipelineSlot = Arc<Mutex<Option<Arc<Mutex<lightvc_core::pipeline::VcPipeline>>>>>;
+
 /// Application-wide shared state.
 pub struct AppState {
     pub dac_weights: std::path::PathBuf,
     pub converter_weights: Option<std::path::PathBuf>,
     pub converter_config: Option<std::path::PathBuf>,
     pub pipeline: Option<Arc<Mutex<lightvc_core::pipeline::VcPipeline>>>,
+    /// Shared hot-swappable pipeline slot. The inference thread reads this
+    /// every loop iteration so a converter loaded after thread start is
+    /// picked up without restarting the thread ([F2]).
+    pub pipeline_slot: PipelineSlot,
     pub voices: Vec<VoiceEntry>,
     pub selected_voice: Option<usize>,
     pub error: Option<String>,
@@ -74,8 +86,8 @@ enum Tab {
 pub struct LightVcApp {
     state: Arc<Mutex<AppState>>,
     current_tab: Tab,
-    file_dialog: egui_file_dialog::FileDialog,
     offline: crate::offline_tab::OfflineState,
+    catalog: crate::voice_catalog::CatalogState,
     rt_running: bool,
     rt_bypass: bool,
     rt_mode: lightvc_core::converter::LatencyMode,
@@ -86,6 +98,12 @@ pub struct LightVcApp {
     rt_selected_output: Option<usize>,
     conv_path_buf: String,
     conv_cfg_buf: String,
+    /// File pickers for the Realtime converter/config fields.
+    rt_converter_pick: crate::file_pick::FilePick,
+    rt_config_pick: crate::file_pick::FilePick,
+    /// File pickers for the Catalog add/import actions.
+    catalog_add_pick: crate::file_pick::FilePick,
+    catalog_import_pick: crate::file_pick::FilePick,
     asset_cache: crate::assets::AssetCache,
     splash_frames: u32, // 0 = showing splash, >0 = finished
 }
@@ -97,6 +115,7 @@ impl LightVcApp {
             converter_weights: None,
             converter_config: None,
             pipeline: None,
+            pipeline_slot: Arc::new(Mutex::new(None)),
             voices: Vec::new(),
             selected_voice: None,
             error: None,
@@ -110,8 +129,8 @@ impl LightVcApp {
         Self {
             state,
             current_tab: Tab::Offline,
-            file_dialog: egui_file_dialog::FileDialog::default(),
             offline: Default::default(),
+            catalog: Default::default(),
             rt_running: false,
             rt_bypass: false,
             rt_mode: lightvc_core::converter::LatencyMode::Balanced,
@@ -120,6 +139,10 @@ impl LightVcApp {
             rt_selected_output: None,
             conv_path_buf: String::new(),
             conv_cfg_buf: String::new(),
+            rt_converter_pick: Default::default(),
+            rt_config_pick: Default::default(),
+            catalog_add_pick: Default::default(),
+            catalog_import_pick: Default::default(),
             asset_cache: Default::default(),
             splash_frames: 0,
         }
@@ -133,7 +156,11 @@ impl LightVcApp {
 
         let (control_tx, control_rx) = unbounded();
         let (metrics_tx, metrics_rx) = unbounded();
-        let pipeline = s.pipeline.clone();
+        // Share the pipeline slot itself (Arc<Mutex<Option<Arc<Mutex<…>>>>>)
+        // so that load_converter_static can swap it in after the thread is
+        // already running. Previously the thread captured a clone of the
+        // Option at spawn time, so a converter loaded later was invisible.
+        let pipeline_slot = s.pipeline_slot.clone();
 
         s.rt_control_tx = Some(control_tx);
         s.rt_metrics_rx = Some(metrics_rx);
@@ -144,7 +171,7 @@ impl LightVcApp {
         // Spawn the inference thread even without a converter — it will
         // run in bypass mode, allowing the audio path to be tested.
         std::thread::spawn(move || {
-            crate::realtime_tab::inference_loop(pipeline, control_rx, metrics_tx);
+            crate::realtime_tab::inference_loop(pipeline_slot, control_rx, metrics_tx);
         });
     }
 
@@ -177,7 +204,9 @@ impl LightVcApp {
             )?;
 
             let mut s = state.lock().unwrap();
-            s.pipeline = Some(Arc::new(Mutex::new(pipeline)));
+            let pipeline_arc = Arc::new(Mutex::new(pipeline));
+            s.pipeline = Some(pipeline_arc.clone());
+            *s.pipeline_slot.lock().unwrap() = Some(pipeline_arc);
             s.converter_weights = Some(std::path::PathBuf::from(conv_path));
             s.converter_config = if cfg_path.is_empty() {
                 None
@@ -339,7 +368,6 @@ impl LightVcApp {
                             crate::offline_tab::render(
                                 ui,
                                 ctx,
-                                &mut self.file_dialog,
                                 &self.state,
                                 &mut self.offline,
                                 &folder,
@@ -364,6 +392,8 @@ impl LightVcApp {
                                 self.state.lock().unwrap().status =
                                     "Audio device disconnected".to_string();
                             }
+                            // [F5] sync auto-degraded mode to the knob.
+                            self.rt_mode = m.current_mode;
                             self.rt_metrics = m;
                         }
                     }
@@ -378,7 +408,8 @@ impl LightVcApp {
                 let mut rt_sel_in = self.rt_selected_input;
                 let mut rt_sel_out = self.rt_selected_output;
                 let metrics = self.rt_metrics.clone();
-                let file_dialog = &mut self.file_dialog;
+                let converter_pick = self.rt_converter_pick.clone();
+                let config_pick = self.rt_config_pick.clone();
                 let knob_tex = self.asset_cache.knob(ctx);
                 let knob_tex_ref = knob_tex.clone();
                 let icon_stop_tex = self.asset_cache.icon_stop(ctx);
@@ -391,7 +422,8 @@ impl LightVcApp {
                             crate::realtime_tab::render(
                                 ui,
                                 ctx,
-                                file_dialog,
+                                &converter_pick,
+                                &config_pick,
                                 &state,
                                 &mut conv_path,
                                 &mut conv_cfg,
@@ -419,6 +451,7 @@ impl LightVcApp {
                 self.rt_selected_output = rt_sel_out;
             }
             Tab::Catalog => {
+                let mut catalog = std::mem::take(&mut self.catalog);
                 egui::CentralPanel::default().show(ctx, |ui| {
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
@@ -428,11 +461,15 @@ impl LightVcApp {
                             let trash = self.asset_cache.icon_trash(ctx).clone();
                             let empty = self.asset_cache.empty_stars(ctx).clone();
                             let state = self.state.clone();
+                            let add_pick = self.catalog_add_pick.clone();
+                            let import_pick = self.catalog_import_pick.clone();
                             crate::voice_catalog::render(
                                 ui,
                                 ctx,
-                                &mut self.file_dialog,
+                                &add_pick,
+                                &import_pick,
                                 &state,
+                                &mut catalog,
                                 &folder,
                                 &play,
                                 &trash,
@@ -457,6 +494,7 @@ impl LightVcApp {
                             );
                         });
                 });
+                self.catalog = catalog;
             }
         }
 

@@ -9,18 +9,19 @@ use std::time::Instant;
 use cpal::traits::HostTrait;
 use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
-use egui_file_dialog::FileDialog;
 
 use crate::app::AppState;
 use crate::app::{RtControl, RtMetrics};
+use crate::file_pick::FilePick;
 use crate::widgets;
 
 /// Render the realtime tab.
 #[allow(clippy::too_many_arguments)]
 pub fn render(
     ui: &mut egui::Ui,
-    ctx: &egui::Context,
-    file_dialog: &mut FileDialog,
+    _ctx: &egui::Context,
+    converter_pick: &FilePick,
+    config_pick: &FilePick,
     state: &Arc<Mutex<AppState>>,
     conv_path: &mut String,
     conv_cfg: &mut String,
@@ -57,8 +58,7 @@ pub fn render(
                 );
                 ui.text_edit_singleline(conv_path);
                 if crate::theme::pill_button(ui, "Browse", false) {
-                    file_dialog.pick_file();
-                    ctx.data_mut(|d| d.insert_temp("rt_pick".into(), "converter"));
+                    converter_pick.open();
                 }
             });
 
@@ -70,8 +70,7 @@ pub fn render(
                 );
                 ui.text_edit_singleline(conv_cfg);
                 if crate::theme::pill_button(ui, "Browse", false) {
-                    file_dialog.pick_file();
-                    ctx.data_mut(|d| d.insert_temp("rt_pick".into(), "config"));
+                    config_pick.open();
                 }
             });
 
@@ -92,14 +91,12 @@ pub fn render(
             );
         });
 
-        // Handle file dialog
-        if let Some(path) = file_dialog.take_picked() {
-            let pick = ctx.data_mut(|d| d.get_temp::<String>("rt_pick".into()).unwrap_or_default());
-            match pick.as_str() {
-                "converter" => *conv_path = path.to_string_lossy().into_owned(),
-                "config" => *conv_cfg = path.to_string_lossy().into_owned(),
-                _ => {}
-            }
+        // Handle file picks.
+        if let Some(path) = converter_pick.take() {
+            *conv_path = path.to_string_lossy().into_owned();
+        }
+        if let Some(path) = config_pick.take() {
+            *conv_cfg = path.to_string_lossy().into_owned();
         }
     }
 
@@ -173,6 +170,16 @@ pub fn render(
                 egui::RichText::new(format!(
                     "xruns: {} over / {} under",
                     metrics.overrun, metrics.underrun
+                ))
+                .size(11.0)
+                .color(crate::theme::colors::YELLOW),
+            );
+        }
+        if metrics.auto_degraded {
+            ui.label(
+                egui::RichText::new(format!(
+                    "⚠ Auto-degraded to {:?} (underruns)",
+                    metrics.current_mode
                 ))
                 .size(11.0)
                 .color(crate::theme::colors::YELLOW),
@@ -378,12 +385,12 @@ pub fn render(
 // =========================================================================
 
 pub fn inference_loop(
-    pipeline: Option<Arc<Mutex<lightvc_core::pipeline::VcPipeline>>>,
+    pipeline_slot: crate::app::PipelineSlot,
     control_rx: Receiver<RtControl>,
     metrics_tx: Sender<RtMetrics>,
 ) {
     let mut running = false;
-    let mut bypass = pipeline.is_none(); // force bypass when no converter
+    let mut bypass = pipeline_slot.lock().unwrap().is_none(); // force bypass when no converter
     let mut engine: Option<lightvc_audio::AudioEngine> = None;
     let mut capture_consumer: Option<rtrb::Consumer<f32>> = None;
     let mut playback_producer: Option<rtrb::Producer<f32>> = None;
@@ -520,7 +527,12 @@ pub fn inference_loop(
                     disconnected_reported = false;
                 }
                 RtControl::SetMode(mode) => {
-                    if let Some(mut p) = pipeline.as_ref().and_then(|p| p.lock().ok()) {
+                    if let Some(mut p) = pipeline_slot
+                        .lock()
+                        .unwrap()
+                        .as_ref()
+                        .and_then(|p| p.lock().ok())
+                    {
                         p.codec_mut().set_chunk_mode(match mode {
                             lightvc_core::converter::LatencyMode::Strict => {
                                 lightvc_core::streaming::ChunkMode::Strict
@@ -536,7 +548,12 @@ pub fn inference_loop(
                 }
                 RtControl::Bypass(b) => bypass = b,
                 RtControl::LoadReference(pcm) => {
-                    if let Some(mut p) = pipeline.as_ref().and_then(|p| p.lock().ok()) {
+                    if let Some(mut p) = pipeline_slot
+                        .lock()
+                        .unwrap()
+                        .as_ref()
+                        .and_then(|p| p.lock().ok())
+                    {
                         let _ = p.set_target(&pcm);
                     }
                 }
@@ -579,7 +596,9 @@ pub fn inference_loop(
             continue;
         };
 
-        let chunk_sz = pipeline
+        let chunk_sz = pipeline_slot
+            .lock()
+            .unwrap()
             .as_ref()
             .and_then(|p| p.lock().ok())
             .map(|p| p.chunk_samples())
@@ -645,7 +664,12 @@ pub fn inference_loop(
             let out = if bypass {
                 chunk.clone()
             } else {
-                match pipeline.as_ref().and_then(|p| p.lock().ok()) {
+                match pipeline_slot
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .and_then(|p| p.lock().ok())
+                {
                     Some(mut p) => p.process_chunk(&chunk).unwrap_or_else(|e| {
                         eprintln!("VC: {e}");
                         chunk.clone()
@@ -670,7 +694,9 @@ pub fn inference_loop(
             let algo_ms = if bypass {
                 0.0
             } else {
-                pipeline
+                pipeline_slot
+                    .lock()
+                    .unwrap()
                     .as_ref()
                     .and_then(|p| p.lock().ok())
                     .map(|p| p.algorithmic_latency_ms())
@@ -724,7 +750,12 @@ pub fn inference_loop(
         }
         // After 10 consecutive iterations with underruns, downgrade one level.
         if underrun_streak >= 10 && !auto_degraded {
-            if let Some(mut p) = pipeline.as_ref().and_then(|p| p.lock().ok()) {
+            if let Some(mut p) = pipeline_slot
+                .lock()
+                .unwrap()
+                .as_ref()
+                .and_then(|p| p.lock().ok())
+            {
                 let current = p.algorithmic_latency_ms();
                 if current > 50.0 {
                     // Quality → Balanced, or Balanced → Strict.
@@ -740,6 +771,13 @@ pub fn inference_loop(
             }
         }
 
+        let current_mode = pipeline_slot
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|p| p.lock().ok())
+            .map(|p| p.mode())
+            .unwrap_or(lightvc_core::converter::LatencyMode::Strict);
         let _ = metrics_tx.send(RtMetrics {
             input_rms: in_rms_last,
             output_rms: out_rms_last,
@@ -748,6 +786,8 @@ pub fn inference_loop(
             disconnected: false,
             overrun,
             underrun,
+            current_mode,
+            auto_degraded,
         });
 
         if !did_work {

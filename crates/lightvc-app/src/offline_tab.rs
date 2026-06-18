@@ -4,10 +4,10 @@
 use std::sync::{Arc, Mutex};
 
 use eframe::egui;
-use egui_file_dialog::FileDialog;
 
 use crate::app::AppState;
 use crate::audio_playback::{self, AudioPlayer};
+use crate::file_pick::FilePick;
 
 const LABEL_WIDTH: f32 = 80.0;
 
@@ -22,14 +22,15 @@ pub struct OfflineState {
     pub player: Option<AudioPlayer>,
     pub source_preview: Option<AudioPlayer>,
     pub reference_preview: Option<AudioPlayer>,
-    pub pick_target: Option<String>,
+    /// One picker per potential target — avoids a shared mutable flag.
+    pub source_pick: FilePick,
+    pub reference_pick: FilePick,
 }
 
 #[allow(clippy::too_many_arguments)]
 pub fn render(
     ui: &mut egui::Ui,
     _ctx: &egui::Context,
-    file_dialog: &mut FileDialog,
     state: &Arc<Mutex<AppState>>,
     offline: &mut OfflineState,
     icon_folder: &egui::TextureHandle,
@@ -90,8 +91,7 @@ pub fn render(
                         }
                         ui.add_space(4.0);
                         if crate::theme::icon_button(ui, icon_folder, "Browse", true) {
-                            offline.pick_target = Some("source".into());
-                            file_dialog.pick_file();
+                            offline.source_pick.open();
                         }
                     });
                 });
@@ -141,8 +141,7 @@ pub fn render(
                         }
                         ui.add_space(4.0);
                         if crate::theme::icon_button(ui, icon_folder, "Browse", true) {
-                            offline.pick_target = Some("reference".into());
-                            file_dialog.pick_file();
+                            offline.reference_pick.open();
                         }
                     });
                 });
@@ -208,6 +207,15 @@ pub fn render(
 
                 ui.add_enabled_ui(can_convert, |ui| {
                     if ui.add(btn).clicked() {
+                        // Clear any previous result so the next completion is
+                        // picked up ([F3]). Previously the is_none() guard
+                        // blocked updates on the 2nd+ conversion.
+                        offline.converted_samples = None;
+                        offline.player = None;
+                        {
+                            let mut s = state.lock().unwrap();
+                            s.offline_result = None;
+                        }
                         offline.converting = true;
                         let st = state.clone();
                         let src = offline.source_path.clone();
@@ -298,22 +306,19 @@ pub fn render(
                 offline.converting = false;
             }
         }
-        // Pick up completed result
-        if s.offline_result.is_some() && offline.converted_samples.is_none() {
+        // Pick up completed result. Unconditional replace so a fresh
+        // conversion always wins over stale UI state ([F3]).
+        if s.offline_result.is_some() {
             offline.converted_samples = s.offline_result.clone();
         }
     }
 
-    // Handle file dialog
-    if let Some(path) = file_dialog.take_picked() {
-        if let Some(ref target) = offline.pick_target {
-            match target.as_str() {
-                "source" => offline.source_path = path.to_string_lossy().into_owned(),
-                "reference" => offline.reference_path = path.to_string_lossy().into_owned(),
-                _ => {}
-            }
-        }
-        offline.pick_target = None;
+    // Handle file picks (rfd runs off-thread; results land here next frame).
+    if let Some(path) = offline.source_pick.take() {
+        offline.source_path = path.to_string_lossy().into_owned();
+    }
+    if let Some(path) = offline.reference_pick.take() {
+        offline.reference_path = path.to_string_lossy().into_owned();
     }
 }
 
