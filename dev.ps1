@@ -1,4 +1,4 @@
-﻿﻿<#
+﻿<#
 .SYNOPSIS
     LightVC development helper — one-command GUI launch with auto DAC weights.
 
