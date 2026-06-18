@@ -105,11 +105,9 @@ function Show-Menu {
     Write-Menu '  [1] GUI を起動（通常・DAC重みDL + ビルド）'
     Write-Menu '  [2] GUI を起動（ビルドスキップ）'
     Write-Menu '  [3] デモモードで起動（モデル/DAC不要）'
-    Write-Menu '  [4] スクショ撮影（全タブ）'
-    Write-Menu '  [5] スクショ撮影（タブ指定）'
-    Write-Menu '  [6] DAC ラウンドトリップテスト'
-    Write-Menu '  [7] ビルドのみ'
-    Write-Menu '  [8] 起動中アプリのスクショを撮る（on-demand）'
+    Write-Menu '  [4] DAC ラウンドトリップテスト'
+    Write-Menu '  [5] ビルドのみ'
+    Write-Menu '  [6] 起動中アプリのスクショを撮る（on-demand）'
     Write-Menu '  [Q] 終了'
     Write-Host ''
     return (Read-Host '番号を選択')
@@ -149,20 +147,13 @@ if (-not $hasAction) {
         $Demo = Pick-DemoTab
         $action = 'demo'
     } elseif ($choice -eq '4') {
-        $Screenshot = 'all'
-        $action = 'screenshot'
-    } elseif ($choice -eq '5') {
-        Write-Host '  カンマ区切りで指定 例: offline,realtime' -ForegroundColor Yellow
-        $Screenshot = Read-Host 'タブ'
-        $action = 'screenshot'
-    } elseif ($choice -eq '6') {
         $Roundtrip = $true
         $Input = Read-Host 'WAV ファイルパス'
         $action = 'roundtrip'
-    } elseif ($choice -eq '7') {
+    } elseif ($choice -eq '5') {
         $BuildOnly = $true
         $action = 'buildonly'
-    } elseif ($choice -eq '8') {
+    } elseif ($choice -eq '6') {
         $Snap = $true
         $action = 'snap'
     } elseif ($choice -eq 'q' -or $choice -eq 'Q') {
@@ -172,7 +163,6 @@ if (-not $hasAction) {
         exit 1
     }
     if ($action -eq 'demo' -and -not $Demo) { Write-Err 'キャンセル'; exit 1 }
-    if ($action -eq 'screenshot' -and -not $Screenshot) { exit 1 }
     if ($action -eq 'roundtrip' -and -not $Input) { exit 1 }
 }
 
