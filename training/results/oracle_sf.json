@@ -1,0 +1,24 @@
+{
+  "O4_self_recon": {
+    "mean": 0.8651268899440765,
+    "std": 0.04096772928424449
+  },
+  "O1_synth_tgt_env": {
+    "secs_tgt_mean": 0.43037308249622586,
+    "secs_tgt_std": 0.27021734739748143,
+    "secs_src_mean": 0.07026004735380412,
+    "secs_src_std": 0.1114725422945229
+  },
+  "O2_mean_envelope": {
+    "secs_tgt_mean": 0.14444222003221513,
+    "secs_tgt_std": 0.06321618214768195,
+    "secs_src_mean": 0.09628561050631106,
+    "secs_src_std": 0.04739012719862315
+  },
+  "O3_affine_transport": {
+    "secs_tgt_mean": 0.17530963234603406,
+    "secs_tgt_std": 0.1227603589087112,
+    "secs_src_mean": 0.6338832817971707,
+    "secs_src_std": 0.1855861066133658
+  }
+}
