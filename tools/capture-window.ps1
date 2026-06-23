@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Capture a window screenshot for documentation / visual regression.
 
@@ -61,51 +61,64 @@ Start-Sleep -Milliseconds $WaitMs
 
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
-Add-Type @"
+if (-not ('LightvcCap2' -as [type])) {
+    Add-Type @"
 using System;
 using System.Runtime.InteropServices;
-public class Win32 {
+public class LightvcCap2 {
     [DllImport("user32.dll")]
     public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
     [DllImport("user32.dll")]
     public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
     [DllImport("user32.dll")]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")]
+    public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, int nFlags);
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT { public int Left, Top, Right, Bottom; }
 }
 "@
+}
 
 # eframe 0.34 may delay setting the window title; retry for up to 5s.
 $hwnd = [IntPtr]::Zero
 for ($i = 0; $i -lt 10; $i++) {
-    $hwnd = [Win32]::FindWindow($null, 'LightVC')
+    $hwnd = [LightvcCap2]::FindWindow($null, 'LightVC')
     if ($hwnd -ne [IntPtr]::Zero) { break }
     Start-Sleep -Milliseconds 500
 }
 if ($hwnd -eq [IntPtr]::Zero) {
     Write-Warning "Window 'LightVC' not found after 5s; saving full primary screen instead."
     $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    $bmp = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
+    $gfx = [System.Drawing.Graphics]::FromImage($bmp)
+    $gfx.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bmp.Size)
+    $gfx.Dispose()
 } else {
-    [Win32]::SetForegroundWindow($hwnd) | Out-Null
+    [LightvcCap2]::SetForegroundWindow($hwnd) | Out-Null
     Start-Sleep -Milliseconds 300
-    $rect = New-Object Win32+RECT
-    [Win32]::GetWindowRect($hwnd, [ref]$rect) | Out-Null
-    $bounds = New-Object System.Drawing.Rectangle(
-        $rect.Left, $rect.Top,
-        $rect.Right - $rect.Left,
-        $rect.Bottom - $rect.Top
-    )
+    $rect = New-Object LightvcCap2+RECT
+    [LightvcCap2]::GetWindowRect($hwnd, [ref]$rect) | Out-Null
+    $w = $rect.Right - $rect.Left
+    $h = $rect.Bottom - $rect.Top
+    $bmp = New-Object System.Drawing.Bitmap $w, $h
+    $gfx = [System.Drawing.Graphics]::FromImage($bmp)
+    $hdc = $gfx.GetHdc()
+    $ok = [LightvcCap2]::PrintWindow($hwnd, $hdc, 2)  # PW_RENDERFULLCONTENT
+    $gfx.ReleaseHdc($hdc)
+    $gfx.Dispose()
+    if (-not $ok) {
+        $bmp.Dispose()
+        $bmp = New-Object System.Drawing.Bitmap $w, $h
+        $gfx2 = [System.Drawing.Graphics]::FromImage($bmp)
+        $gfx2.CopyFromScreen($rect.Left, $rect.Top, 0, 0, $bmp.Size)
+        $gfx2.Dispose()
+    }
 }
 
-$bmp = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
-$gfx = [System.Drawing.Graphics]::FromImage($bmp)
-$gfx.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bmp.Size)
-
 $bmp.Save($Out, [System.Drawing.Imaging.ImageFormat]::Png)
-$gfx.Dispose()
 $bmp.Dispose()
 
-Write-Host "Saved: $Out ($($bounds.Width)x$($bounds.Height))" -ForegroundColor Green
+Write-Host "Saved: $Out" -ForegroundColor Green
 
 Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue

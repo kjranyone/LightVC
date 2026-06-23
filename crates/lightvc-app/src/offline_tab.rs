@@ -44,9 +44,6 @@ pub fn render(
 ) {
     let has_converter = state.lock().unwrap().converter_weights.is_some();
 
-    crate::theme::heading(ui, "Offline Voice Conversion");
-    ui.add_space(crate::theme::space::MEDIUM);
-
     ui.vertical_centered(|ui| {
         egui::Frame::NONE.show(ui, |ui| {
             ui.set_max_width(520.0);
@@ -74,7 +71,7 @@ pub fn render(
                             .as_ref()
                             .map(|p| p.is_playing())
                             .unwrap_or(false);
-                        let src_label = if src_playing { "■ Stop" } else { "▶ Play" };
+                        let src_label = if src_playing { "Stop" } else { "Play" };
                         let src_active = !offline.source_path.is_empty() || src_playing;
                         if crate::theme::icon_button(ui, icon_play, src_label, src_active) {
                             if src_playing {
@@ -117,7 +114,7 @@ pub fn render(
                             .as_ref()
                             .map(|p| p.is_playing())
                             .unwrap_or(false);
-                        let ref_label = if ref_playing { "■ Stop" } else { "▶ Play" };
+                        let ref_label = if ref_playing { "Stop" } else { "Play" };
                         let ref_active = !offline.reference_path.is_empty() || ref_playing;
                         if crate::theme::icon_button(ui, icon_play, ref_label, ref_active) {
                             if ref_playing {
@@ -145,7 +142,7 @@ pub fn render(
                     ui.label(
                         egui::RichText::new("Or pick from Voice Catalog")
                             .size(12.0)
-                            .color(crate::theme::colors::CYAN),
+                            .color(crate::theme::colors::TEXT_DIM),
                     );
                     ui.add_space(crate::theme::space::TIGHT);
                     ui.horizontal_wrapped(|ui| {
@@ -206,7 +203,7 @@ pub fn render(
                         |ui| {
                             ui.add(
                                 egui::Slider::new(&mut offline.prosody_blend, 0.0..=1.0)
-                                    .text("source ← → target")
+                                    .text("source <-> target")
                                     .fixed_decimals(2),
                             );
                         },
@@ -227,9 +224,9 @@ pub fn render(
                     );
                     ui.label(
                         egui::RichText::new(if offline.velocity_scale < 0.9 {
-                            "← mild"
+                            "<-- mild"
                         } else if offline.velocity_scale > 1.1 {
-                            "→ strong"
+                            "strong -->"
                         } else {
                             "default"
                         })
@@ -255,24 +252,16 @@ pub fn render(
                         .size(18.0)
                         .strong()
                         .color(if can_convert {
-                            crate::theme::colors::TEXT
+                            egui::Color32::from_rgb(0xFF, 0xFF, 0xFF)
                         } else {
                             crate::theme::colors::TEXT_MUTED
                         }),
                 )
                 .fill(if can_convert {
-                    crate::theme::colors::PINK
+                    egui::Color32::from_rgb(0x1E, 0x1E, 0x2E)
                 } else {
                     crate::theme::colors::BG_PANEL
                 })
-                .stroke(egui::Stroke::new(
-                    1.0,
-                    if can_convert {
-                        crate::theme::colors::PINK_BRIGHT
-                    } else {
-                        crate::theme::colors::TEXT_MUTED
-                    },
-                ))
                 .min_size(egui::vec2(160.0, crate::theme::CTA_HEIGHT));
 
                 ui.add_enabled_ui(can_convert, |ui| {
@@ -301,7 +290,7 @@ pub fn render(
                     ui.label(
                         egui::RichText::new("Converting...")
                             .size(13.0)
-                            .color(crate::theme::colors::LAVENDER),
+                            .color(crate::theme::colors::TEXT_DIM),
                     );
                 }
             });
@@ -331,11 +320,7 @@ pub fn render(
                                 .as_ref()
                                 .map(|p| p.is_playing())
                                 .unwrap_or(false);
-                            let out_label = if out_playing {
-                                "■ Stop"
-                            } else {
-                                "▶ Play Output"
-                            };
+                            let out_label = if out_playing { "Stop" } else { "Play Output" };
                             if crate::theme::icon_button(ui, icon_play, out_label, true) {
                                 if out_playing {
                                     if let Some(p) = offline.player.take() {
@@ -361,7 +346,7 @@ pub fn render(
                 ui.label(
                     egui::RichText::new("No converter loaded. Set model in Realtime tab.")
                         .size(12.0)
-                        .color(crate::theme::colors::YELLOW),
+                        .color(crate::theme::colors::ERROR),
                 );
             }
         });

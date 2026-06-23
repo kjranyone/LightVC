@@ -73,6 +73,11 @@ pub struct AppState {
     pub rt_control_tx: Option<Sender<RtControl>>,
     pub rt_metrics_rx: Option<Receiver<RtMetrics>>,
     pub rt_initialized: bool,
+    /// App-wide audio device selection (None = system default).
+    /// Indices match DuplexStream::list_input_devices() /
+    /// list_output_devices() ordering.
+    pub selected_input: Option<usize>,
+    pub selected_output: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -102,20 +107,17 @@ pub struct LightVcApp {
     /// Demo mode for screenshot capture (None = normal operation).
     demo: bool,
     rt_metrics: RtMetrics,
-    /// Selected input device index (None = default) ([05-6]).
-    rt_selected_input: Option<usize>,
-    /// Selected output device index (None = default) ([05-6]).
-    rt_selected_output: Option<usize>,
     conv_path_buf: String,
-    conv_cfg_buf: String,
-    /// File pickers for the Realtime converter/config fields.
+    /// Inline-editable converter config (field-by-field, no JSON file).
+    rt_config: lightvc_core::converter::ConverterConfig,
+    /// File picker for the Realtime converter field.
     rt_converter_pick: crate::file_pick::FilePick,
-    rt_config_pick: crate::file_pick::FilePick,
     /// File pickers for the Catalog add/import actions.
     catalog_add_pick: crate::file_pick::FilePick,
     catalog_import_pick: crate::file_pick::FilePick,
     asset_cache: crate::assets::AssetCache,
     splash_frames: u32, // 0 = showing splash, >0 = finished
+    settings_open: bool,
 }
 
 impl LightVcApp {
@@ -134,6 +136,8 @@ impl LightVcApp {
             rt_control_tx: None,
             rt_metrics_rx: None,
             rt_initialized: false,
+            selected_input: None,
+            selected_output: None,
         }));
 
         Self {
@@ -152,16 +156,14 @@ impl LightVcApp {
             rt_prosody_blend: 0.5,
             rt_velocity_scale: 1.0,
             rt_metrics: RtMetrics::default(),
-            rt_selected_input: None,
-            rt_selected_output: None,
             conv_path_buf: String::new(),
-            conv_cfg_buf: String::new(),
+            rt_config: lightvc_core::converter::ConverterConfig::default(),
             rt_converter_pick: Default::default(),
-            rt_config_pick: Default::default(),
             catalog_add_pick: Default::default(),
             catalog_import_pick: Default::default(),
             asset_cache: Default::default(),
             splash_frames: 0,
+            settings_open: false,
             demo: false,
         }
     }
@@ -252,18 +254,15 @@ impl LightVcApp {
         });
     }
 
-    fn load_converter_static(state: &Arc<Mutex<AppState>>, conv_path: &str, cfg_path: &str) {
+    fn load_converter_static(
+        state: &Arc<Mutex<AppState>>,
+        conv_path: &str,
+        conv_config: lightvc_core::converter::ConverterConfig,
+    ) {
         let dac_path = state.lock().unwrap().dac_weights.clone();
         let result = (|| -> anyhow::Result<()> {
             let device = candle_core::Device::Cpu;
             let dac_config = lightvc_core::DacConfig::default();
-
-            let conv_config = if !cfg_path.is_empty() {
-                let cfg_str = std::fs::read_to_string(cfg_path)?;
-                serde_json::from_str(&cfg_str)?
-            } else {
-                lightvc_core::converter::ConverterConfig::default()
-            };
 
             let vb = lightvc_core::weights::load_varbuilder(
                 std::path::Path::new(conv_path),
@@ -285,11 +284,6 @@ impl LightVcApp {
             s.pipeline = Some(pipeline_arc.clone());
             *s.pipeline_slot.lock().unwrap() = Some(pipeline_arc);
             s.converter_weights = Some(std::path::PathBuf::from(conv_path));
-            s.converter_config = if cfg_path.is_empty() {
-                None
-            } else {
-                Some(std::path::PathBuf::from(cfg_path))
-            };
             s.status = "Converter loaded".to_string();
             s.error = None;
             Ok(())
@@ -344,9 +338,7 @@ impl LightVcApp {
             let splash = self.asset_cache.splash(ctx);
             let screen = ctx.content_rect();
             egui::CentralPanel::default()
-                .frame(
-                    egui::Frame::NONE.fill(egui::Color32::from_rgba_premultiplied(28, 22, 38, 255)),
-                )
+                .frame(egui::Frame::NONE.fill(egui::Color32::from_rgb(0xF0, 0xE0, 0xEC)))
                 .show(ctx, |ui| {
                     ui.vertical_centered(|ui| {
                         ui.add_space(screen.height() * 0.25);
@@ -369,44 +361,43 @@ impl LightVcApp {
             return;
         }
 
-        // Draw background texture
+        // Draw kawaii neon-glow background (procedural gradient + blooms).
+        // Replaces the opaque PNG texture — translucent cards now float on
+        // the neon gradient and read as genuine glassmorphism.
         {
-            let bg = self.asset_cache.bg(ctx);
             let screen = ctx.content_rect();
-            ctx.layer_painter(egui::LayerId::background()).image(
-                bg.id(),
-                screen,
-                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                egui::Color32::WHITE,
-            );
+            crate::theme::paint_background(&ctx.layer_painter(egui::LayerId::background()), screen);
         }
 
         // Top bar with logo image + kawaii tabs
         egui::Panel::top("tabs")
             .frame(
                 egui::Frame::NONE
-                    .fill(crate::theme::with_alpha(crate::theme::colors::BG_DEEP, 220))
-                    .inner_margin(egui::Margin::same(10)),
+                    .fill(crate::theme::with_alpha(
+                        crate::theme::colors::CARD_GLASS,
+                        180,
+                    ))
+                    .stroke(egui::Stroke::new(1.0, crate::theme::colors::BORDER))
+                    .inner_margin(egui::Margin::symmetric(10, 4)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.add_space(4.0);
-                    // Logo image — responsive: max 140px, scales down on narrow
+                    ui.add_space(2.0);
+                    // Logo image — crop source margins, readable header height
                     let logo = self.asset_cache.logo(ctx);
-                    let avail = ui.available_width();
-                    let logo_w = avail.min(140.0).max(80.0);
-                    let logo_h = logo_w * (30.0 / 320.0);
+                    let logo_h = 24.0;
+                    let aspect = 171.0 / 41.0;
+                    let logo_w = logo_h * aspect;
+                    let uv = crate::assets::AssetCache::logo_crop_uv();
                     ui.add(
                         egui::Image::from_texture(logo)
-                            .fit_to_exact_size(egui::Vec2::new(logo_w, logo_h)),
+                            .fit_to_exact_size(egui::Vec2::new(logo_w, logo_h))
+                            .uv(egui::Rect::from_min_max(
+                                egui::pos2(uv.min.x, 1.0 - uv.max.y),
+                                egui::pos2(uv.max.x, 1.0 - uv.min.y),
+                            )),
                     );
-                    // Subtitle — kawaii tagline next to logo
-                    ui.label(
-                        egui::RichText::new("✦ Realtime Voice Changer")
-                            .size(10.0)
-                            .color(crate::theme::colors::LAVENDER),
-                    );
-                    ui.add_space(crate::theme::space::MEDIUM);
+                    ui.add_space(crate::theme::space::SMALL);
 
                     // Tabs — distribute remaining width
                     let tab_labels = [
@@ -420,8 +411,66 @@ impl LightVcApp {
                             self.current_tab = *tab;
                         }
                     }
+
+                    // Settings button — pinned to right edge via right-to-left layout
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("=").clicked() {
+                            self.settings_open = !self.settings_open;
+                        }
+                    });
                 });
             });
+
+        // Settings dialog — app-wide device selection
+        if self.settings_open {
+            let inputs = lightvc_audio::DuplexStream::list_input_devices().unwrap_or_default();
+            let outputs = lightvc_audio::DuplexStream::list_output_devices().unwrap_or_default();
+            let (mut sel_in, mut sel_out) = {
+                let s = self.state.lock().unwrap();
+                (s.selected_input, s.selected_output)
+            };
+            egui::Window::new("Audio Devices")
+                .open(&mut self.settings_open)
+                .resizable(true)
+                .default_width(360.0)
+                .default_height(420.0)
+                .min_width(280.0)
+                .min_height(240.0)
+                .show(ctx, |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(360.0)
+                        .show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new("Input")
+                                    .size(12.0)
+                                    .color(crate::theme::colors::TEXT_DIM),
+                            );
+                            ui.selectable_value(&mut sel_in, None, "(default)");
+                            for (i, d) in inputs.iter().enumerate() {
+                                let lbl =
+                                    format!("{} ({}Hz, {}ch)", d.name, d.sample_rate, d.channels);
+                                ui.selectable_value(&mut sel_in, Some(i), &lbl);
+                            }
+                            ui.add_space(8.0);
+                            ui.separator();
+                            ui.add_space(4.0);
+                            ui.label(
+                                egui::RichText::new("Output")
+                                    .size(12.0)
+                                    .color(crate::theme::colors::TEXT_DIM),
+                            );
+                            ui.selectable_value(&mut sel_out, None, "(default)");
+                            for (i, d) in outputs.iter().enumerate() {
+                                let lbl =
+                                    format!("{} ({}Hz, {}ch)", d.name, d.sample_rate, d.channels);
+                                ui.selectable_value(&mut sel_out, Some(i), &lbl);
+                            }
+                        });
+                });
+            let mut s = self.state.lock().unwrap();
+            s.selected_input = sel_in;
+            s.selected_output = sel_out;
+        }
 
         // Status bar
         {
@@ -429,7 +478,11 @@ impl LightVcApp {
             egui::Panel::bottom("status")
                 .frame(
                     egui::Frame::NONE
-                        .fill(crate::theme::with_alpha(crate::theme::colors::BG_DARK, 200))
+                        .fill(crate::theme::with_alpha(
+                            crate::theme::colors::CARD_GLASS,
+                            180,
+                        ))
+                        .stroke(egui::Stroke::new(1.0, crate::theme::colors::BORDER))
                         .inner_margin(egui::Margin::same(8)),
                 )
                 .show(ctx, |ui| {
@@ -445,6 +498,20 @@ impl LightVcApp {
                                 .size(12.0)
                                 .color(crate::theme::colors::TEXT_DIM),
                         );
+
+                        // Output level meter (right-aligned)
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                egui::RichText::new("Out")
+                                    .size(11.0)
+                                    .color(crate::theme::colors::TEXT_DIM),
+                            );
+                            crate::theme::level_meter_kind_compact(
+                                ui,
+                                self.rt_metrics.output_rms,
+                                crate::theme::MeterKind::Output,
+                            );
+                        });
                     });
                 });
         }
@@ -497,22 +564,15 @@ impl LightVcApp {
 
                 let state = self.state.clone();
                 let mut conv_path = std::mem::take(&mut self.conv_path_buf);
-                let mut conv_cfg = std::mem::take(&mut self.conv_cfg_buf);
+                let mut rt_config = self.rt_config.clone();
                 let mut rt_running = self.rt_running;
                 let mut rt_bypass = self.rt_bypass;
                 let mut rt_mode = self.rt_mode;
                 let mut rt_prosody_mode = self.rt_prosody_mode;
                 let mut rt_prosody_blend = self.rt_prosody_blend;
                 let mut rt_velocity_scale = self.rt_velocity_scale;
-                let mut rt_sel_in = self.rt_selected_input;
-                let mut rt_sel_out = self.rt_selected_output;
                 let metrics = self.rt_metrics.clone();
                 let converter_pick = self.rt_converter_pick.clone();
-                let config_pick = self.rt_config_pick.clone();
-                let knob_tex = self.asset_cache.knob(ctx);
-                let knob_tex_ref = knob_tex.clone();
-                let icon_stop_tex = self.asset_cache.icon_stop(ctx);
-                let icon_stop_tex_ref = icon_stop_tex.clone();
 
                 egui::CentralPanel::default().show(ctx, |ui| {
                     egui::ScrollArea::vertical()
@@ -522,22 +582,17 @@ impl LightVcApp {
                                 ui,
                                 ctx,
                                 &converter_pick,
-                                &config_pick,
                                 &state,
                                 &mut conv_path,
-                                &mut conv_cfg,
+                                &mut rt_config,
                                 &mut rt_running,
                                 &mut rt_bypass,
                                 &mut rt_mode,
                                 &mut rt_prosody_mode,
                                 &mut rt_prosody_blend,
                                 &mut rt_velocity_scale,
-                                &mut rt_sel_in,
-                                &mut rt_sel_out,
                                 &metrics,
-                                Some(&knob_tex_ref),
-                                Some(&icon_stop_tex_ref),
-                                |c, cfg| Self::load_converter_static(&state, c, cfg),
+                                |c, cfg| Self::load_converter_static(&state, c, cfg.clone()),
                                 || Self::ensure_rt_thread_static(&state),
                                 |ctrl| Self::send_control(&state, ctrl),
                             );
@@ -545,15 +600,13 @@ impl LightVcApp {
                 });
 
                 self.conv_path_buf = conv_path;
-                self.conv_cfg_buf = conv_cfg;
+                self.rt_config = rt_config;
                 self.rt_running = rt_running;
                 self.rt_bypass = rt_bypass;
                 self.rt_mode = rt_mode;
                 self.rt_prosody_mode = rt_prosody_mode;
                 self.rt_prosody_blend = rt_prosody_blend;
                 self.rt_velocity_scale = rt_velocity_scale;
-                self.rt_selected_input = rt_sel_in;
-                self.rt_selected_output = rt_sel_out;
             }
             Tab::Catalog => {
                 let mut catalog = std::mem::take(&mut self.catalog);

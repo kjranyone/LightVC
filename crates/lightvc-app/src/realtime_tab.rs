@@ -21,283 +21,383 @@ pub fn render(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
     converter_pick: &FilePick,
-    config_pick: &FilePick,
     state: &Arc<Mutex<AppState>>,
     conv_path: &mut String,
-    conv_cfg: &mut String,
+    conv_config: &mut lightvc_core::converter::ConverterConfig,
     running: &mut bool,
     bypass: &mut bool,
     mode: &mut lightvc_core::converter::LatencyMode,
     prosody_mode: &mut lightvc_core::converter::ProsodyMode,
     prosody_blend: &mut f32,
     velocity_scale: &mut f32,
-    selected_input: &mut Option<usize>,
-    selected_output: &mut Option<usize>,
     metrics: &RtMetrics,
-    knob_tex: Option<&egui::TextureHandle>,
-    icon_stop_tex: Option<&egui::TextureHandle>,
-    mut on_load: impl FnMut(&str, &str),
+    mut on_load: impl FnMut(&str, &lightvc_core::converter::ConverterConfig),
     mut on_ensure_thread: impl FnMut(),
     on_control: impl Fn(RtControl),
 ) {
-    crate::theme::heading(ui, "Real-time Voice Conversion");
-    ui.add_space(crate::theme::space::MEDIUM);
-
     let has_pipeline = state.lock().unwrap().pipeline.is_some();
-    // When no converter is loaded, force bypass mode so the audio path
-    // (mic → speaker) can still be tested. Mode/quality controls are hidden.
     let force_bypass = !has_pipeline;
-
-    // --- Model Setup Section ---
-    if !has_pipeline {
-        crate::theme::info_card(ui, |ui| {
-            crate::theme::heading(ui, "Load Model");
-
-            ui.horizontal(|ui| {
-                crate::theme::form_label(ui, "Converter");
-                crate::theme::path_text_edit(ui, conv_path, "converter .safetensors");
-                ui.add_space(crate::theme::space::SMALL);
-                if crate::theme::pill_button(ui, "Browse", false) {
-                    converter_pick.open(ctx);
-                }
-            });
-
-            ui.horizontal(|ui| {
-                crate::theme::form_label(ui, "Config");
-                crate::theme::path_text_edit(ui, conv_cfg, "config .json (optional)");
-                ui.add_space(crate::theme::space::SMALL);
-                if crate::theme::pill_button(ui, "Browse", false) {
-                    config_pick.open(ctx);
-                }
-            });
-
-            ui.add_space(crate::theme::space::SMALL);
-            ui.horizontal_centered(|ui| {
-                ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-                    if crate::theme::pill_button(ui, "Load Converter", !conv_path.is_empty())
-                        && !conv_path.is_empty()
-                    {
-                        on_load(conv_path, conv_cfg);
-                    }
-                });
-            });
-
-            ui.add_space(crate::theme::space::SMALL + 2.0);
-            ui.label(
-                egui::RichText::new(
-                    "No converter loaded — Start will run in BYPASS mode (passthrough).",
-                )
-                .size(11.0)
-                .color(crate::theme::colors::YELLOW),
-            );
-        });
-
-        // Handle file picks.
-        if let Some(path) = converter_pick.take() {
-            *conv_path = path.to_string_lossy().into_owned();
-        }
-        if let Some(path) = config_pick.take() {
-            *conv_cfg = path.to_string_lossy().into_owned();
-        }
-    }
-
-    // --- Pipeline loaded: realtime UI ---
 
     on_ensure_thread();
 
-    // --- Status row: badge + reference voice ---
-    ui.horizontal(|ui| {
-        let (color, label) = if *running {
-            if *bypass {
-                (crate::theme::colors::LEMON, "BYPASS")
-            } else {
-                (crate::theme::colors::MINT, "● LIVE")
-            }
+    // --- Status determination ---
+    let (status_color, status_label) = if *running {
+        if *bypass {
+            (crate::theme::colors::STATUS_BYPASS, "BYPASS")
         } else {
-            (crate::theme::colors::TEXT_MUTED, "STOPPED")
-        };
-        crate::theme::status_dot(ui, *running, color);
-        ui.label(
-            egui::RichText::new(label)
-                .size(16.0)
-                .strong()
-                .color(if *running {
-                    crate::theme::colors::TEXT
+            (crate::theme::colors::STATUS_CONVERTING, "CONVERTING")
+        }
+    } else {
+        (crate::theme::colors::STATUS_STOPPED, "STOPPED")
+    };
+    let ref_name: Option<String> = state.lock().ok().and_then(|s| {
+        s.selected_voice
+            .and_then(|i| s.voices.get(i).map(|v| v.name.clone()))
+    });
+
+    // --- Row 1: 2-column grid, height-aligned (Model | Status) ---
+    // Use a fixed row height so both cards align bottom edges.
+    let col_gap = crate::theme::space::MEDIUM;
+    let col_w = (ui.available_width() - col_gap) / 2.0;
+    let card_min_h = 150.0;
+
+    ui.horizontal_top(|ui| {
+        // LEFT: Model card
+        ui.allocate_ui_with_layout(
+            egui::vec2(col_w, card_min_h),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                let frame = if has_pipeline {
+                    crate::theme::info_card_frame()
                 } else {
-                    crate::theme::colors::TEXT_MUTED
-                }),
+                    crate::theme::glow_card_frame()
+                };
+                frame.show(ui, |ui| {
+                    ui.set_min_height(card_min_h - 40.0);
+                    crate::theme::subheading(ui, "Model");
+
+                    if !has_pipeline {
+                        let out = crate::theme::drop_zone(
+                            ui,
+                            "Drop converter.safetensors here",
+                            if conv_path.is_empty() {
+                                None
+                            } else {
+                                Some(conv_path.as_str())
+                            },
+                            "Browse",
+                        );
+                        if out.browse_clicked {
+                            converter_pick.open(ctx);
+                        }
+
+                        egui::CollapsingHeader::new(
+                            egui::RichText::new("[*] Config")
+                                .size(11.0)
+                                .color(crate::theme::colors::TEXT_DIM),
+                        )
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            ui.set_min_width(col_w - 40.0);
+                            ui.columns(2, |cols| {
+                                cols[0].horizontal(|ui| {
+                                    ui.label("latent");
+                                    ui.add(
+                                        egui::DragValue::new(&mut conv_config.latent_dim)
+                                            .range(1..=2048),
+                                    );
+                                });
+                                cols[1].horizontal(|ui| {
+                                    ui.label("hidden");
+                                    ui.add(
+                                        egui::DragValue::new(&mut conv_config.hidden_dim)
+                                            .range(1..=4096),
+                                    );
+                                });
+                                cols[0].horizontal(|ui| {
+                                    ui.label("blocks");
+                                    ui.add(
+                                        egui::DragValue::new(&mut conv_config.n_conv_blocks)
+                                            .range(1..=32),
+                                    );
+                                });
+                                cols[1].horizontal(|ui| {
+                                    ui.label("spk");
+                                    ui.add(
+                                        egui::DragValue::new(&mut conv_config.speaker_embed_dim)
+                                            .range(1..=1024),
+                                    );
+                                });
+                                cols[0].horizontal(|ui| {
+                                    ui.label("timbre");
+                                    ui.add(
+                                        egui::DragValue::new(&mut conv_config.n_timbre_tokens)
+                                            .range(1..=256),
+                                    );
+                                });
+                                cols[1].horizontal(|ui| {
+                                    ui.label("heads");
+                                    ui.add(
+                                        egui::DragValue::new(&mut conv_config.n_attn_heads)
+                                            .range(1..=64),
+                                    );
+                                });
+                                cols[0].horizontal(|ui| {
+                                    ui.label("bneck");
+                                    ui.add(
+                                        egui::DragValue::new(&mut conv_config.bottleneck_dim)
+                                            .range(1..=1024),
+                                    );
+                                });
+                                cols[1].horizontal(|ui| {
+                                    ui.label("time");
+                                    ui.add(
+                                        egui::DragValue::new(&mut conv_config.time_embed_dim)
+                                            .range(1..=512),
+                                    );
+                                });
+                                cols[0].horizontal(|ui| {
+                                    ui.label("depth");
+                                    ui.add(
+                                        egui::DragValue::new(&mut conv_config.n_depth_groups)
+                                            .range(0..=8),
+                                    );
+                                });
+                                cols[1].checkbox(&mut conv_config.enable_timbre, "timbre");
+                            });
+                        });
+
+                        ui.add_space(crate::theme::space::TIGHT);
+                        ui.horizontal(|ui| {
+                            if crate::theme::primary_button(ui, "Load", !conv_path.is_empty())
+                                && !conv_path.is_empty()
+                            {
+                                on_load(conv_path, conv_config);
+                            }
+                            ui.label(
+                                egui::RichText::new("no model -> BYPASS")
+                                    .size(10.0)
+                                    .color(crate::theme::colors::ERROR),
+                            );
+                        });
+                    } else {
+                        let model_name = state
+                            .lock()
+                            .ok()
+                            .and_then(|s| {
+                                s.converter_weights.as_ref().and_then(|p| {
+                                    p.file_name().map(|f| f.to_string_lossy().into_owned())
+                                })
+                            })
+                            .unwrap_or_else(|| "converter.safetensors".to_string());
+                        ui.label(
+                            egui::RichText::new(format!("> {model_name}"))
+                                .size(13.0)
+                                .color(crate::theme::colors::TEXT),
+                        );
+                        ui.label(
+                            egui::RichText::new("ready")
+                                .size(11.0)
+                                .color(crate::theme::colors::TEXT_DIM),
+                        );
+                    }
+                });
+            },
         );
 
-        // Active reference voice
-        let ref_name = state.lock().map(|s| {
-            s.selected_voice
-                .and_then(|i| s.voices.get(i).map(|v| v.name.clone()))
-        });
-        if let Ok(Some(name)) = ref_name {
-            ui.separator();
-            ui.label(
-                egui::RichText::new(format!("✦ {name}"))
-                    .size(12.0)
-                    .color(crate::theme::colors::PINK_BRIGHT),
-            );
-        } else if has_pipeline {
-            ui.separator();
-            ui.label(
-                egui::RichText::new("Reference: none")
-                    .size(11.0)
-                    .color(crate::theme::colors::TEXT_MUTED),
-            );
-        }
+        ui.add_space(col_gap);
+
+        // RIGHT: Status card
+        ui.allocate_ui_with_layout(
+            egui::vec2(col_w, card_min_h),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                let frame = if *running && !*bypass {
+                    crate::theme::glow_card_frame()
+                } else {
+                    crate::theme::info_card_frame()
+                };
+                frame.show(ui, |ui| {
+                    ui.set_min_height(card_min_h - 40.0);
+                    crate::theme::subheading(ui, "Status");
+                    ui.horizontal(|ui| {
+                        crate::theme::status_badge(ui, status_label, status_color);
+                        ui.add_space(crate::theme::space::SMALL);
+                        // Voice inline
+                        if let Some(name) = &ref_name {
+                            ui.label(
+                                egui::RichText::new(format!("> {name}"))
+                                    .size(12.0)
+                                    .color(crate::theme::colors::TEXT),
+                            );
+                        } else {
+                            ui.label(
+                                egui::RichText::new("no voice")
+                                    .size(11.0)
+                                    .color(crate::theme::colors::TEXT_MUTED),
+                            );
+                        }
+                    });
+                    ui.add_space(crate::theme::space::TIGHT);
+                    // Stats inline
+                    ui.horizontal(|ui| {
+                        crate::theme::stat_card(
+                            ui,
+                            &format!("{:.0}", metrics.latency_ms),
+                            "ms",
+                            crate::theme::colors::TEXT,
+                        );
+                        ui.add_space(crate::theme::space::TIGHT);
+                        crate::theme::stat_card(
+                            ui,
+                            &format!("{:.2}", metrics.rtf),
+                            "RTF",
+                            crate::theme::colors::TEXT,
+                        );
+                        if metrics.overrun > 0 || metrics.underrun > 0 {
+                            ui.add_space(crate::theme::space::TIGHT);
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "in:{}  out:{}",
+                                    metrics.overrun, metrics.underrun
+                                ))
+                                .size(10.0)
+                                .color(crate::theme::colors::ERROR),
+                            );
+                        }
+                    });
+                });
+            },
+        );
     });
+
+    // Handle file picks.
+    if let Some(path) = converter_pick.take() {
+        *conv_path = path.to_string_lossy().into_owned();
+    }
 
     ui.add_space(crate::theme::space::MEDIUM);
 
-    // --- Signal card: meters + metrics ---
-    crate::theme::info_card(ui, |ui| {
-        crate::theme::level_meter(ui, metrics.input_rms, "In ");
-        ui.add_space(crate::theme::space::TIGHT);
-        crate::theme::level_meter(ui, metrics.output_rms, "Out");
-
-        ui.add_space(crate::theme::space::SMALL);
+    // --- Row 2: Input signal meter (compact) ---
+    crate::theme::info_card_frame().show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(format!("Latency {:.0} ms", metrics.latency_ms))
-                    .size(11.0)
-                    .color(crate::theme::colors::TEXT_DIM)
-                    .monospace(),
-            );
-            ui.separator();
-            ui.label(
-                egui::RichText::new(format!("RTF {:.2}", metrics.rtf))
-                    .size(11.0)
-                    .color(crate::theme::colors::TEXT_DIM)
-                    .monospace(),
-            );
-            if metrics.overrun > 0 || metrics.underrun > 0 {
-                ui.separator();
-                ui.label(
-                    egui::RichText::new(format!(
-                        "xruns ↑{} ↓{}",
-                        metrics.overrun, metrics.underrun
-                    ))
-                    .size(10.0)
-                    .color(crate::theme::colors::LEMON),
-                );
-            }
+            crate::theme::subheading(ui, "Input");
+            ui.add_space(crate::theme::space::SMALL);
             if metrics.auto_degraded {
-                ui.separator();
                 ui.label(
-                    egui::RichText::new(format!("⚠ {:?}", metrics.current_mode))
+                    egui::RichText::new(format!("! auto {:?}", metrics.current_mode))
                         .size(10.0)
-                        .color(crate::theme::colors::LEMON),
+                        .color(crate::theme::colors::LEMON_DEEP),
                 );
             }
+            crate::theme::level_meter_kind_compact(
+                ui,
+                metrics.input_rms,
+                crate::theme::MeterKind::Input,
+            );
         });
     });
 
     ui.add_space(crate::theme::space::MEDIUM);
 
-    // Quality mode — knob or pill buttons (hidden when no converter loaded)
-    if !force_bypass {
-        ui.horizontal(|ui| {
-            if let Some(tex) = knob_tex {
-                // Knob: Strict=0.0, Balanced=0.5, Quality=1.0
-                let mode_val = match *mode {
-                    lightvc_core::converter::LatencyMode::Strict => 0.0,
-                    lightvc_core::converter::LatencyMode::Balanced => 0.5,
-                    lightvc_core::converter::LatencyMode::Quality => 1.0,
-                };
-                let mode_name = match *mode {
-                    lightvc_core::converter::LatencyMode::Strict => "Strict",
-                    lightvc_core::converter::LatencyMode::Balanced => "Balanced",
-                    lightvc_core::converter::LatencyMode::Quality => "Quality",
-                };
+    // --- Row 3: Operation bar (Bypass | Mode pills | Start/Stop) ---
+    {
+        let frame = crate::theme::info_card_frame();
+        frame.show(ui, |ui| {
+            ui.horizontal(|ui| {
+                // Bypass
+                if !force_bypass {
+                    let old_bp = *bypass;
+                    if crate::theme::operation_button(
+                        ui,
+                        if *bypass { "BYPASS" } else { "Bypass" },
+                        crate::theme::OpKind::Bypass,
+                        *bypass,
+                    ) {
+                        *bypass = !*bypass;
+                    }
+                    if *bypass != old_bp {
+                        on_control(RtControl::Bypass(*bypass));
+                    }
+                }
 
-                let id = ui.make_persistent_id("rt_mode_knob");
-                if let Some(new_val) = crate::theme::knob(ui, tex, id, mode_val, "Mode") {
+                // Mode pills (center) — only when converter loaded
+                if !force_bypass {
+                    ui.add_space(crate::theme::space::SMALL);
                     let old_mode = *mode;
-                    *mode = if new_val < 0.33 {
-                        lightvc_core::converter::LatencyMode::Strict
-                    } else if new_val < 0.67 {
-                        lightvc_core::converter::LatencyMode::Balanced
-                    } else {
-                        lightvc_core::converter::LatencyMode::Quality
-                    };
+                    for (m, name) in [
+                        (lightvc_core::converter::LatencyMode::Strict, "Strict"),
+                        (lightvc_core::converter::LatencyMode::Balanced, "Balanced"),
+                        (lightvc_core::converter::LatencyMode::Quality, "Quality"),
+                    ] {
+                        if crate::theme::pill_button(ui, name, *mode == m) {
+                            *mode = m;
+                        }
+                    }
                     if *mode != old_mode {
                         on_control(RtControl::SetMode(*mode));
                     }
                 }
 
-                ui.vertical(|ui| {
-                    ui.label(
-                        egui::RichText::new("Mode")
-                            .size(13.0)
-                            .color(crate::theme::colors::TEXT_DIM),
-                    );
-                    ui.label(
-                        egui::RichText::new(mode_name)
-                            .size(16.0)
-                            .strong()
-                            .color(crate::theme::colors::PINK_BRIGHT),
-                    );
-                    ui.label(
-                        egui::RichText::new(match *mode {
-                            lightvc_core::converter::LatencyMode::Strict => "0ms lookahead",
-                            lightvc_core::converter::LatencyMode::Balanced => "~46ms lookahead",
-                            lightvc_core::converter::LatencyMode::Quality => "~93ms lookahead",
-                        })
-                        .size(10.0)
-                        .color(crate::theme::colors::TEXT_MUTED),
-                    );
-                });
-            } else {
-                // Fallback: pill buttons
-                ui.label(
-                    egui::RichText::new("Mode")
-                        .size(13.0)
-                        .color(crate::theme::colors::TEXT_DIM),
-                );
-                let old = *mode;
-                for (m, name) in [
-                    (lightvc_core::converter::LatencyMode::Strict, "Strict"),
-                    (lightvc_core::converter::LatencyMode::Balanced, "Balanced"),
-                    (lightvc_core::converter::LatencyMode::Quality, "Quality"),
-                ] {
-                    if crate::theme::pill_button(ui, name, *mode == m) {
-                        *mode = m;
+                // Start/Stop (right)
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                    if !*running {
+                        let label = if force_bypass { "Start" } else { "Start" };
+                        if crate::theme::operation_button(
+                            ui,
+                            label,
+                            crate::theme::OpKind::Start,
+                            true,
+                        ) {
+                            if force_bypass {
+                                on_control(RtControl::Bypass(true));
+                            }
+                            on_control(RtControl::StartWithDevices {
+                                input_idx: state.lock().unwrap().selected_input,
+                                output_idx: state.lock().unwrap().selected_output,
+                            });
+                            *running = true;
+                        }
+                    } else {
+                        if crate::theme::operation_button(
+                            ui,
+                            "Stop",
+                            crate::theme::OpKind::Stop,
+                            true,
+                        ) {
+                            on_control(RtControl::Stop);
+                            *running = false;
+                        }
                     }
-                }
-                if *mode != old {
-                    on_control(RtControl::SetMode(*mode));
-                }
-            }
+                });
+            });
         });
     }
 
-    // Prosody controls — visible only when a converter is loaded.
+    // --- Row 4: Prosody + Velocity (compact, converter-only) ---
     if !force_bypass {
-        ui.add_space(crate::theme::space::MEDIUM);
-        crate::theme::info_card(ui, |ui| {
-            crate::theme::subheading(ui, "Prosody");
+        ui.add_space(crate::theme::space::SMALL);
+        crate::theme::info_card_frame().show(ui, |ui| {
             ui.horizontal(|ui| {
+                // Prosody mode
                 ui.label(
-                    egui::RichText::new("Mode")
-                        .size(12.0)
+                    egui::RichText::new("Prosody")
+                        .size(11.0)
                         .color(crate::theme::colors::TEXT_DIM),
                 );
-                let old = *prosody_mode;
+                let old_pm = *prosody_mode;
                 egui::ComboBox::from_id_salt("rt_prosody_mode")
                     .selected_text(format!("{:?}", prosody_mode))
                     .show_ui(ui, |ui| {
                         ui.selectable_value(
                             prosody_mode,
                             lightvc_core::converter::ProsodyMode::ImitateTarget,
-                            "Imitate target",
+                            "Imitate",
                         );
                         ui.selectable_value(
                             prosody_mode,
                             lightvc_core::converter::ProsodyMode::PreserveSource,
-                            "Preserve source",
+                            "Preserve",
                         );
                         ui.selectable_value(
                             prosody_mode,
@@ -307,32 +407,26 @@ pub fn render(
                         ui.selectable_value(
                             prosody_mode,
                             lightvc_core::converter::ProsodyMode::FlattenPrivacy,
-                            "Flatten (privacy)",
+                            "Flatten",
                         );
                     });
-                if *prosody_mode != old {
+                if *prosody_mode != old_pm {
                     on_control(RtControl::SetProsody {
                         mode: *prosody_mode,
                         blend: *prosody_blend as f64,
                     });
                 }
-            });
-            // Blend slider — only meaningful in Blend mode, but always shown
-            // so the user can pre-set it before switching modes.
-            ui.add_space(crate::theme::space::TIGHT);
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("Blend")
-                        .size(12.0)
-                        .color(crate::theme::colors::TEXT_DIM),
-                );
+
+                ui.add_space(crate::theme::space::SMALL);
+
+                // Blend slider
                 let old_b = *prosody_blend;
                 ui.add_enabled_ui(
                     *prosody_mode == lightvc_core::converter::ProsodyMode::Blend,
                     |ui| {
                         ui.add(
                             egui::Slider::new(prosody_blend, 0.0..=1.0)
-                                .text("source ← → target")
+                                .text("blend")
                                 .fixed_decimals(2),
                         );
                     },
@@ -343,150 +437,24 @@ pub fn render(
                         blend: *prosody_blend as f64,
                     });
                 }
-            });
-        });
 
-        // Velocity scale slider — flow-matching conversion strength.
-        ui.add_space(crate::theme::space::SMALL);
-        crate::theme::info_card(ui, |ui| {
-            crate::theme::subheading(ui, "Conversion Strength");
-            ui.horizontal(|ui| {
-                let old = *velocity_scale;
+                ui.add_space(crate::theme::space::SMALL);
+
+                // Velocity scale
+                let old_v = *velocity_scale;
                 ui.add(
                     egui::Slider::new(velocity_scale, 0.0..=2.0)
-                        .text("velocity scale")
+                        .text("velocity")
                         .fixed_decimals(2),
                 );
-                ui.label(
-                    egui::RichText::new(if *velocity_scale < 0.9 {
-                        "← mild (source remains)"
-                    } else if *velocity_scale > 1.1 {
-                        "→ strong (target pull)"
-                    } else {
-                        "default"
-                    })
-                    .size(10.0)
-                    .color(crate::theme::colors::TEXT_MUTED),
-                );
-                if *velocity_scale != old {
+                if *velocity_scale != old_v {
                     on_control(RtControl::SetVelocityScale(*velocity_scale as f64));
                 }
             });
         });
     }
 
-    ui.add_space(crate::theme::space::MEDIUM);
-
-    // Bypass — styled toggle button (disabled when no converter loaded)
-    if force_bypass {
-        *bypass = true;
-        ui.label(
-            egui::RichText::new("BYPASS ON (no converter)")
-                .size(13.0)
-                .color(crate::theme::colors::YELLOW),
-        );
-    } else {
-        let old_bp = *bypass;
-        if crate::theme::pill_button(ui, if *bypass { "BYPASS ON" } else { "Bypass" }, *bypass) {
-            *bypass = !*bypass;
-        }
-        if *bypass != old_bp {
-            on_control(RtControl::Bypass(*bypass));
-        }
-    }
-
-    ui.add_space(crate::theme::space::LARGE);
-
-    // Start/Stop
-    ui.horizontal(|ui| {
-        if !*running {
-            let label = if force_bypass {
-                "▶ Start (bypass)"
-            } else {
-                "▶ Start"
-            };
-            if crate::theme::pill_button(ui, label, true) {
-                if force_bypass {
-                    on_control(RtControl::Bypass(true));
-                }
-                on_control(RtControl::StartWithDevices {
-                    input_idx: *selected_input,
-                    output_idx: *selected_output,
-                });
-                *running = true;
-            }
-        } else {
-            let clicked = if let Some(tex) = icon_stop_tex {
-                crate::theme::icon_button(ui, tex, " Stop", true)
-            } else {
-                crate::theme::pill_button(ui, "■ Stop", true)
-            };
-            if clicked {
-                on_control(RtControl::Stop);
-                *running = false;
-            }
-        }
-    });
-
-    ui.add_space(crate::theme::space::LARGE);
-
-    // Audio devices ([05-6]: interactive selection) — default open
-    egui::CollapsingHeader::new(
-        egui::RichText::new("Audio Devices")
-            .size(13.0)
-            .color(crate::theme::colors::CYAN),
-    )
-    .default_open(true)
-    .show(ui, |ui| {
-        let inputs = lightvc_audio::DuplexStream::list_input_devices().unwrap_or_default();
-        let outputs = lightvc_audio::DuplexStream::list_output_devices().unwrap_or_default();
-        ui.label(
-            egui::RichText::new(format!(
-                "Inputs  ({} = default)",
-                if selected_input.is_some() {
-                    "selected"
-                } else {
-                    "none"
-                }
-            ))
-            .size(12.0)
-            .color(crate::theme::colors::TEXT_DIM),
-        );
-        // Default option
-        let _in_default = selected_input.is_none();
-        if ui.radio_value(selected_input, None, "(default)").clicked() {
-            *selected_input = None;
-        }
-        for (i, d) in inputs.iter().enumerate() {
-            let _selected = *selected_input == Some(i);
-            let label = format!("{} ({}Hz, {}ch)", d.name, d.sample_rate, d.channels);
-            if ui.radio_value(selected_input, Some(i), &label).clicked() {
-                *selected_input = Some(i);
-            }
-        }
-        ui.add_space(crate::theme::space::SMALL);
-        ui.label(
-            egui::RichText::new(format!(
-                "Outputs  ({} = default)",
-                if selected_output.is_some() {
-                    "selected"
-                } else {
-                    "none"
-                }
-            ))
-            .size(12.0)
-            .color(crate::theme::colors::TEXT_DIM),
-        );
-        if ui.radio_value(selected_output, None, "(default)").clicked() {
-            *selected_output = None;
-        }
-        for (i, d) in outputs.iter().enumerate() {
-            let label = format!("{} ({}Hz, {}ch)", d.name, d.sample_rate, d.channels);
-            if ui.radio_value(selected_output, Some(i), &label).clicked() {
-                *selected_output = Some(i);
-            }
-        }
-    });
+    ui.add_space(crate::theme::space::SMALL);
 }
 
 // =========================================================================

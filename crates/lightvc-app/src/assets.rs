@@ -6,7 +6,6 @@ pub const ICON_256_PNG: &[u8] = include_bytes!("../assets/icons/icon_256.png");
 pub const LOGO_PNG: &[u8] = include_bytes!("../assets/logo/logo_header.png");
 #[allow(dead_code)] // Retina/HiDPI support not yet implemented (ASSETS_SPEC_V2 §Implementation Status)
 pub const LOGO_2X_PNG: &[u8] = include_bytes!("../assets/logo/logo_header@2x.png");
-pub const BG_TEXTURE_PNG: &[u8] = include_bytes!("../assets/textures/bg_texture.png");
 pub const KNOB_FRAMES_PNG: &[u8] = include_bytes!("../assets/knobs/knob_64_frames.png");
 pub const SPLASH_PNG: &[u8] = include_bytes!("../assets/splash/splash.png");
 
@@ -42,7 +41,6 @@ pub fn load_icon() -> Option<egui::IconData> {
 
 /// Cache for all texture handles (created once per egui context).
 pub struct AssetCache {
-    pub bg_texture: Option<egui::TextureHandle>,
     pub logo_texture: Option<egui::TextureHandle>,
     pub knob_texture: Option<egui::TextureHandle>,
     pub splash_texture: Option<egui::TextureHandle>,
@@ -65,7 +63,6 @@ pub struct IconCache {
 impl Default for AssetCache {
     fn default() -> Self {
         Self {
-            bg_texture: None,
             logo_texture: None,
             knob_texture: None,
             splash_texture: None,
@@ -101,14 +98,18 @@ impl AssetCache {
         )
     }
 
-    pub fn bg(&mut self, ctx: &egui::Context) -> &egui::TextureHandle {
-        self.bg_texture
-            .get_or_insert_with(|| Self::make_texture(ctx, "bg_texture", BG_TEXTURE_PNG))
-    }
-
     pub fn logo(&mut self, ctx: &egui::Context) -> &egui::TextureHandle {
         self.logo_texture
             .get_or_insert_with(|| Self::make_texture(ctx, "logo", LOGO_PNG))
+    }
+
+    /// UV rect that crops the logo texture to its non-transparent content,
+    /// removing the large transparent margins baked into the source PNG
+    /// (320x60 image with ~171x41 of actual content centered inside).
+    pub fn logo_crop_uv() -> egui::Rect {
+        let (tw, th) = (320.0_f32, 60.0_f32);
+        let (cx, cy, cw, ch) = (72.0_f32, 9.0_f32, 171.0_f32, 41.0_f32);
+        egui::Rect::from_min_size(egui::pos2(cx / tw, cy / th), egui::vec2(cw / tw, ch / th))
     }
 
     pub fn knob(&mut self, ctx: &egui::Context) -> &egui::TextureHandle {

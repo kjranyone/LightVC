@@ -33,8 +33,6 @@ pub fn render(
     on_select: impl FnMut(usize),
 ) {
     let mut on_select = on_select;
-    crate::theme::heading(ui, "Voice Catalog");
-    ui.add_space(crate::theme::space::SMALL);
     ui.label(
         egui::RichText::new("Register reference audio for zero-shot voice conversion")
             .size(12.0)
@@ -113,7 +111,7 @@ pub fn render(
                     egui::RichText::new(format!("{} voices", s.voices.len()))
                         .size(14.0)
                         .strong()
-                        .color(crate::theme::colors::CYAN),
+                        .color(crate::theme::colors::TEXT_DIM),
                 );
                 ui.add_space(crate::theme::space::SMALL);
 
@@ -143,15 +141,15 @@ pub fn render(
                                 let idx_str = format!("{}", i + 1);
                                 ui.label(
                                     egui::RichText::new(if is_selected {
-                                        "★"
+                                        "*"
                                     } else {
                                         idx_str.as_str()
                                     })
                                     .size(12.0)
                                     .color(if is_selected {
-                                        crate::theme::colors::PINK_BRIGHT
+                                        crate::theme::colors::TEXT
                                     } else {
-                                        crate::theme::colors::LAVENDER
+                                        crate::theme::colors::TEXT_MUTED
                                     })
                                     .monospace(),
                                 );
@@ -183,11 +181,8 @@ pub fn render(
                                             catalog.playing_voice = None;
                                             catalog.player = None;
                                         }
-                                        let play_label = if is_this_playing {
-                                            "■ Stop"
-                                        } else {
-                                            "▶ Play"
-                                        };
+                                        let play_label =
+                                            if is_this_playing { "Stop" } else { "Play" };
                                         if crate::theme::icon_button(
                                             ui, icon_play, play_label, false,
                                         ) {
@@ -212,7 +207,7 @@ pub fn render(
                                         }
                                         // Select this voice as the Realtime reference.
                                         let select_label =
-                                            if is_selected { "✓ Selected" } else { "Use" };
+                                            if is_selected { "[v] Selected" } else { "Use" };
                                         if crate::theme::pill_button(ui, select_label, is_selected)
                                         {
                                             on_select(i);
@@ -265,7 +260,7 @@ pub fn render(
     ui.collapsing(
         egui::RichText::new("Import / Export")
             .size(13.0)
-            .color(crate::theme::colors::CYAN),
+                                                .color(crate::theme::colors::TEXT_DIM),
         |ui| {
             ui.horizontal(|ui| {
                 if crate::theme::icon_button(ui, icon_folder, "Export", true) {

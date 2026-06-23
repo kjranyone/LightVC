@@ -363,7 +363,7 @@ impl CrossAttnBlock {
 // Converter Configuration
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Debug, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub struct ConverterConfig {
     pub latent_dim: usize,
     pub hidden_dim: usize,
