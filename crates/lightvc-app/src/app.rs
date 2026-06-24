@@ -51,14 +51,17 @@ pub enum RtControl {
 }
 
 /// Type alias for the shared pipeline slot.
-pub type PipelineSlot = Arc<Mutex<Option<Arc<Mutex<lightvc_core::pipeline::VcPipeline>>>>>;
+pub type PipelineSlot = Arc<Mutex<Option<Arc<Mutex<lightvc_core::Backend>>>>>;
 
 /// Application-wide shared state.
 pub struct AppState {
     pub dac_weights: std::path::PathBuf,
     pub converter_weights: Option<std::path::PathBuf>,
     pub converter_config: Option<std::path::PathBuf>,
-    pub pipeline: Option<Arc<Mutex<lightvc_core::pipeline::VcPipeline>>>,
+    pub b1_adapter_weights: Option<std::path::PathBuf>,
+    pub b1_quantizer_weights: Option<std::path::PathBuf>,
+    pub b1_timbre: Option<std::path::PathBuf>,
+    pub pipeline: Option<Arc<Mutex<lightvc_core::Backend>>>,
     /// Shared hot-swappable pipeline slot. The inference thread reads this
     /// every loop iteration so a converter loaded after thread start is
     /// picked up without restarting the thread ([F2]).
@@ -126,6 +129,9 @@ impl LightVcApp {
             dac_weights,
             converter_weights: None,
             converter_config: None,
+            b1_adapter_weights: None,
+            b1_quantizer_weights: None,
+            b1_timbre: None,
             pipeline: None,
             pipeline_slot: Arc::new(Mutex::new(None)),
             voices: Vec::new(),
@@ -280,7 +286,7 @@ impl LightVcApp {
             )?;
 
             let mut s = state.lock().unwrap();
-            let pipeline_arc = Arc::new(Mutex::new(pipeline));
+            let pipeline_arc = Arc::new(Mutex::new(lightvc_core::Backend::Legacy(pipeline)));
             s.pipeline = Some(pipeline_arc.clone());
             *s.pipeline_slot.lock().unwrap() = Some(pipeline_arc);
             s.converter_weights = Some(std::path::PathBuf::from(conv_path));
@@ -292,6 +298,49 @@ impl LightVcApp {
         if let Err(e) = result {
             let mut s = state.lock().unwrap();
             s.error = Some(format!("Load failed: {e}"));
+        }
+    }
+
+    fn load_b1_static(
+        state: &Arc<Mutex<AppState>>,
+        dac_path: &str,
+        quantizer_path: &str,
+        adapter_path: &str,
+        timbre_path: &str,
+    ) {
+        let result = (|| -> anyhow::Result<()> {
+            let device = candle_core::Device::Cpu;
+
+            let timbre = {
+                let vb = lightvc_core::weights::load_varbuilder(
+                    std::path::Path::new(timbre_path),
+                    candle_core::DType::F32,
+                    &device,
+                )?;
+                vb.get((1, 192), "timbre")?
+            };
+
+            let mut b1 = lightvc_core::b1_pipeline::B1Streaming::new(
+                std::path::Path::new(dac_path),
+                std::path::Path::new(quantizer_path),
+                std::path::Path::new(adapter_path),
+                lightvc_core::streaming::ChunkMode::Balanced,
+                device,
+            )?;
+            b1.set_timbre(timbre);
+
+            let mut s = state.lock().unwrap();
+            let arc = Arc::new(Mutex::new(lightvc_core::Backend::B1(b1)));
+            s.pipeline = Some(arc.clone());
+            *s.pipeline_slot.lock().unwrap() = Some(arc);
+            s.status = "B1 adapter loaded".to_string();
+            s.error = None;
+            Ok(())
+        })();
+
+        if let Err(e) = result {
+            let mut s = state.lock().unwrap();
+            s.error = Some(format!("B1 load failed: {e}"));
         }
     }
 

@@ -610,17 +610,7 @@ pub fn inference_loop(
                         .as_ref()
                         .and_then(|p| p.lock().ok())
                     {
-                        p.codec_mut().set_chunk_mode(match mode {
-                            lightvc_core::converter::LatencyMode::Strict => {
-                                lightvc_core::streaming::ChunkMode::Strict
-                            }
-                            lightvc_core::converter::LatencyMode::Balanced => {
-                                lightvc_core::streaming::ChunkMode::Balanced
-                            }
-                            lightvc_core::converter::LatencyMode::Quality => {
-                                lightvc_core::streaming::ChunkMode::Quality
-                            }
-                        });
+                        p.set_mode(mode);
                     }
                 }
                 RtControl::SetProsody { mode, blend } => {

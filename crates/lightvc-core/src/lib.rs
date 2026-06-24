@@ -22,6 +22,96 @@ pub use soft_rvq::SoftRVQ;
 pub use streaming::StreamingCodec;
 pub use utte_adapter::{UTTEAdapter, UTTEAdapterConfig};
 
+use anyhow::Result;
+
+pub enum Backend {
+    Legacy(VcPipeline),
+    B1(B1Streaming),
+}
+
+impl Backend {
+    pub fn process_chunk(&mut self, pcm: &[f32]) -> Result<Vec<f32>> {
+        match self {
+            Backend::Legacy(p) => p.process_chunk(pcm),
+            Backend::B1(p) => p.process_chunk(pcm),
+        }
+    }
+
+    pub fn chunk_samples(&self) -> usize {
+        match self {
+            Backend::Legacy(p) => p.chunk_samples(),
+            Backend::B1(p) => p.chunk_samples(),
+        }
+    }
+
+    pub fn algorithmic_latency_ms(&self) -> f32 {
+        match self {
+            Backend::Legacy(p) => p.algorithmic_latency_ms(),
+            Backend::B1(p) => {
+                let mode = p.chunk_mode();
+                mode.algorithmic_latency_samples() as f32 / 44.1
+            }
+        }
+    }
+
+    pub fn set_velocity_scale(&mut self, scale: f64) {
+        if let Backend::Legacy(p) = self {
+            p.set_velocity_scale(scale);
+        }
+    }
+
+    pub fn set_mode(&mut self, mode: converter::LatencyMode) {
+        if let Backend::Legacy(p) = self {
+            p.set_mode(mode);
+        }
+    }
+
+    pub fn is_b1(&self) -> bool {
+        matches!(self, Backend::B1(_))
+    }
+
+    pub fn reset(&mut self) {
+        match self {
+            Backend::Legacy(p) => p.reset(),
+            Backend::B1(p) => p.reset(),
+        }
+    }
+
+    pub fn set_target(&mut self, pcm: &[f32]) -> Result<()> {
+        match self {
+            Backend::Legacy(p) => p.set_target(pcm),
+            Backend::B1(_) => Ok(()),
+        }
+    }
+
+    pub fn process_full(&mut self, pcm: &[f32]) -> Result<Vec<f32>> {
+        match self {
+            Backend::Legacy(p) => p.process_full(pcm),
+            Backend::B1(p) => p.process_full(pcm),
+        }
+    }
+
+    pub fn mode(&self) -> converter::LatencyMode {
+        match self {
+            Backend::Legacy(p) => p.mode(),
+            Backend::B1(_) => converter::LatencyMode::Balanced,
+        }
+    }
+
+    pub fn set_prosody(&mut self, mode: converter::ProsodyMode, blend: f64) {
+        if let Backend::Legacy(p) = self {
+            p.set_prosody(mode, blend);
+        }
+    }
+
+    pub fn codec_device(&self) -> &candle_core::Device {
+        match self {
+            Backend::Legacy(p) => p.codec().codec().device(),
+            Backend::B1(p) => p.codec().device(),
+        }
+    }
+}
+
 /// Sample rate expected by DAC (44.1 kHz).
 pub const DAC_SAMPLE_RATE: u32 = 44_100;
 
