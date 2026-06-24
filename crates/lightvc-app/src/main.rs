@@ -23,6 +23,7 @@ fn main() -> anyhow::Result<()> {
     let result = match args.command {
         cli::Command::Roundtrip(cmd) => cli::run_roundtrip(cmd),
         cli::Command::Convert(cmd) => cli::run_convert(cmd),
+        cli::Command::ConvertB1(cmd) => cli::run_convert_b1(cmd),
         cli::Command::Gui(cmd) => cli::run_gui(cmd),
     };
     // Explicit exit to avoid hang on mmap/safetensors drop on Windows

@@ -3,18 +3,24 @@
 //! Provides the DAC codec wrapper, converter model, streaming pipeline,
 //! and weight loading for real-time voice conversion.
 
+pub mod b1_pipeline;
 pub mod codec;
 pub mod converter;
 pub mod dac_model;
 pub mod flow_converter;
 pub mod pipeline;
+pub mod soft_rvq;
 pub mod streaming;
+pub mod utte_adapter;
 pub mod weights;
 
+pub use b1_pipeline::{B1Offline, B1Streaming, StageTimings};
 pub use codec::{DacCodec, DacConfig};
 pub use converter::{AnyConverter, Converter, ConverterConfig, FlowConverter, LatencyMode};
 pub use pipeline::VcPipeline;
+pub use soft_rvq::SoftRVQ;
 pub use streaming::StreamingCodec;
+pub use utte_adapter::{UTTEAdapter, UTTEAdapterConfig};
 
 /// Sample rate expected by DAC (44.1 kHz).
 pub const DAC_SAMPLE_RATE: u32 = 44_100;

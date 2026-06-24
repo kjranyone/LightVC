@@ -1,5 +1,24 @@
 # Astrapeを超えるSOTA寄りのLightVCアイデア
 
+> **Status note (2026-06-21):** このファイルは初期アイデアの履歴を含む。
+> 現行方針は [plan/12_concept_v2.md](plan/12_concept_v2.md) と
+> [docs/literature_update_2026-06-21.md](docs/literature_update_2026-06-21.md) を正とする。
+>
+> 破棄済み:
+> - VC teacher distillation
+> - DAC continuous latent regression
+> - naive RVQ depth swap
+> - frame-independent / cross-text bank retrieval を本線にする案
+>
+> 維持する核:
+> - codec-space VC
+> - one-step / low-latency streaming
+> - heavy TTS/BigVGAN pipeline に逃げない
+> - Rust/Candle inference
+>
+> 現行の中核は **source q0 + target-like residual trajectory +
+> residual-chain-preserving re-quantization / tolerant decoder**。
+
 求めるなら、**Astrapeの「連続latent + CFM + causal encoder/decoder」を超える方向は、codec空間の1-step変換 + factorized token制御 + teacher distillation** だと思う。
 
 Astrapeは思想として良いけど、まだ「F³ encoder/decoderを自前で持ち、CFMを4〜8 stepで回す」発想に見える。ここを超えるなら、**VC専用の大きい生成パイプラインを作らず、既存codec表現を“変換可能な中間言語”として使う**ほうがSOTA寄り。

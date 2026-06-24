@@ -2,6 +2,14 @@
 
 Detailed system architecture for the Rust client and model components.
 
+> **Status note (2026-06-21):** Several model sections below document the
+> historical continuous-latent converter architecture. That path is frozen after
+> experiments showed off-manifold decoding and RVQ-cascade sensitivity. The
+> current research direction is residual-chain-preserving codec trajectory
+> translation: preserve source RVQ depth 0, generate target-like residual
+> trajectory, then re-quantize depths 1..8 or use a tolerant decoder adapter.
+> See [plan/12_concept_v2.md](plan/12_concept_v2.md) for the active plan.
+
 ---
 
 ## 1. System Topology
@@ -20,9 +28,9 @@ Detailed system architecture for the Rust client and model components.
 │    loop {                                                           │
 │      ringbuf_capture.read(chunk)                                    │
 │      → resample(device_sr → 44100)                                  │
-│      → DAC.encode(chunk)           // frozen, continuous latent     │
-│      → Converter.forward(latent)   // our model, one-step           │
-│      → DAC.decode(latent)          // frozen                        │
+│      → DAC.encode(chunk)           // latent + RVQ tokens           │
+│      → Converter.forward(...)      // q0 anchor + residual path     │
+│      → DAC.decode(tokens/latent)   // decoder or tolerant adapter   │
 │      → resample(44100 → device_sr)                                  │
 │      → ringbuf_playback.write(chunk)                                │
 │    }                                                                │
@@ -209,9 +217,9 @@ The Candle `dac.rs` implementation has three gaps for our use case:
 2. **No streaming**: `StreamingModule` trait not implemented.
 3. **Non-causal**: Encoder convolutions use symmetric padding (require future samples).
 
-### 3.2 Solution: Continuous Latent Pipeline (no quantization)
+### 3.2 Historical Solution: Continuous Latent Pipeline (frozen)
 
-**Key insight**: For LightVC, the converter operates on **continuous latents**, not discrete tokens. We **skip the quantizer entirely**:
+**Historical note**: The original converter operated on **continuous latents** and skipped the quantizer. This path is now frozen. Current experiments show that residual-chain-preserving RVQ re-quantization or a tolerant decoder is required for valid codec trajectories.
 
 ```
                     ┌─────────────────────────────┐
@@ -554,23 +562,24 @@ Total Phase 2: ~16-27M
 - Speaker embedding modulates prototypes, not replaces them → robust to low-quality references.
 - Cross-attention lets each frame retrieve relevant timbre cues (fine-grained vs global).
 
-### 4.3 Phase 3 (Optional): Progressive RVQ-Depth Conversion
+### 4.3 Phase 3: Residual-Chain-Preserving RVQ Conversion
 
-When working with discrete tokens (post-quantization), RVQ depth becomes a control axis:
+Naive RVQ depth control was experimentally rejected. Depths cannot be pasted independently because each codebook quantizes the residual left by previous depths.
 
 ```
 DAC RVQ: 9 codebooks × 1024 entries
 
-Layer 1-3 (coarse): content + timbre  → convert aggressively
-Layer 4-6 (mid):    spectral shape    → convert moderately  
-Layer 7-9 (fine):   texture/noise     → passthrough or light convert
+q0:     strongest speaker contribution, content mixed
+q1:     strong speaker/timbre contribution
+q2:     speaker auxiliary + phonetic detail
+q3..8:  residual texture/detail
 
-Low-latency mode:   convert layers 1-3 only, passthrough 4-9
-Quality mode:       convert all 9 layers
-Privacy mode:       strong-convert timbre-bearing layers
+current best oracle:
+  q0_hat = q0_source
+  q1..8_hat = RVQ_requantize(z_target_like - q0_source)
 ```
 
-**Note**: Phase 3 requires implementing the DAC quantizer encode path in Candle (nearest-neighbor codebook lookup). This is ~100 LOC (L2 distance + argmin + residual subtraction). Phase 1-2 operate purely in continuous latent space and skip this entirely.
+**Note**: Phase 3 requires the DAC quantizer/re-quantizer encode path in Candle (nearest-neighbor codebook lookup + residual subtraction). Current open question: whether a decoder adapter/tolerant decoder can accept approximate target-like residual latents without hard RVQ cascade failure.
 
 ### 4.4 Phase 4 (Optional): Prosody/Rhythm Factorization
 

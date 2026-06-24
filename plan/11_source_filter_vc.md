@@ -1,5 +1,10 @@
 # Plan 11: Causal Source-Filter Voice Conversion
 
+> **Status (2026-06-21): research stopped as main route.**
+> Corrected 200-pair evaluation showed WORLD/mcep ceiling around `0.36-0.40`,
+> with high speaker-pair variance. Keep this file as diagnostic history only.
+> Current route: [plan/12_concept_v2.md](12_concept_v2.md).
+
 ## Motivation
 
 DAC latent-space VC 失敗後、2つのアプローチを検討:

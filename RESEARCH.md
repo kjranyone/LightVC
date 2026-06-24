@@ -2,6 +2,8 @@
 
 Summary of the literature survey and technology evaluation that informed the design decisions.
 
+> **2026-06-21 status update:** The continuous-DAC-latent flow-matching design described in older sections is frozen. Local experiments showed off-manifold decoding, RVQ-cascade sensitivity, and cross-text retrieval failure. The active research path is residual-chain-preserving codec trajectory translation plus decoder tolerance/adaptation. See [docs/literature_update_2026-06-21.md](docs/literature_update_2026-06-21.md) and [plan/12_concept_v2.md](plan/12_concept_v2.md).
+
 ---
 
 ## 1. Rust ML Inference Framework Comparison
@@ -50,7 +52,7 @@ candle-transformers/src/models/
 - **Paper**: arXiv:2510.09245
 - **Key contribution**: Streaming end-to-end VC via synthetic parallel distillation from Seed-VC teacher. 77.1ms latency, 14.7M params.
 - **Architecture**: AudioDec backbone, latent-to-latent causal conv converter. Two-stage training (mel L1 → GAN).
-- **Relevance to LightVC**: Validates the synthetic parallel distillation approach. Converter architecture (causal conv blocks) is directly applicable.
+- **Relevance to LightVC**: Useful latency/streaming reference, but its synthetic VC-teacher data is **not allowed** by current LightVC project rules. Do not use it as a training recipe.
 - **Code**: Anonymous repo (not yet public).
 
 ### MeanVC 2 (Interspeech 2026)
@@ -98,8 +100,28 @@ candle-transformers/src/models/
   4. Single teacher (MioCodec)
   5. No fine-grained timbre retrieval
 
-### X-VC (concept reference)
-- **Note**: Could not be verified as a published paper. Treat as design spec from CONCEPT.md. Components are individually validated by SynthVC + Seed-VC + MeanVC2.
+### X-VC (codec-space streaming reference)
+- **Paper**: arXiv:2604.12456
+- **Key contribution**: Zero-shot streaming VC in codec space with one-step latent conversion, dual conditioning, frame-level target acoustic conditions, adaptive normalization, generated paired data, role assignment, and chunkwise overlap smoothing.
+- **Code/checkpoints**: github.com/Jerrister/X-VC.
+- **Relevance**: Strong external support for codec-space one-step VC. Training uses generated paired data, so LightVC cannot copy the recipe directly under the no-VC-teacher rule. Also, X-VC does not remove LightVC's empirical finding that frozen DAC continuous-latent edits can be decoder-invalid.
+
+### StreamVC / RT-VC (real-time disentanglement references)
+- **StreamVC**: arXiv:2401.03078. Low-latency VC using SoundStream-style architecture, causal soft speech units, and pitch information.
+- **RT-VC**: arXiv:2506.10289. Real-time zero-shot VC using an articulatory feature space and causal models.
+- **Relevance**: Both support a small causal content/unit encoder rather than raw codec-latent nearest-neighbor matching. They are evidence against relying on DAC latent cosine distance as a content representation.
+
+### VChangeCodec (codec-integrated VC)
+- **Paper**: OpenReview `qDSfOQBrOD`.
+- **Key contribution**: Integrates timbre conversion into the neural speech codec itself; reports about 40 ms latency with under 1M extra parameters.
+- **Relevance**: Strong support for sub-50 ms feasibility if VC is codec-integrated. This is the main long-term fallback if frozen DAC + adapter cannot tolerate generated residual latents.
+
+### Recent Zero-Shot Singing VC
+- **YingMusic-SVC**: arXiv:2512.04793. Singing-specific inductive biases, F0-aware timbre adaptor, robust training for real songs.
+- **HQ-SVC**: arXiv:2511.08496. Low-resource zero-shot SVC with decoupled codec features, pitch/volume modeling, DDSP/diffusion refinement.
+- **R2-SVC**: arXiv:2510.20677. Robust expressive SVC with simulation-based robustness, singing timbre/style extractor, and NSF modeling.
+- **Singing Voice Conversion Challenge 2025**: arXiv:2509.15629. Highlights zero-shot singing style conversion and evaluation constraints.
+- **Relevance**: Singing is not "speech VC plus more data." It requires explicit F0, melody, vibrato, energy, breath/noise, and singing-style handling. Heavy diffusion/vocoder paths conflict with LightVC's <50ms goal, so singing must be a separate lightweight mode with explicit prosody constraints.
 
 ---
 
@@ -123,7 +145,7 @@ candle-transformers/src/models/
 
 ### Mitigation Summary
 - **Non-causal**: Overlap-add with bounded lookahead (40-120ms). Mapped to quality modes.
-- **Decode-only**: Converter operates in continuous latent space → quantizer not needed.
+- **Quantizer path**: Current research needs RVQ encode/re-quantization and possibly soft residual decoding. Older continuous-latent experiments skipped the quantizer, but that route is frozen.
 - **86 Hz**: Lightweight Conv1d converter stays within CPU budget (~860 MFLOP/s for 10M model).
 - **No streaming**: Implement conv-state caching + overlap-add in `lightvc-core`.
 
@@ -192,17 +214,17 @@ candle-transformers/src/models/
 
 ## 8. Key Architectural Insights
 
-### "VC = codec-space translation"
-The most important conceptual shift. Instead of generating waveforms, the converter transforms latents. The frozen codec decoder handles waveform synthesis. This reduces the VC model to a lightweight latent mapping function.
+### "VC = codec-space trajectory translation"
+The most important conceptual shift. Instead of generating waveforms, LightVC should transform codec trajectories. Local experiments refined this further: transforming arbitrary continuous latents is unsafe, and token validity alone is insufficient. The RVQ residual chain and decoder-valid trajectory must be preserved.
 
 ### "One-step > multi-step for latency"
-Both MeanVC2 (mean flows, 1-NFE) and X-VC (one-step codec conversion) converge on this. Flow matching ODE loops (Astrape: 4-8 steps) are fundamentally slower than a single forward pass.
+MeanVC2 and X-VC both support one-step or few-step streaming conversion. Flow matching ODE loops are fundamentally harder to fit under low latency. However, LightVC experiments show that one-step latent prediction is not sufficient unless the decoder can tolerate approximate target-like residual latents.
 
 ### "Bounded lookahead >> strict causal for quality"
 MeanVC2's FRC shows that only the first attention layer needs future context. Strict causal (0ms lookahead) degrades quality significantly. The CONCEPT.md's 0/40/80ms mode switch is the right design.
 
-### "Progressive depth as an axis"
-Neural codecs have RVQ depth (9 for DAC). Most VC systems treat all depths equally. DiFlow-TTS's factorized heads + the streaming TTS progressive depth-wise decode concept suggest treating depth as a latency/fidelity axis — a genuinely novel contribution for VC.
+### "RVQ residual chain matters more than naive depth semantics"
+Neural codecs have RVQ depth (9 for DAC), but LightVC Phase 1 found that naive depth swap is close to random mixing. Depth 0 carries the largest speaker contribution and is also content-mixed. The useful operation is source q0 anchoring plus residual re-quantization, not independent coarse/mid/fine token pasting.
 
 ---
 
@@ -228,6 +250,14 @@ Neural codecs have RVQ depth (9 for DAC). Most VC systems treat all depths equal
 18. EZ-VC — arXiv:2505.16691 (self-supervised NAR FM, teacher-free)
 19. REF-VC — arXiv:2508.04996 (SSL + random erase, matches Seed-VC from scratch)
 20. NaturalSpeech 3 / FACodec — arXiv:2403.03100 (factorized codec)
+21. X-VC — arXiv:2604.12456 (codec-space streaming VC)
+22. StreamVC — arXiv:2401.03078 (low-latency VC with causal soft units)
+23. RT-VC — arXiv:2506.10289 (real-time VC with articulatory features)
+24. VChangeCodec — OpenReview qDSfOQBrOD (codec-integrated VC, 40 ms claim)
+25. YingMusic-SVC — arXiv:2512.04793 (zero-shot singing VC)
+26. HQ-SVC — arXiv:2511.08496 (low-resource zero-shot singing VC)
+27. R2-SVC — arXiv:2510.20677 (robust expressive zero-shot singing VC)
+28. Singing Voice Conversion Challenge 2025 — arXiv:2509.15629
 
 ---
 
