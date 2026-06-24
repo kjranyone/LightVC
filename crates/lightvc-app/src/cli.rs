@@ -29,6 +29,8 @@ pub enum Command {
     Roundtrip(RoundtripCmd),
     /// Apply converter to a WAV file (offline processing).
     Convert(ConvertCmd),
+    /// Apply B1 UTTE adapter pipeline to a WAV file (offline).
+    ConvertB1(ConvertB1Cmd),
     /// Launch desktop GUI (3 tabs: offline/realtime/catalog).
     Gui(GuiCmd),
 }
@@ -98,6 +100,39 @@ pub struct ConvertCmd {
         help = "Velocity scale (guidance). 1.0 = training-matched, >1 amplifies conversion"
     )]
     pub velocity_scale: f64,
+
+    #[arg(long)]
+    pub cuda: bool,
+
+    #[arg(long)]
+    pub metal: bool,
+}
+
+#[derive(Parser)]
+pub struct ConvertB1Cmd {
+    #[arg(short, long)]
+    pub input: PathBuf,
+
+    #[arg(short, long, help = "Pre-computed ECAPA timbre safetensors")]
+    pub timbre: PathBuf,
+
+    #[arg(short, long, default_value = "converted_b1.wav")]
+    pub output: PathBuf,
+
+    #[arg(long, env = "LIGHTVC_DAC_WEIGHTS")]
+    pub dac_weights: PathBuf,
+
+    #[arg(long, default_value = "models/dac_quantizer.safetensors")]
+    pub quantizer_weights: PathBuf,
+
+    #[arg(long, default_value = "models/utte_adapter_b1.safetensors")]
+    pub adapter_weights: PathBuf,
+
+    #[arg(long, default_value = "balanced", help = "strict | balanced")]
+    pub mode: String,
+
+    #[arg(long, default_value = "5.0")]
+    pub tau: f64,
 
     #[arg(long)]
     pub cuda: bool,
@@ -261,6 +296,63 @@ pub fn run_convert(cmd: ConvertCmd) -> Result<()> {
 
     save_wav_mono(&cmd.output, &output, 44_100)?;
     println!("Saved: {}", cmd.output.display());
+
+    Ok(())
+}
+
+pub fn run_convert_b1(cmd: ConvertB1Cmd) -> Result<()> {
+    println!("LightVC B1 Offline Conversion");
+    println!("  Input:  {}", cmd.input.display());
+    println!("  Timbre: {}", cmd.timbre.display());
+    println!("  Output: {}", cmd.output.display());
+
+    let device = select_device(cmd.cuda, cmd.metal)?;
+    println!("  Device: {:?}", device);
+
+    let (input_pcm, input_sr) = load_wav_mono(&cmd.input)?;
+    println!(
+        "  Loaded: {} samples at {} Hz ({:.1}s)",
+        input_pcm.len(),
+        input_sr,
+        input_pcm.len() as f32 / input_sr as f32
+    );
+
+    let pcm_44k = resample_to_44100(&input_pcm, input_sr)?;
+
+    let timbre = {
+        let vb = lightvc_core::weights::load_varbuilder(&cmd.timbre, DType::F32, &device)?;
+        vb.get((1, 192), "timbre")?
+    };
+
+    let chunk_mode = match cmd.mode.as_str() {
+        "strict" => lightvc_core::streaming::ChunkMode::Strict,
+        _ => lightvc_core::streaming::ChunkMode::Balanced,
+    };
+
+    let mut b1 = lightvc_core::b1_pipeline::B1Streaming::new(
+        &cmd.dac_weights,
+        &cmd.quantizer_weights,
+        &cmd.adapter_weights,
+        chunk_mode,
+        device,
+    )?;
+    b1.set_timbre(timbre);
+    b1.set_tau(cmd.tau);
+
+    println!(
+        "  Pipeline: B1 UTTE adapter ({}, tau={})",
+        cmd.mode, cmd.tau
+    );
+    println!("  Processing...");
+    let output = b1.process_full(&pcm_44k)?;
+    println!(
+        "  Output: {} samples ({:.1}s)",
+        output.len(),
+        output.len() as f32 / 44_100.0
+    );
+
+    save_wav_mono(&cmd.output, &output, 44_100)?;
+    println!("  Saved: {}", cmd.output.display());
 
     Ok(())
 }

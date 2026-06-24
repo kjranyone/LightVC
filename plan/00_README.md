@@ -3,6 +3,8 @@
 LightVC プロジェクトの初期設計資料（DESIGN / ARCHITECTURE / MODEL_TRAINING / CONCEPT / RESEARCH）と実装（`crates/` `training/`）の乖離を整理し、修正タスク化した文書群。
 
 > **2026-06-17 第2回監査を実施**: 初回（36タスク）から実装の直接検証を行い、**新規 24 件の乖離**を追加発見。特に Rust/Python 数値不整合（[03-6][03-7][03-8]）、学習ロジックの根本的欠陥（[04-7][04-8][04-9]）、CLAP プラグインの実用性欠如（[06-5][06-6][06-7]）は P0/P1 として追加。一部の ✅ 判定は 🚧 に格下げ（`✅ → 🚧` 凡例参照）。
+>
+> **2026-06-21 研究方針更新**: continuous DAC latent flow matching は凍結。現在の正は [12_concept_v2.md](12_concept_v2.md) と [../docs/literature_update_2026-06-21.md](../docs/literature_update_2026-06-21.md)。古い Phase B/C 系タスクは実装整合性監査として残すが、研究本線ではない。
 
 ## インデックス
 
@@ -17,6 +19,9 @@ LightVC プロジェクトの初期設計資料（DESIGN / ARCHITECTURE / MODEL_
 | 06 | [06_plugin_app.md](06_plugin_app.md) | F | CLAP config 固定・latency/RTF 計算不正 |
 | 07 | [07_unimplemented_phases.md](07_unimplemented_phases.md) | G | Phase 3/4・dual-path・エッジケース未実装 |
 | 08 | [08_known_bugs.md](08_known_bugs.md) | H | dac_model.rs パディング/causal 矛盾・数値不一致 |
+| 10 | [10_analysis_resynthesis.md](10_analysis_resynthesis.md) | 旧案 | Mel+BigVGAN/TTS型再合成。凍結 |
+| 11 | [11_source_filter_vc.md](11_source_filter_vc.md) | 旧案 | WORLD source-filter。200ペア評価で研究停止 |
+| 12 | [12_concept_v2.md](12_concept_v2.md) | 現行 | residual-chain-preserving codec trajectory translation |
 
 ## 優先度マトリクス
 

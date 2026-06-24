@@ -1,5 +1,21 @@
 # LightVC Model Training & Data Creation
 
+> **Status: historical / frozen path (2026-06-21).**
+>
+> This document describes the earlier continuous-DAC-latent flow-matching
+> training plan. Experiments after this document was written showed:
+>
+> - continuous latent regression and STE/code prediction are decoder-invalid;
+> - naive RVQ token swap is residual-chain-invalid;
+> - cross-text retrieval is too weak for free conversation;
+> - the active path is now `source q0 + target-like residual trajectory +
+>   residual-chain-preserving re-quantization`, with decoder
+>   adapter/tolerance as the next main experiment.
+>
+> Use this file for reproducing old Phase B/C runs only. For the current
+> plan, read [plan/12_concept_v2.md](plan/12_concept_v2.md) and
+> [docs/literature_update_2026-06-21.md](docs/literature_update_2026-06-21.md).
+
 Complete pipeline for creating the converter model — **trained from scratch, no VC teacher**.
 
 > **Design revision (2026-06):** Dropped the Seed-VC teacher-distillation plan after
@@ -9,6 +25,9 @@ Complete pipeline for creating the converter model — **trained from scratch, n
 > directly via **mean-flow / shortcut flow matching in DAC continuous latent space**,
 > with a bottleneck-autoencoder warm-start. This removes the teacher dependency
 > entirely and unlocks the novel progressive RVQ-depth factorized FM heads.
+>
+> **Superseded by experiments:** this continuous latent route is no longer the
+> active recommendation.
 
 ---
 

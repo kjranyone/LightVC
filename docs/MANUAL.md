@@ -241,6 +241,8 @@ uv run python encode_corpus.py \
 
 #### Phase B: ウォームスタート
 
+> **2026-06-21注記**: Phase B/C は旧 continuous-latent converter の再現用手順です。現在の研究本線ではありません。最新方針は `plan/12_concept_v2.md` を参照してください。
+
 ```bash
 uv run python train_warmstart.py \
     --config configs/phase_b.yaml \
@@ -259,7 +261,7 @@ uv run python train_flow.py \
     --output checkpoints/phase_c
 ```
 
-メインの学習フェーズです。平均フローマッチング（mean-flow matching）により、1ステップ推論を可能にする変換器を学習します。ターゲットは実際の話者のDAC潜在表現（Teacherの出力ではない）です。
+旧メイン学習フェーズです。フローマッチングにより、1ステップ推論を可能にする変換器を学習します。ターゲットは実際の話者のDAC潜在表現（Teacherの出力ではない）です。ただし、この continuous latent 経路は実験により off-manifold / RVQ cascade 問題が確認されたため凍結されています。
 
 ### 6.3 重みのエクスポート
 

@@ -1,5 +1,13 @@
 # LightVC — 革新価値と実験意義
 
+> **Status note (2026-06-21):** この文書は初期仮説の研究意義メモ。
+> 「RVQ depth が coarse/mid/fine に独立分離している」という仮説は
+> Phase 1/2 実験で否定された。実測では depth 0 が話者情報を最も強く持ち、
+> content も混在する。現在の新規性は depth strength 制御ではなく、
+> **RVQ residual-chain validity** と **source q0 anchor + target-like residual
+> re-quantization / tolerant decoder** に移っている。現行方針は
+> [../plan/12_concept_v2.md](../plan/12_concept_v2.md) を参照。
+
 > LightVC は SOTA VC システム（Seed-VC / VEVO / Takin-VC / EZ-VC）の「追従」を目指すプロジェクトではない。DAC 潜在空間での軽量 codec-space VC が**段階的・分離的な話者特性制御**を実現できるかを検証する実験プロジェクトである。
 
 ---

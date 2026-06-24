@@ -1,0 +1,41 @@
+{
+  "n_pairs": 2,
+  "n_evaluated": 2,
+  "secs_mean": 0.14721088111400604,
+  "secs_n": 2,
+  "utmos_mean": null,
+  "utmos_n": 0,
+  "wer_src_vs_converted_mean": 0.0,
+  "wer_text_vs_converted_mean": 0.0,
+  "wer_text_vs_source_mean": 0.0,
+  "wer_degradation_mean": 0.0,
+  "targets": {
+    "secs_gt": 0.7,
+    "utmos_gt": 3.5,
+    "wer_lt": 0.05
+  },
+  "pairs": [
+    {
+      "source": "samples/wav/vctk_source_m.wav",
+      "reference": "samples/wav/vctk_ref_f.wav",
+      "secs": 0.18799014389514923,
+      "whisper_converted": "Please call Stella.",
+      "whisper_source": "Please call Stella.",
+      "wer_src_vs_converted": 0.0,
+      "ground_truth": "Please call Stella.",
+      "wer_text_vs_converted": 0.0,
+      "wer_text_vs_source": 0.0
+    },
+    {
+      "source": "samples/wav/vctk_source_m_2.wav",
+      "reference": "samples/wav/vctk_ref_f.wav",
+      "secs": 0.10643161833286285,
+      "whisper_converted": "Ask her to bring these things with her from the store.",
+      "whisper_source": "Ask her to bring these things with her from the store.",
+      "wer_src_vs_converted": 0.0,
+      "ground_truth": "Ask her to bring these things with her from the store.",
+      "wer_text_vs_converted": 0.0,
+      "wer_text_vs_source": 0.0
+    }
+  ]
+}

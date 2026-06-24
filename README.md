@@ -6,7 +6,7 @@
 
 <p align="center">
   Real-time voice conversion as a Rust desktop application and CLAP/VST3 plugin.<br>
-  Zero-shot, teacher-free, flow-matching in DAC latent space.
+  Research prototype for codec-space, low-latency voice conversion.
 </p>
 
 <p align="center">
@@ -21,22 +21,34 @@
 
 ## Overview
 
-LightVC transforms audio in a pretrained neural codec's (DAC) continuous latent space using a lightweight flow-matching converter. No VC teacher — trained from scratch via flow matching on real speaker data.
+LightVC is a research prototype for low-latency voice conversion in neural-codec space. The original continuous-DAC-latent flow-matching design is now **frozen** after experiments showed severe off-manifold and RVQ-cascade sensitivity.
+
+Current research direction:
 
 ```
-Mic input → DAC encode → one-step converter → DAC decode → output
+Mic input
+→ DAC encode
+→ preserve source RVQ depth 0 as content anchor
+→ generate target-like residual trajectory
+→ residual-chain-preserving re-quantization for depths 1..8
+→ DAC decode
+→ output
 ```
+
+The best oracle so far is same-text/content-aligned `source depth 0 + target-like residual re-quantization`, reaching SECS `0.656-0.686` with CER `0.057-0.082` on 200 VCTK pairs. Cross-text/free-conversation generation remains unresolved.
 
 ## Features
 
-- **One-step inference** — flow matching (1-NFE), no ODE loop
-- **Zero-shot VC** — clone any voice from 5-30s reference audio
+- **Codec-space VC research** — avoids a heavy TTS/BigVGAN waveform-generation pipeline
+- **Residual-chain-aware RVQ experiments** — naive token swaps are known to fail
+- **Rust app/plugin shell** — standalone GUI, CLAP, and VST3 bundle support
+- **DAC round-trip path** — native Rust/Candle DAC model work is preserved
 - **Three modes** — Strict (0ms lookahead), Balanced (~40ms), Quality (~80ms)
 - **Three form factors**:
   - Standalone GUI app (egui)
   - CLAP plugin (REAPER, Bitwig, etc.)
   - VST3 plugin (Ableton, FL Studio, etc.)
-- **Teacher-free training** — no Seed-VC or other external VC dependency
+- **VC-teacher-free policy** — no synthetic parallel targets from another VC model
 - **Pure Rust inference** — no Python runtime at deployment
 
 ## Quick Start
@@ -111,7 +123,15 @@ lightvc-app gui --dac-weights models/dac_44khz.safetensors
 
 ## Training
 
-See [training/README.md](training/README.md) for the full pipeline.
+The historical Phase B/C training commands below belong to the frozen continuous-latent converter path. They are kept for reproducibility and code archaeology, not as the current recommended research route.
+
+Current research notes:
+
+- [plan/12_concept_v2.md](plan/12_concept_v2.md) — current codec-token / residual-chain plan
+- [docs/research_report_2026-06-20.md](docs/research_report_2026-06-20.md) — experiment report through Phase 2
+- [docs/literature_update_2026-06-21.md](docs/literature_update_2026-06-21.md) — updated literature and strategy notes
+
+Historical pipeline:
 
 ```bash
 cd training && uv sync
@@ -151,7 +171,8 @@ LightVC/
 ## Architecture
 
 - **Codec**: DAC (Descript Audio Codec), 44.1kHz, MIT license
-- **Converter**: Causal Conv1d (1024→256 hidden), flow matching, ~10M params
+- **Current research converter**: target-like residual trajectory generator + residual-chain-preserving RVQ re-quantization
+- **Frozen converter**: Causal Conv1d continuous-latent flow matching, ~10M params
 - **Inference**: Candle (pure Rust), CPU/GPU/CUDA/Metal
 - **Training**: PyTorch + Intel XPU (uv environment)
 - **Plugin**: nice-plug (ISC) + clap-wrapper (MIT) → CLAP + VST3
@@ -165,6 +186,7 @@ MIT — all dependencies are MIT/ISC/Apache-2.0. No GPLv3.
 
 - [DESIGN.md](DESIGN.md) — High-level design and rationale
 - [ARCHITECTURE.md](ARCHITECTURE.md) — System architecture detail
-- [MODEL_TRAINING.md](MODEL_TRAINING.md) — Training pipeline (teacher-free flow matching)
+- [MODEL_TRAINING.md](MODEL_TRAINING.md) — Historical continuous-latent training pipeline
 - [RESEARCH.md](RESEARCH.md) — Literature survey and evidence base
+- [plan/12_concept_v2.md](plan/12_concept_v2.md) — Current research plan
 - [docs/ASIO_SETUP.md](docs/ASIO_SETUP.md) — Optional ASIO SDK setup
