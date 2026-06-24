@@ -95,8 +95,20 @@ impl B1Streaming {
         self.tau = tau;
     }
 
+    pub fn set_chunk_mode(&mut self, mode: ChunkMode) {
+        self.streaming.set_chunk_mode(mode);
+    }
+
+    pub fn codec(&self) -> &DacCodec {
+        self.streaming.codec()
+    }
+
     pub fn chunk_mode(&self) -> ChunkMode {
         self.streaming.chunk_mode()
+    }
+
+    pub fn chunk_samples(&self) -> usize {
+        self.streaming.chunk_mode().samples_per_chunk()
     }
 
     pub fn reset(&mut self) {
