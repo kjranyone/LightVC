@@ -467,7 +467,8 @@ pub fn inference_loop(
     metrics_tx: Sender<RtMetrics>,
 ) {
     let mut running = false;
-    let mut bypass = pipeline_slot.lock().unwrap().is_none(); // force bypass when no converter
+    let mut bypass = pipeline_slot.lock().unwrap().is_none();
+    let mut wet_dry: f32 = 1.0;
     let mut engine: Option<lightvc_audio::AudioEngine> = None;
     let mut capture_consumer: Option<rtrb::Consumer<f32>> = None;
     let mut playback_producer: Option<rtrb::Producer<f32>> = None;
@@ -644,6 +645,33 @@ pub fn inference_loop(
                         let _ = p.set_target(&pcm);
                     }
                 }
+                RtControl::SetB1Timbre(tensor) => {
+                    if let Some(mut p) = pipeline_slot
+                        .lock()
+                        .unwrap()
+                        .as_ref()
+                        .and_then(|p| p.lock().ok())
+                    {
+                        if let lightvc_core::Backend::B1(ref mut b1) = *p {
+                            b1.set_timbre(tensor);
+                        }
+                    }
+                }
+                RtControl::SetB1Tau(tau) => {
+                    if let Some(mut p) = pipeline_slot
+                        .lock()
+                        .unwrap()
+                        .as_ref()
+                        .and_then(|p| p.lock().ok())
+                    {
+                        if let lightvc_core::Backend::B1(ref mut b1) = *p {
+                            b1.set_tau(tau);
+                        }
+                    }
+                }
+                RtControl::SetWetDry(mix) => {
+                    wet_dry = mix;
+                }
             }
         }
 
@@ -748,7 +776,7 @@ pub fn inference_loop(
             let chunk: Vec<f32> = pcm_44k_accum.drain(..chunk_sz).collect();
             let t0 = Instant::now();
 
-            let out = if bypass {
+            let mut out = if bypass {
                 chunk.clone()
             } else {
                 match pipeline_slot
@@ -764,6 +792,13 @@ pub fn inference_loop(
                     None => chunk.clone(),
                 }
             };
+
+            if wet_dry < 1.0 {
+                let n = out.len().min(chunk.len());
+                for i in 0..n {
+                    out[i] = wet_dry * out[i] + (1.0 - wet_dry) * chunk[i];
+                }
+            }
 
             let elapsed = t0.elapsed();
             in_rms_last = widgets::rms(&chunk);

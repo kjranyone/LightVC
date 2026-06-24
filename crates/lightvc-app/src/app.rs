@@ -32,9 +32,6 @@ pub struct RtMetrics {
 
 /// Control messages from UI to real-time inference thread.
 pub enum RtControl {
-    /// Start with explicit device selection ([05-6]).
-    /// `input_idx` / `output_idx` are indices into the cpal device list
-    /// (same order as `DuplexStream::list_input_devices()`). `None` = default.
     StartWithDevices {
         input_idx: Option<usize>,
         output_idx: Option<usize>,
@@ -47,7 +44,10 @@ pub enum RtControl {
     },
     SetVelocityScale(f64),
     Bypass(bool),
-    LoadReference(Vec<f32>), // 44.1kHz mono PCM
+    LoadReference(Vec<f32>),
+    SetB1Timbre(candle_core::Tensor),
+    SetB1Tau(f64),
+    SetWetDry(f32),
 }
 
 /// Type alias for the shared pipeline slot.
@@ -121,6 +121,12 @@ pub struct LightVcApp {
     asset_cache: crate::assets::AssetCache,
     splash_frames: u32, // 0 = showing splash, >0 = finished
     settings_open: bool,
+    // B1 adapter UI state
+    b1_adapter_path: String,
+    b1_quantizer_path: String,
+    b1_timbre_path: String,
+    b1_tau: f32,
+    wet_dry: f32,
 }
 
 impl LightVcApp {
@@ -171,6 +177,11 @@ impl LightVcApp {
             splash_frames: 0,
             settings_open: false,
             demo: false,
+            b1_adapter_path: "models/utte_adapter_b1.safetensors".into(),
+            b1_quantizer_path: "models/dac_quantizer.safetensors".into(),
+            b1_timbre_path: String::new(),
+            b1_tau: 5.0,
+            wet_dry: 1.0,
         }
     }
 
@@ -620,6 +631,11 @@ impl LightVcApp {
                 let mut rt_prosody_mode = self.rt_prosody_mode;
                 let mut rt_prosody_blend = self.rt_prosody_blend;
                 let mut rt_velocity_scale = self.rt_velocity_scale;
+                let mut b1_adapter_path = self.b1_adapter_path.clone();
+                let mut b1_quantizer_path = self.b1_quantizer_path.clone();
+                let mut b1_timbre_path = self.b1_timbre_path.clone();
+                let mut b1_tau = self.b1_tau;
+                let mut wet_dry = self.wet_dry;
                 let metrics = self.rt_metrics.clone();
                 let converter_pick = self.rt_converter_pick.clone();
 
@@ -645,6 +661,53 @@ impl LightVcApp {
                                 || Self::ensure_rt_thread_static(&state),
                                 |ctrl| Self::send_control(&state, ctrl),
                             );
+
+                            ui.separator();
+                            ui.collapsing("B1 Adapter (UTTE)", |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label("Adapter:");
+                                    ui.text_edit_singleline(&mut b1_adapter_path);
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Quantizer:");
+                                    ui.text_edit_singleline(&mut b1_quantizer_path);
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Timbre:");
+                                    ui.text_edit_singleline(&mut b1_timbre_path);
+                                });
+
+                                let dac_path = state.lock().unwrap().dac_weights.to_string_lossy().to_string();
+                                let load_enabled = !b1_timbre_path.is_empty();
+                                ui.add_enabled_ui(load_enabled, |ui| {
+                                    if ui.button("Load B1 Adapter").clicked() {
+                                        Self::load_b1_static(
+                                            &state, &dac_path,
+                                            &b1_quantizer_path, &b1_adapter_path, &b1_timbre_path,
+                                        );
+                                    }
+                                });
+
+                                ui.horizontal(|ui| {
+                                    ui.label("Tau:");
+                                    if ui.add(egui::Slider::new(&mut b1_tau, 0.1..=10.0).text("")).changed() {
+                                        Self::send_control(&state, RtControl::SetB1Tau(b1_tau as f64));
+                                    }
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Wet/Dry:");
+                                    if ui.add(egui::Slider::new(&mut wet_dry, 0.0..=1.0).text("")).changed() {
+                                        Self::send_control(&state, RtControl::SetWetDry(wet_dry));
+                                    }
+                                });
+
+                                let is_b1 = state.lock().unwrap().pipeline.as_ref()
+                                    .map(|p| p.lock().map(|p| p.is_b1()).unwrap_or(false))
+                                    .unwrap_or(false);
+                                if is_b1 {
+                                    ui.colored_label(egui::Color32::GREEN, "● B1 adapter active");
+                                }
+                            });
                         });
                 });
 
@@ -656,6 +719,11 @@ impl LightVcApp {
                 self.rt_prosody_mode = rt_prosody_mode;
                 self.rt_prosody_blend = rt_prosody_blend;
                 self.rt_velocity_scale = rt_velocity_scale;
+                self.b1_adapter_path = b1_adapter_path;
+                self.b1_quantizer_path = b1_quantizer_path;
+                self.b1_timbre_path = b1_timbre_path;
+                self.b1_tau = b1_tau;
+                self.wet_dry = wet_dry;
             }
             Tab::Catalog => {
                 let mut catalog = std::mem::take(&mut self.catalog);
