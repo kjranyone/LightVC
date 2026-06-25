@@ -34,9 +34,14 @@ pub fn render(
     mut on_load: impl FnMut(&str, &lightvc_core::converter::ConverterConfig),
     mut on_ensure_thread: impl FnMut(),
     on_control: impl Fn(RtControl),
+    assets: &mut crate::assets::AssetCache,
 ) {
     let has_pipeline = state.lock().unwrap().pipeline.is_some();
     let force_bypass = !has_pipeline;
+
+    // Realize the Stop icon up front so the &mut borrow of `assets` ends
+    // here; the owned handle is cheap (Arc-backed) to move into closures.
+    let stop_icon = assets.icon_stop(ctx).clone();
 
     on_ensure_thread();
 
@@ -313,6 +318,7 @@ pub fn render(
                         if *bypass { "BYPASS" } else { "Bypass" },
                         crate::theme::OpKind::Bypass,
                         *bypass,
+                        None,
                     ) {
                         *bypass = !*bypass;
                     }
@@ -348,6 +354,7 @@ pub fn render(
                             label,
                             crate::theme::OpKind::Start,
                             true,
+                            None,
                         ) {
                             if force_bypass {
                                 on_control(RtControl::Bypass(true));
@@ -364,6 +371,7 @@ pub fn render(
                             "Stop",
                             crate::theme::OpKind::Stop,
                             true,
+                            Some(&stop_icon),
                         ) {
                             on_control(RtControl::Stop);
                             *running = false;

@@ -6,6 +6,7 @@ pub const ICON_256_PNG: &[u8] = include_bytes!("../assets/icons/icon_256.png");
 pub const LOGO_PNG: &[u8] = include_bytes!("../assets/logo/logo_header.png");
 #[allow(dead_code)] // Retina/HiDPI support not yet implemented (ASSETS_SPEC_V2 §Implementation Status)
 pub const LOGO_2X_PNG: &[u8] = include_bytes!("../assets/logo/logo_header@2x.png");
+#[allow(dead_code)] // Consumed by `AssetCache::knob()` → `theme::knob()` once the Realtime Quality knob lands (GUI_DESIGN §5.8)
 pub const KNOB_FRAMES_PNG: &[u8] = include_bytes!("../assets/knobs/knob_64_frames.png");
 pub const SPLASH_PNG: &[u8] = include_bytes!("../assets/splash/splash.png");
 
@@ -42,6 +43,7 @@ pub fn load_icon() -> Option<egui::IconData> {
 /// Cache for all texture handles (created once per egui context).
 pub struct AssetCache {
     pub logo_texture: Option<egui::TextureHandle>,
+    #[allow(dead_code)] // Populated lazily by `knob()` when the Realtime Quality knob is wired up
     pub knob_texture: Option<egui::TextureHandle>,
     pub splash_texture: Option<egui::TextureHandle>,
     // UI icons
@@ -112,6 +114,7 @@ impl AssetCache {
         egui::Rect::from_min_size(egui::pos2(cx / tw, cy / th), egui::vec2(cw / tw, ch / th))
     }
 
+    #[allow(dead_code)] // Feeds `theme::knob()` sprite-sheet rendering (GUI_DESIGN §5.8); not yet placed in any tab
     pub fn knob(&mut self, ctx: &egui::Context) -> &egui::TextureHandle {
         self.knob_texture
             .get_or_insert_with(|| Self::make_texture(ctx, "knob_frames", KNOB_FRAMES_PNG))

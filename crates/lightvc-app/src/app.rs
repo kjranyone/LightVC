@@ -45,6 +45,9 @@ pub enum RtControl {
     SetVelocityScale(f64),
     Bypass(bool),
     LoadReference(Vec<f32>),
+    /// Not yet sent from UI; the receiver in `inference_loop` calls
+    /// `B1Streaming::set_timbre`. Pending a timbre-file load button.
+    #[allow(dead_code)]
     SetB1Timbre(candle_core::Tensor),
     SetB1Tau(f64),
     SetWetDry(f32),
@@ -58,9 +61,6 @@ pub struct AppState {
     pub dac_weights: std::path::PathBuf,
     pub converter_weights: Option<std::path::PathBuf>,
     pub converter_config: Option<std::path::PathBuf>,
-    pub b1_adapter_weights: Option<std::path::PathBuf>,
-    pub b1_quantizer_weights: Option<std::path::PathBuf>,
-    pub b1_timbre: Option<std::path::PathBuf>,
     pub pipeline: Option<Arc<Mutex<lightvc_core::Backend>>>,
     /// Shared hot-swappable pipeline slot. The inference thread reads this
     /// every loop iteration so a converter loaded after thread start is
@@ -135,9 +135,6 @@ impl LightVcApp {
             dac_weights,
             converter_weights: None,
             converter_config: None,
-            b1_adapter_weights: None,
-            b1_quantizer_weights: None,
-            b1_timbre: None,
             pipeline: None,
             pipeline_slot: Arc::new(Mutex::new(None)),
             voices: Vec::new(),
@@ -660,6 +657,7 @@ impl LightVcApp {
                                 |c, cfg| Self::load_converter_static(&state, c, cfg.clone()),
                                 || Self::ensure_rt_thread_static(&state),
                                 |ctrl| Self::send_control(&state, ctrl),
+                                &mut self.asset_cache,
                             );
 
                             ui.separator();
@@ -677,31 +675,52 @@ impl LightVcApp {
                                     ui.text_edit_singleline(&mut b1_timbre_path);
                                 });
 
-                                let dac_path = state.lock().unwrap().dac_weights.to_string_lossy().to_string();
+                                let dac_path = state
+                                    .lock()
+                                    .unwrap()
+                                    .dac_weights
+                                    .to_string_lossy()
+                                    .to_string();
                                 let load_enabled = !b1_timbre_path.is_empty();
                                 ui.add_enabled_ui(load_enabled, |ui| {
                                     if ui.button("Load B1 Adapter").clicked() {
                                         Self::load_b1_static(
-                                            &state, &dac_path,
-                                            &b1_quantizer_path, &b1_adapter_path, &b1_timbre_path,
+                                            &state,
+                                            &dac_path,
+                                            &b1_quantizer_path,
+                                            &b1_adapter_path,
+                                            &b1_timbre_path,
                                         );
                                     }
                                 });
 
                                 ui.horizontal(|ui| {
                                     ui.label("Tau:");
-                                    if ui.add(egui::Slider::new(&mut b1_tau, 0.1..=10.0).text("")).changed() {
-                                        Self::send_control(&state, RtControl::SetB1Tau(b1_tau as f64));
+                                    if ui
+                                        .add(egui::Slider::new(&mut b1_tau, 0.1..=10.0).text(""))
+                                        .changed()
+                                    {
+                                        Self::send_control(
+                                            &state,
+                                            RtControl::SetB1Tau(b1_tau as f64),
+                                        );
                                     }
                                 });
                                 ui.horizontal(|ui| {
                                     ui.label("Wet/Dry:");
-                                    if ui.add(egui::Slider::new(&mut wet_dry, 0.0..=1.0).text("")).changed() {
+                                    if ui
+                                        .add(egui::Slider::new(&mut wet_dry, 0.0..=1.0).text(""))
+                                        .changed()
+                                    {
                                         Self::send_control(&state, RtControl::SetWetDry(wet_dry));
                                     }
                                 });
 
-                                let is_b1 = state.lock().unwrap().pipeline.as_ref()
+                                let is_b1 = state
+                                    .lock()
+                                    .unwrap()
+                                    .pipeline
+                                    .as_ref()
                                     .map(|p| p.lock().map(|p| p.is_b1()).unwrap_or(false))
                                     .unwrap_or(false);
                                 if is_b1 {
