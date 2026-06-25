@@ -189,6 +189,12 @@ def main():
 
     for idx, p in enumerate(pairs):
         try:
+            out_dir = eval_dir if idx < args.holdout else train_dir
+            out_path = out_dir / f"pair_{idx:05d}.pt"
+            if out_path.exists() and not args.overwrite:
+                n_saved += 1
+                continue
+
             wav_s = load_wav_44k(p["src_wav"])
             wav_t = load_wav_44k(p["tgt_wav"])
             if len(wav_s) < DAC_SR or len(wav_t) < DAC_SR:
@@ -236,11 +242,6 @@ def main():
                 "text_id": p["text_id"],
             }
 
-            out_dir = eval_dir if idx < args.holdout else train_dir
-            out_path = out_dir / f"pair_{idx:05d}.pt"
-            if out_path.exists() and not args.overwrite:
-                n_saved += 1
-                continue
             torch.save(data, out_path)
             n_saved += 1
 
