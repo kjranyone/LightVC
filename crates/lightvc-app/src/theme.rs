@@ -591,15 +591,15 @@ pub enum MeterKind {
     Output,
 }
 
-/// Legacy compat — delegates to [`level_meter_kind`] with Input kind.
+/// Legacy compat — delegates to [`level_meter_kind`].
 pub fn level_meter(ui: &mut egui::Ui, level: f32, label: &str) {
-    level_meter_kind(ui, level, label, MeterKind::Input);
+    level_meter_kind(ui, level, label);
 }
 
 /// A DAW-style VU meter: thick horizontal bar with future-bass gradient
 /// (mint → cyan → pink → lemon), tick marks, a peak line that holds, and
 /// a right-aligned dB readout. The meter is the hero of the Signal card.
-pub fn level_meter_kind(ui: &mut egui::Ui, level: f32, label: &str, kind: MeterKind) {
+pub fn level_meter_kind(ui: &mut egui::Ui, level: f32, label: &str) {
     use colors::*;
 
     ui.horizontal(|ui| {
@@ -1138,8 +1138,16 @@ pub enum OpKind {
 
 /// A large rounded operation button with gradient fill and glow. The color
 /// reflects the current operation state (Start=pink, Stop=cyan, Bypass=lemon).
-/// Text is dark (light-mode kawaii palette).
-pub fn operation_button(ui: &mut egui::Ui, text: &str, kind: OpKind, _active: bool) -> bool {
+/// Text is dark (light-mode kawaii palette). When `icon` is given, it is
+/// rendered to the left of the label and the [icon gap text] group is
+/// centered as a unit (used for the Stop CTA via `icon_stop.png`).
+pub fn operation_button(
+    ui: &mut egui::Ui,
+    text: &str,
+    kind: OpKind,
+    _active: bool,
+    icon: Option<&egui::TextureHandle>,
+) -> bool {
     let (base, hot) = match kind {
         OpKind::Start => (
             Color32::from_rgb(0x1E, 0x1E, 0x2E),
@@ -1164,13 +1172,31 @@ pub fn operation_button(ui: &mut egui::Ui, text: &str, kind: OpKind, _active: bo
     let fill = if hovered { hot } else { base };
     painter.rect_filled(rect, rounding, fill);
 
-    painter.text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        text,
-        egui::FontId::proportional(15.0),
-        Color32::from_rgb(0xFF, 0xFF, 0xFF),
-    );
+    let font = egui::FontId::proportional(15.0);
+    let text_color = Color32::from_rgb(0xFF, 0xFF, 0xFF);
+    let center = rect.center();
+
+    match icon {
+        Some(tex) => {
+            const ICON_SIZE: f32 = 18.0;
+            const GAP: f32 = 8.0;
+            let gal = painter.layout_no_wrap(text.to_owned(), font.clone(), text_color);
+            let text_size = gal.size();
+            let total_w = ICON_SIZE + GAP + text_size.x;
+            let left = center.x - total_w * 0.5;
+            let icon_rect = egui::Rect::from_min_size(
+                egui::pos2(left, center.y - ICON_SIZE * 0.5),
+                egui::vec2(ICON_SIZE, ICON_SIZE),
+            );
+            let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+            painter.image(tex.id(), icon_rect, uv, text_color);
+            let text_pos = egui::pos2(left + ICON_SIZE + GAP, center.y - text_size.y * 0.5);
+            painter.galley(text_pos, gal, text_color);
+        }
+        None => {
+            painter.text(center, egui::Align2::CENTER_CENTER, text, font, text_color);
+        }
+    }
 
     response.clicked()
 }
