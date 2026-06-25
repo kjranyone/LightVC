@@ -36,9 +36,27 @@ DEVICE = get_device()
 
 
 class PairDataset(Dataset):
-    def __init__(self, directory, max_frames=384):
+    def __init__(self, directory, max_frames=384, ref_latent_dir=None):
         self.files = sorted(Path(directory).glob("*.pt"))
         self.max_frames = max_frames
+        self.ref_latent_dir = Path(ref_latent_dir) if ref_latent_dir else None
+        self._ref_cache = {}
+
+    def _get_ref_latent(self, tgt_spk):
+        if self.ref_latent_dir is None:
+            return None
+        if tgt_spk not in self._ref_cache:
+            p = self.ref_latent_dir / f"{tgt_spk}.pt"
+            if p.exists():
+                pool = torch.load(p, map_location="cpu")
+                self._ref_cache[tgt_spk] = pool
+            else:
+                self._ref_cache[tgt_spk] = None
+        pool = self._ref_cache[tgt_spk]
+        if pool is None:
+            return None
+        idx = torch.randint(0, pool.shape[0], ()).item()
+        return pool[idx].float()  # [1024, REF_FRAMES]
 
     def __len__(self):
         return len(self.files)
@@ -51,6 +69,7 @@ class PairDataset(Dataset):
         f0 = d["f0"].float()
         energy = d["energy"].float()
         timbre = d["timbre"].float().squeeze()
+        tgt_spk = d.get("tgt_spk", "")
 
         T = z_s.shape[1]
         if T > self.max_frames:
@@ -61,12 +80,17 @@ class PairDataset(Dataset):
             f0 = f0[start:start + self.max_frames]
             energy = energy[start:start + self.max_frames]
 
-        return z_s, q0_s, z_t, f0, energy, timbre
+        ref_latent = self._get_ref_latent(tgt_spk)
+
+        return z_s, q0_s, z_t, f0, energy, timbre, ref_latent
 
 
 def collate(batch):
-    z_s, q0_s, z_t, f0, energy, timbre = zip(*batch)
+    z_s, q0_s, z_t, f0, energy, timbre, ref_latent = zip(*batch)
     T_min = min(x.shape[1] for x in z_s)
+    ref_stack = None
+    if ref_latent[0] is not None:
+        ref_stack = torch.stack(ref_latent)
     return (
         torch.stack([x[:, :T_min] for x in z_s]),
         torch.stack([x[:, :T_min] for x in q0_s]),
@@ -74,6 +98,7 @@ def collate(batch):
         torch.stack([x[:T_min] for x in f0]),
         torch.stack([x[:T_min] for x in energy]),
         torch.stack(timbre),
+        ref_stack,
     )
 
 
