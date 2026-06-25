@@ -330,15 +330,30 @@ pub fn render(
                 // Mode pills (center) — only when converter loaded
                 if !force_bypass {
                     ui.add_space(crate::theme::space::SMALL);
+
+                    let is_b1 = state.lock().unwrap().pipeline.as_ref()
+                        .map(|p| p.lock().map(|p| p.is_b1()).unwrap_or(false))
+                        .unwrap_or(false);
+
                     let old_mode = *mode;
                     for (m, name) in [
                         (lightvc_core::converter::LatencyMode::Strict, "Strict"),
                         (lightvc_core::converter::LatencyMode::Balanced, "Balanced"),
                         (lightvc_core::converter::LatencyMode::Quality, "Quality"),
                     ] {
-                        if crate::theme::pill_button(ui, name, *mode == m) {
-                            *mode = m;
-                        }
+                        let disabled = is_b1 && m == lightvc_core::converter::LatencyMode::Strict;
+                        ui.add_enabled_ui(!disabled, |ui| {
+                            if crate::theme::pill_button(ui, name, *mode == m) {
+                                *mode = m;
+                            }
+                        });
+                    }
+                    if is_b1 {
+                        ui.label(
+                            egui::RichText::new("\u{26a0} Strict unavailable for B1")
+                                .size(10.0)
+                                .color(crate::theme::colors::LEMON_DEEP),
+                        );
                     }
                     if *mode != old_mode {
                         on_control(RtControl::SetMode(*mode));
