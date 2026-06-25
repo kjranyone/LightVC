@@ -80,6 +80,8 @@ class TimbreAdapter(nn.Module):
             self.ecapa_to_tokens = nn.Linear(timbre_dim, n_tokens * bottleneck)
         elif utte_mode in ("target", "target_film"):
             self.token_proj = nn.Linear(latent_dim, bottleneck)
+        elif utte_mode == "ref_latent":
+            self.ref_proj = nn.Linear(latent_dim, bottleneck)
 
         if utte_mode != "none":
             self.cross_attn = nn.MultiheadAttention(
@@ -88,8 +90,8 @@ class TimbreAdapter(nn.Module):
             nn.init.zeros_(self.cross_attn.out_proj.weight)
             nn.init.zeros_(self.cross_attn.out_proj.bias)
 
-    def _make_tokens(self, timbre, z_target):
-        if self.utte_mode == "ecapa":
+    def _make_tokens(self, timbre, z_target, ref_latent=None):
+        if self.utte_mode == "ecpa":
             B = timbre.shape[0]
             t = self.ecapa_to_tokens(timbre)
             return t.reshape(B, self.n_tokens, -1)
@@ -103,11 +105,15 @@ class TimbreAdapter(nn.Module):
             z_trimmed = z_det[:, :, :seg_size * n_actual]
             z_pooled = z_trimmed.reshape(B, C, n_actual, seg_size).mean(dim=-1)
             return self.token_proj(z_pooled.transpose(1, 2))
+        elif self.utte_mode == "ref_latent":
+            if ref_latent is None:
+                return None
+            return self.ref_proj(ref_latent.transpose(1, 2))
         return None
 
-    def forward(self, z_q, timbre, z_target=None):
+    def forward(self, z_q, timbre, z_target=None, ref_latent=None):
         h = z_q
-        tokens = self._make_tokens(timbre, z_target) if self.utte_mode != "none" else None
+        tokens = self._make_tokens(timbre, z_target, ref_latent) if self.utte_mode != "none" else None
         for block in self.blocks:
             x = block["conv_in"](h)
             if self.film_mode == "full":
@@ -133,8 +139,10 @@ def train(args):
     dac = load_dac()
     ecapa = load_ecapa()
 
-    train_ds = PairDataset(data_dir / "train", args.max_frames)
-    eval_ds = PairDataset(data_dir / "eval", args.max_frames)
+    train_ds = PairDataset(data_dir / "train", args.max_frames,
+                           ref_latent_dir=args.ref_latent_dir if args.utte_mode == "ref_latent" else None)
+    eval_ds = PairDataset(data_dir / "eval", args.max_frames,
+                          ref_latent_dir=args.ref_latent_dir if args.utte_mode == "ref_latent" else None)
     train_dl = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
                           collate_fn=collate, num_workers=args.num_workers,
                           drop_last=True)
@@ -214,7 +222,7 @@ def train(args):
         t0 = time.time()
 
         for step, batch in enumerate(train_dl):
-            z_s, q0_s, z_t, f0, energy, timbre = [x.to(DEVICE) for x in batch]
+            z_s, q0_s, z_t, f0, energy, timbre, ref_latent = [x.to(DEVICE) if x is not None else None for x in batch]
 
             if generator:
                 z_pred = generator(z_s.transpose(1, 2), f0, energy, timbre).transpose(1, 2)
@@ -222,7 +230,7 @@ def train(args):
                 z_pred = z_s
 
             z_q = soft_rvq_requantize(dac, q0_s, z_pred, args.tau)
-            z_q_adapted = adapter(z_q, timbre, z_t)
+            z_q_adapted = adapter(z_q, timbre, z_t, ref_latent=ref_latent)
             audio = dac.decoder(z_q_adapted).squeeze(1)
 
             with torch.no_grad():
@@ -344,7 +352,7 @@ def evaluate(args, generator, adapter, dac, ecapa, eval_dl):
         if args.eval_batches >= 0 and bi >= args.eval_batches:
             break
 
-        z_s, q0_s, z_t, f0, energy, timbre = [x.to(DEVICE) for x in batch]
+        z_s, q0_s, z_t, f0, energy, timbre, ref_latent = [x.to(DEVICE) if x is not None else None for x in batch]
 
         if generator:
             z_pred = generator(z_s.transpose(1, 2), f0, energy, timbre).transpose(1, 2)
@@ -352,7 +360,7 @@ def evaluate(args, generator, adapter, dac, ecapa, eval_dl):
             z_pred = z_s
 
         z_q = soft_rvq_requantize(dac, q0_s, z_pred, args.tau)
-        z_q_adapted = adapter(z_q, timbre, z_t)
+        z_q_adapted = adapter(z_q, timbre, z_t, ref_latent=ref_latent)
         audio = dac.decoder(z_q_adapted).squeeze(1)
         emb = ecapa_embed(ecapa, resample_16k(audio))
 
@@ -389,7 +397,7 @@ if __name__ == "__main__":
     parser.add_argument("--n_blocks", type=int, default=1,
                         help="number of residual FiLM conv blocks in adapter")
     parser.add_argument("--utte_mode", type=str, default="none",
-                        choices=["none", "ecapa", "target", "target_film"],
+                        choices=["none", "ecpa", "target", "target_film", "ref_latent"],
                         help="UTTE cross-attention token source")
     parser.add_argument("--film_mode", type=str, default="full",
                         choices=["full", "none"],
@@ -423,6 +431,8 @@ if __name__ == "__main__":
                         help="skip generator, z_pred = z_s")
     parser.add_argument("--resume_generator", type=str, default="")
     parser.add_argument("--data_dir", type=str, default=str(DATA_DIR))
+    parser.add_argument("--ref_latent_dir", type=str, default="../data/ref_latents",
+                        help="pre-computed reference latent pool directory")
     parser.add_argument("--ckpt_dir", type=str, default="",
                         help="override checkpoint directory")
     train(parser.parse_args())
