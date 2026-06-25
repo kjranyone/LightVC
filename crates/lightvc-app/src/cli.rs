@@ -325,7 +325,13 @@ pub fn run_convert_b1(cmd: ConvertB1Cmd) -> Result<()> {
     };
 
     let chunk_mode = match cmd.mode.as_str() {
-        "strict" => lightvc_core::streaming::ChunkMode::Strict,
+        "strict" => {
+            eprintln!(
+                "  WARNING: Strict mode (1-frame decode) produces C/D quality with B1.\n\
+                 \x20          Balanced is recommended. See issue #7."
+            );
+            lightvc_core::streaming::ChunkMode::Strict
+        }
         _ => lightvc_core::streaming::ChunkMode::Balanced,
     };
 
