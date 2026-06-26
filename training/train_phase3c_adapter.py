@@ -54,6 +54,23 @@ from train_phase3b import (
 
 CKPT_DIR = Path("checkpoints/phase3c")
 
+
+@torch.no_grad()
+def extract_speaker_depths(dac, ref_latent, speaker_depths=(1, 2, 3)):
+    """Extract speaker-depth quantization from reference latent.
+
+    Sequentially quantizes ref_latent through all depths, keeps only
+    the specified speaker depths. Filters out content (d0) and fine detail (d4-8).
+    """
+    residual = ref_latent.clone()
+    speaker_q = torch.zeros_like(ref_latent)
+    for d in range(9):
+        out = dac.quantizer.quantizers[d](residual)
+        if d in speaker_depths:
+            speaker_q = speaker_q + out[0]
+        residual = residual - out[0]
+    return speaker_q
+
 class TimbreAdapter(nn.Module):
     def __init__(self, latent_dim=1024, timbre_dim=192, bottleneck=256,
                  kernel=3, n_blocks=1,
@@ -230,7 +247,8 @@ def train(args):
                 z_pred = z_s
 
             z_q = soft_rvq_requantize(dac, q0_s, z_pred, args.tau)
-            z_q_adapted = adapter(z_q, timbre, z_t, ref_latent=ref_latent)
+            ref_cond = extract_speaker_depths(dac, ref_latent) if ref_latent is not None else None
+            z_q_adapted = adapter(z_q, timbre, z_t, ref_latent=ref_cond)
             audio = dac.decoder(z_q_adapted).squeeze(1)
 
             with torch.no_grad():
@@ -360,7 +378,8 @@ def evaluate(args, generator, adapter, dac, ecapa, eval_dl):
             z_pred = z_s
 
         z_q = soft_rvq_requantize(dac, q0_s, z_pred, args.tau)
-        z_q_adapted = adapter(z_q, timbre, z_t, ref_latent=ref_latent)
+        ref_cond = extract_speaker_depths(dac, ref_latent) if ref_latent is not None else None
+        z_q_adapted = adapter(z_q, timbre, z_t, ref_latent=ref_cond)
         audio = dac.decoder(z_q_adapted).squeeze(1)
         emb = ecapa_embed(ecapa, resample_16k(audio))
 
