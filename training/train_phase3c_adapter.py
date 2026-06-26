@@ -55,6 +55,96 @@ from train_phase3b import (
 CKPT_DIR = Path("checkpoints/phase3c")
 
 
+class DepthAwareAdapter(nn.Module):
+    """Per-depth delta adapter operating in 1024-dim latent space.
+
+    For each speaker depth, produces a 1024-dim delta conditioned on ECAPA.
+    Shared backbone (Conv→CrossAttn→Conv) with per-depth embedding.
+    Each depth independently controllable via knob α ∈ [0,1].
+    """
+
+    def __init__(self, n_speaker_depths=5, latent_dim=1024, bottleneck=256,
+                 timbre_dim=192, n_tokens=32, n_heads=4, kernel=3):
+        super().__init__()
+        self.n_speaker_depths = n_speaker_depths
+        self.bottleneck = bottleneck
+        self.n_tokens = n_tokens
+
+        self.conv_in = nn.Conv1d(latent_dim, bottleneck, kernel, padding=kernel // 2)
+        self.depth_embed = nn.Embedding(n_speaker_depths, bottleneck)
+        nn.init.normal_(self.depth_embed.weight, std=0.02)
+        self.ecapa_to_tokens = nn.Linear(timbre_dim, n_tokens * bottleneck)
+        self.cross_attn = nn.MultiheadAttention(
+            embed_dim=bottleneck, num_heads=n_heads, batch_first=True,
+        )
+        nn.init.zeros_(self.cross_attn.out_proj.weight)
+        nn.init.zeros_(self.cross_attn.out_proj.bias)
+        self.conv_out = nn.Conv1d(bottleneck, latent_dim, kernel, padding=kernel // 2)
+        nn.init.zeros_(self.conv_out.weight)
+        nn.init.zeros_(self.conv_out.bias)
+
+    def forward(self, q_depths, timbre, knobs=None):
+        """
+        q_depths: list of [B, 1024, T] quantized outputs per speaker depth
+        timbre: [B, 192]
+        knobs: list of float per depth (default all 1.0)
+        Returns: list of [B, 1024, T] deltas per depth
+        """
+        B = timbre.shape[0]
+        tokens = self.ecapa_to_tokens(timbre).reshape(B, self.n_tokens, self.bottleneck)
+        if knobs is None:
+            knobs = [1.0] * self.n_speaker_depths
+
+        deltas = []
+        for i, q_d in enumerate(q_depths):
+            h = self.conv_in(q_d)  # [B, 256, T]
+
+            d_emb = self.depth_embed(torch.tensor(i, device=q_d.device))
+            h = h + d_emb.view(1, -1, 1)
+
+            h_t = h.transpose(1, 2)
+            attn_out, _ = self.cross_attn(h_t, tokens, tokens)
+            h = h + attn_out.transpose(1, 2)
+            h = F.gelu(h)
+
+            delta = self.conv_out(h)  # [B, 1024, T]
+            deltas.append(knobs[i] * delta)
+        return deltas
+
+
+def depth_aware_soft_rvq(dac, q0_s, z_input, tau, adapter, timbre,
+                         speaker_depths=(1, 2, 3, 4, 5), knobs=None):
+    """Soft RVQ with per-depth adapter deltas applied after quantization.
+
+    Standard soft RVQ runs first (code selection unmodified).
+    Then per-depth 1024-dim deltas are added to speaker depths.
+    """
+    z_q = q0_s
+    residual = z_input - q0_s
+    q_depths_buffer = []
+
+    for depth in range(1, 9):
+        quantizer = dac.quantizer.quantizers[depth]
+        z_e = quantizer.in_proj(residual).transpose(1, 2)
+        cb = quantizer.codebook.weight
+        dist = torch.cdist(z_e, cb.unsqueeze(0)).pow(2)
+        weights = F.softmax(-dist / tau, dim=-1)
+        z_q_soft = (weights @ cb).transpose(1, 2)
+        q_depth = quantizer.out_proj(z_q_soft)
+
+        if depth in speaker_depths:
+            q_depths_buffer.append(q_depth)
+
+        z_q = z_q + q_depth
+        residual = residual - q_depth
+
+    if adapter is not None and q_depths_buffer:
+        deltas = adapter(q_depths_buffer, timbre, knobs)
+        z_q = z_q + sum(deltas)
+
+    return z_q
+
+
 @torch.no_grad()
 def extract_speaker_depths(dac, ref_latent, speaker_depths=(1, 2, 3)):
     """Extract speaker-depth quantization from reference latent.
@@ -153,6 +243,11 @@ def train(args):
     data_dir = Path(args.data_dir)
     print(f"data_dir={data_dir}")
 
+    if isinstance(args.speaker_depths, str):
+        args.speaker_depths = tuple(int(x) for x in args.speaker_depths.split(","))
+    if args.depth_aware:
+        print(f"depth_aware: speaker_depths={args.speaker_depths}")
+
     dac = load_dac()
     ecapa = load_ecapa()
 
@@ -188,17 +283,28 @@ def train(args):
         gen_params = []
         print("Generator: none (adapter_only mode, z_pred = z_s)")
 
-    adapter = TimbreAdapter(
-        latent_dim=1024,
-        timbre_dim=192,
-        bottleneck=args.bottleneck,
-        kernel=args.kernel,
-        n_blocks=args.n_blocks,
-        utte_mode=args.utte_mode,
-        film_mode=args.film_mode,
-        n_tokens=args.n_tokens,
-        n_heads=args.n_heads,
-    ).to(DEVICE)
+    if args.depth_aware:
+        adapter = DepthAwareAdapter(
+            n_speaker_depths=len(args.speaker_depths),
+            latent_dim=1024,
+            bottleneck=args.bottleneck,
+            timbre_dim=192,
+            n_tokens=args.n_tokens,
+            n_heads=args.n_heads,
+            kernel=args.kernel,
+        ).to(DEVICE)
+    else:
+        adapter = TimbreAdapter(
+            latent_dim=1024,
+            timbre_dim=192,
+            bottleneck=args.bottleneck,
+            kernel=args.kernel,
+            n_blocks=args.n_blocks,
+            utte_mode=args.utte_mode,
+            film_mode=args.film_mode,
+            n_tokens=args.n_tokens,
+            n_heads=args.n_heads,
+        ).to(DEVICE)
     adapter_params = list(adapter.parameters())
     adapter_n = sum(p.numel() for p in adapter_params)
     print(f"Adapter: {adapter_n / 1e6:.1f}M params")
@@ -246,9 +352,16 @@ def train(args):
             else:
                 z_pred = z_s
 
-            z_q = soft_rvq_requantize(dac, q0_s, z_pred, args.tau)
-            ref_cond = extract_speaker_depths(dac, ref_latent) if ref_latent is not None else None
-            z_q_adapted = adapter(z_q, timbre, z_t, ref_latent=ref_cond)
+            if args.depth_aware:
+                knobs_train = [float(torch.rand(1).item() * 0.5 + 0.5) for _ in args.speaker_depths]
+                z_q_adapted = depth_aware_soft_rvq(
+                    dac, q0_s, z_pred, args.tau, adapter, timbre,
+                    speaker_depths=args.speaker_depths, knobs=knobs_train,
+                )
+            else:
+                z_q = soft_rvq_requantize(dac, q0_s, z_pred, args.tau)
+                ref_cond = extract_speaker_depths(dac, ref_latent) if ref_latent is not None else None
+                z_q_adapted = adapter(z_q, timbre, z_t, ref_latent=ref_cond)
             audio = dac.decoder(z_q_adapted).squeeze(1)
 
             with torch.no_grad():
@@ -261,7 +374,11 @@ def train(args):
                 args, ecapa, audio, oracle_audio, source_audio, timbre
             )
 
-            delta = z_q_adapted - z_q
+            if args.depth_aware:
+                z_q_base = soft_rvq_requantize(dac, q0_s, z_pred, args.tau)
+            else:
+                z_q_base = z_q
+            delta = z_q_adapted - z_q_base
             delta_norm_val = delta.pow(2).mean().sqrt()
             loss_delta = delta.pow(2).mean()
 
@@ -377,9 +494,17 @@ def evaluate(args, generator, adapter, dac, ecapa, eval_dl):
         else:
             z_pred = z_s
 
-        z_q = soft_rvq_requantize(dac, q0_s, z_pred, args.tau)
-        ref_cond = extract_speaker_depths(dac, ref_latent) if ref_latent is not None else None
-        z_q_adapted = adapter(z_q, timbre, z_t, ref_latent=ref_cond)
+        if args.depth_aware:
+            z_q_adapted = depth_aware_soft_rvq(
+                dac, q0_s, z_pred, args.tau, adapter, timbre,
+                speaker_depths=args.speaker_depths, knobs=None,
+            )
+            z_q_base = soft_rvq_requantize(dac, q0_s, z_pred, args.tau)
+        else:
+            z_q = soft_rvq_requantize(dac, q0_s, z_pred, args.tau)
+            ref_cond = extract_speaker_depths(dac, ref_latent) if ref_latent is not None else None
+            z_q_adapted = adapter(z_q, timbre, z_t, ref_latent=ref_cond)
+            z_q_base = z_q
         audio = dac.decoder(z_q_adapted).squeeze(1)
         emb = ecapa_embed(ecapa, resample_16k(audio))
 
@@ -394,7 +519,7 @@ def evaluate(args, generator, adapter, dac, ecapa, eval_dl):
             F.cosine_similarity(emb, source_emb, dim=-1).detach().cpu().tolist()
         )
         delta_norms.append(
-            float((z_q_adapted - z_q).pow(2).mean().sqrt().cpu())
+            float((z_q_adapted - z_q_base).pow(2).mean().sqrt().cpu())
         )
 
     return {
@@ -441,6 +566,10 @@ if __name__ == "__main__":
     parser.add_argument("--margin_m", type=float, default=0.1,
                         help="margin for ranking loss")
     parser.add_argument("--grad_clip", type=float, default=1.0)
+    parser.add_argument("--depth_aware", action="store_true",
+                        help="use DepthAwareAdapter (per-depth code modification)")
+    parser.add_argument("--speaker_depths", type=str, default="1,2,3,4,5",
+                        help="comma-separated depth indices for speaker transformation")
     parser.add_argument("--eval_every", type=int, default=1)
     parser.add_argument("--eval_batches", type=int, default=25)
     parser.add_argument("--log_every", type=int, default=50)
