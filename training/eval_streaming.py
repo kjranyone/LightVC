@@ -154,6 +154,18 @@ def run_eval(args):
     adapter = load_adapter(args.adapter_ckpt)
     print(f"Adapter: {args.adapter_ckpt}")
 
+    if args.decoder_ckpt:
+        ck = torch.load(args.decoder_ckpt, map_location="cpu", weights_only=False)
+        delta = ck["decoder_state"]
+        full_sd = dac.state_dict()
+        n_patched = 0
+        for k, v in delta.items():
+            if k in full_sd:
+                full_sd[k] = v.to(DEVICE)
+                n_patched += 1
+        dac.load_state_dict(full_sd)
+        print(f"Decoder patched: {n_patched} tensors from {args.decoder_ckpt}")
+
     whisper_pipe = None
     if not args.skip_whisper:
         whisper_pipe = load_whisper()
@@ -315,6 +327,8 @@ if __name__ == "__main__":
     parser.add_argument("--data_dir", default="../data/phase3_10k/eval")
     parser.add_argument("--adapter_ckpt", default="checkpoints/phase3c_ao_b1_ecapa/best.pt")
     parser.add_argument("--output", default="../results/streaming_eval_full.json")
+    parser.add_argument("--decoder_ckpt", default=None,
+                        help="fine-tuned decoder checkpoint (patch decoder weights)")
     parser.add_argument("--skip_whisper", action="store_true",
                         help="skip Whisper CER (saves time/GPU)")
     args = parser.parse_args()
