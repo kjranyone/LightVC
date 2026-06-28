@@ -198,7 +198,7 @@ class TimbreAdapter(nn.Module):
             nn.init.zeros_(self.cross_attn.out_proj.bias)
 
     def _make_tokens(self, timbre, z_target, ref_latent=None):
-        if self.utte_mode == "ecpa":
+        if self.utte_mode == "ecapa":
             B = timbre.shape[0]
             t = self.ecapa_to_tokens(timbre)
             return t.reshape(B, self.n_tokens, -1)
@@ -238,8 +238,19 @@ class TimbreAdapter(nn.Module):
 
 
 def train(args):
+    if hasattr(args, 'seed'):
+        torch.manual_seed(args.seed)
+        np.random.seed(args.seed)
+        import random
+        random.seed(args.seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+    if args.utte_mode == "ecpa":
+        args.utte_mode = "ecapa"
+
     print("=== Phase 3c: Timbre-Conditioned Adapter Training ===")
-    print(f"device={DEVICE} adapter_only={args.adapter_only} tau={args.tau}")
+    print(f"device={DEVICE} adapter_only={args.adapter_only} tau={args.tau} seed={getattr(args, 'seed', '?')}")
     data_dir = Path(args.data_dir)
     print(f"data_dir={data_dir}")
 
@@ -255,9 +266,11 @@ def train(args):
                            ref_latent_dir=args.ref_latent_dir if args.utte_mode == "ref_latent" else None)
     eval_ds = PairDataset(data_dir / "eval", args.max_frames,
                           ref_latent_dir=args.ref_latent_dir if args.utte_mode == "ref_latent" else None)
+    g = torch.Generator()
+    g.manual_seed(getattr(args, 'seed', 42))
     train_dl = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
                           collate_fn=collate, num_workers=args.num_workers,
-                          drop_last=True)
+                          drop_last=True, generator=g)
     eval_dl = DataLoader(eval_ds, batch_size=args.eval_batch_size, shuffle=False,
                          collate_fn=collate, num_workers=args.num_workers)
 
@@ -541,7 +554,7 @@ if __name__ == "__main__":
     parser.add_argument("--n_blocks", type=int, default=1,
                         help="number of residual FiLM conv blocks in adapter")
     parser.add_argument("--utte_mode", type=str, default="none",
-                        choices=["none", "ecpa", "target", "target_film", "ref_latent"],
+                        choices=["none", "ecapa", "target", "target_film", "ref_latent"],
                         help="UTTE cross-attention token source")
     parser.add_argument("--film_mode", type=str, default="full",
                         choices=["full", "none"],
@@ -566,6 +579,8 @@ if __name__ == "__main__":
     parser.add_argument("--margin_m", type=float, default=0.1,
                         help="margin for ranking loss")
     parser.add_argument("--grad_clip", type=float, default=1.0)
+    parser.add_argument("--seed", type=int, default=42,
+                        help="random seed for reproducibility")
     parser.add_argument("--depth_aware", action="store_true",
                         help="use DepthAwareAdapter (per-depth code modification)")
     parser.add_argument("--speaker_depths", type=str, default="1,2,3,4,5",

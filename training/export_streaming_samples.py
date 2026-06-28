@@ -40,7 +40,7 @@ def load_adapter(ckpt_path):
         bottleneck=ca.get("bottleneck", 256),
         kernel=ca.get("kernel", 3),
         n_blocks=ca.get("n_blocks", 1),
-        utte_mode=ca.get("utte_mode", "none"),
+        utte_mode=("ecapa" if ca.get("utte_mode", "none") == "ecpa" else ca.get("utte_mode", "none")),
         film_mode=ca.get("film_mode", "full"),
         n_tokens=ca.get("n_tokens", 32),
         n_heads=ca.get("n_heads", 4),

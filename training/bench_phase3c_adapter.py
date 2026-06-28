@@ -32,7 +32,7 @@ def load_adapter(path):
         bottleneck=args.get("bottleneck", 256),
         kernel=args.get("kernel", 3),
         n_blocks=args.get("n_blocks", 1),
-        utte_mode=args.get("utte_mode", "none"),
+        utte_mode=("ecapa" if args.get("utte_mode", "none") == "ecpa" else args.get("utte_mode", "none")),
         film_mode=args.get("film_mode", "full"),
         n_tokens=args.get("n_tokens", 32),
         n_heads=args.get("n_heads", 4),

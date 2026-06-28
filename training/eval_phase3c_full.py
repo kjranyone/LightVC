@@ -75,7 +75,7 @@ def load_checkpoint(path):
         bottleneck=a.get("bottleneck", 256),
         kernel=a.get("kernel", 3),
         n_blocks=a.get("n_blocks", 1),
-        utte_mode=a.get("utte_mode", "none"),
+        utte_mode=("ecapa" if a.get("utte_mode", "none") == "ecpa" else a.get("utte_mode", "none")),
         film_mode=a.get("film_mode", "full"),
         n_tokens=a.get("n_tokens", 32),
         n_heads=a.get("n_heads", 4),
