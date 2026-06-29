@@ -1,484 +1,191 @@
-# Astrapeを超えるSOTA寄りのLightVCアイデア
+# LightVC Concept
 
-> **Status note (2026-06-21):** このファイルは初期アイデアの履歴を含む。
-> 現行方針は [plan/12_concept_v2.md](plan/12_concept_v2.md) と
-> [docs/literature_update_2026-06-21.md](docs/literature_update_2026-06-21.md) を正とする。
->
-> 破棄済み:
-> - VC teacher distillation
-> - DAC continuous latent regression
-> - naive RVQ depth swap
-> - frame-independent / cross-text bank retrieval を本線にする案
->
-> 維持する核:
-> - codec-space VC
-> - one-step / low-latency streaming
-> - heavy TTS/BigVGAN pipeline に逃げない
-> - Rust/Candle inference
->
-> 現行の中核は **source q0 + target-like residual trajectory +
-> residual-chain-preserving re-quantization / tolerant decoder**。
+> **Last updated: 2026-06-29.** This document reflects the validated architecture and C2 research direction.
 
-求めるなら、**Astrapeの「連続latent + CFM + causal encoder/decoder」を超える方向は、codec空間の1-step変換 + factorized token制御 + teacher distillation** だと思う。
+## What LightVC Is
 
-Astrapeは思想として良いけど、まだ「F³ encoder/decoderを自前で持ち、CFMを4〜8 stepで回す」発想に見える。ここを超えるなら、**VC専用の大きい生成パイプラインを作らず、既存codec表現を“変換可能な中間言語”として使う**ほうがSOTA寄り。
+LightVC is a real-time voice conversion system that operates entirely in neural-codec (DAC) latent space. A lightweight adapter transforms the source speaker's codec representation toward a target speaker, conditioned on an ECAPA speaker embedding. The frozen DAC decoder reconstructs the waveform.
 
-## 本命案：X-VC + SynthVC + MeanVC2 の合体
-
-設計はこれ。
-
-```text
-Mic input
-→ pretrained neural codec encoder
-→ source codec latent / token
-→ one-step codec-space converter
-   - source latent
-   - target frame-level acoustic condition
-   - target utterance-level speaker embedding
-   - prosody/rhythm control token
-→ pretrained codec decoder
-→ output waveform
+```
+Mic (cpal) → DAC encoder → soft RVQ → B1 adapter (ECAPA cross-attn) → DAC decoder → Speaker
+                                                              ↑
+                                              Fine-tuned decoder (R2: short-window robust)
 ```
 
-ポイントは、**波形生成をVCモデルにやらせない**こと。  
-VCモデルは codec latent を変換するだけにする。
+**Pure Rust inference** via Candle. No Python at deployment. <50ms latency on CUDA.
 
-2026年4月の **X-VC** はまさにこの方向で、pretrained neural codec の latent space で **one-step conversion** を行い、source codec latents と target reference speech 由来の frame-level acoustic conditions を jointly model し、utterance-level speaker information を adaptive normalization で注入します。さらに generated paired data と role-assignment strategy で学習時・推論時のミスマッチを減らしています。
+## Validated Architecture (v1.0)
 
-これが Astrape より強いのは、**CFM ODEを複数stepで解くより、codec latentを1回で変換する設計に寄せられる**ところ。
+### B1 UTTE Adapter
 
-## SOTAネタ1：codec-space one-step converter
+The production VC model: ECAPA 192-dim → 32 tokens → 4-head cross-attention.
 
-Astrape超えのコアはこれ。
-
-```text
-x_codec: source codec latent
-c_tgt_frame: target reference から得た局所的音響条件
-s_tgt: target speaker embedding
-
-y_codec = Converter(x_codec, c_tgt_frame, s_tgt)
+```
+z_q [B, 1024, T]
+  → Conv1d(1024→256, k3)
+  → ECAPA → Linear(192, 32×256) → 32 tokens [B, 32, 256]
+  → 4-head cross-attention(256)
+  → GELU
+  → Conv1d(256→1024, k3) [zero-init]
+  → z_q + delta
 ```
 
-モデルは大きいDiTではなく、
+- Parameters: 3.5M
+- Training: 10K VCTK same-text pairs, adapter-only (no generator)
+- Results (200-pair bootstrap CI):
+  - **Cross-text target SECS: 0.508**
+  - **Cross-text margin: +0.323** (target - source)
+  - Oracle ratio: 79.2% (vs src_K1 oracle +0.542)
 
-```text
-causal Conformer-lite
-or
-Mamba/SSM-lite
-or
-depthwise Conv + gated attention
+### R2 Fine-Tuned Decoder
+
+Frozen DAC decoder has boundary artifacts in short-window streaming (4f: 1.6 dB SNR). R2 fine-tunes the last 2 decoder blocks (1.78M params) to be short-window-tolerant.
+
+```
+block.2 (1.48M, 22kHz rate) + block.3 (0.30M, 44kHz rate) = 1.78M trainable
 ```
 
-でよい。
-
-「continuous latent + flowで生成」ではなく、**codec latentを条件付き写像する**。  
-これなら decoder は既存codecに任せられるので、VC本体の負担が減る。
-
-X-VCが示唆しているのは、**VCを waveform generation ではなく codec-space translation と見なす**こと。ここがかなり重要。
-
-## SOTAネタ2：synthetic parallel distillation
-
-次に効くのはこれ。
-
-**SynthVC** は、pre-trained zero-shot VC model が生成した synthetic parallel data を使って、streaming end-to-end VCを学習します。明示的な content-speaker separation や recognition module を不要にし、neural audio codec architecture上で低遅延streaming推論を行い、論文では end-to-end latency 77.1ms とされています。
-
-これはLightVCにめちゃくちゃ向いてる。
-
-つまり学習時は、
-
-```text
-source speech
-↓ teacher VC
-teacher converted speech
-```
-
-を大量生成して、
-
-```text
-source codec latent → target codec latent
-```
-
-を student に覚えさせる。
-
-このとき teacher は重くていい。RVCでもSeed-VCでもMeanVCでもいい。  
-本番は student だけ。
-
-LightVCの実装としては、
-
-```text
-Teacher: 高品質zero-shot VC
-Student: codec-space one-step converter
-Loss:
-- codec latent L1 / L2
-- multi-scale STFT
-- speaker similarity
-- content consistency
-- adversarial optional
-```
-
-で進めるのが現実的。
-
-## SOTAネタ3：MeanVC2の bounded future context
-
-完全causalを神格化しすぎると音が悪くなる。  
-ここは **MeanVC2** の考え方が強い。
-
-MeanVC2は、MeanVCの弱点として「小さいchunkで品質が落ちる」「chunk-wise AR denoisingで学習系列長が実質2倍になる」「reference mel品質に敏感」を挙げ、**future-receptive chunking** と **universal timbre token encoder** を導入しています。40ms chunkで安定変換し、latencyを211msから110msへ下げたと報告されています。
-
-LightVCに落とすなら、
-
-```text
-strict causal mode: 0ms lookahead
-low latency mode: 40〜80ms lookahead
-quality mode: 120ms lookahead
-```
-
-を切り替える。
-
-Astrapeが「fully causal」を強みにしているなら、超えるには **“完全因果だけでなく、bounded lookaheadを設計変数にする”** ほうが現実的。配信・通話では 80〜120ms くらいなら許容される場面が多いし、品質差が大きい。
-
-## SOTAネタ4：universal timbre token encoder
-
-Astrapeの弱点になりそうなのは、target speaker conditioning の設計です。  
-単純な speaker embedding だけだと、声質の細部や録音品質に左右される。
-
-MeanVC2は、global speaker embedding と cross-attentionによる fine-grained timbre cue retrieval を組み合わせる **universal timbre token encoder** を入れています。これにより低品質referenceへのロバスト性とzero-shot speaker similarityを改善する狙いです。
-
-LightVCではこうする。
-
-```text
-target reference audio
-→ speaker embedding
-→ timbre token bank
-→ cross-attentionで現在chunkに必要な声質cueを取得
-```
-
-UIにも落とせる。
-
-```text
-Timbre strength
-Breathiness
-Brightness
-Nasality
-Age/weight感
-Source leakage suppression
-```
-
-全部を明示ラベルで学習しなくても、token bank + adapterで制御量を作れる。
-
-## SOTAネタ5：prosody/rhythmを別トラックにする
-
-単に「声色だけ変える」と、元話者の癖が漏れる。  
-ここを超えるには、**content / timbre / prosody / rhythm をfactorize** したほうが良い。
-
-**Discl-VC** は、SSL表現から content と prosody の discrete token を分離し、flow matching transformer + in-context learningでzero-shot VCを行う設計です。特に prosody token を non-autoregressive に予測して、韻律制御を強めています。
-
-**R-VC** は rhythm-controllable zero-shot VCで、Mask Generative Transformerによる duration modeling と shortcut flow matching を使い、target speakerの rhythm/style transfer を狙います。shortcut flow matchingにより2 stepでも高いtimbre similarityと品質を狙う設計です。
-
-LightVCに入れるなら、
-
-```text
-content stream
-timbre stream
-prosody stream
-rhythm/duration stream
-```
-
-を分ける。
-
-ただしRVCみたいにHuBERTやF0を必須にするのではなく、**codec latentから軽量tokenizerで分ける**。
-
-最終的にはこう。
-
-```text
-y_codec = Converter(
-  source_content_codec,
-  target_timbre_tokens,
-  prosody_mode,
-  rhythm_mode
-)
-```
-
-prosody_mode はUIで：
-
-```text
-Preserve source prosody
-Blend
-Imitate target prosody
-Flatten for privacy
-```
-
-みたいにできる。
-
-これは「単に似せるVC」よりプロダクト価値が高い。
-
-## SOTAネタ6：discrete flow matching / factorized heads
-
-VCそのものではないけど、TTS側のネタも使える。
-
-**DiFlow-TTS** は discrete codec representations を連続空間に埋め込んでflowするのではなく、**purely Discrete Flow Matching** を探索し、prosody と acoustic detail に分けた factorized flow prediction heads を使います。低遅延で、既存baselinesより最大25.8倍高速生成と報告されています。
-
-VCに持ち込むなら、
-
-```text
-codec tokenを連続latentに戻して回帰する
-```
-
-だけでなく、
-
-```text
-RVQ codebook depthごとに予測する
-coarse token: content/timbre
-fine token: texture/detail
-```
-
-にする。
-
-これは 2026年の streaming TTS でも似た考え方が出ていて、Mimi codec の32層RVQ codeを progressive depth-wise にdecodeすることで、time-to-first-byte 48.99msを狙う研究があります。
-
-LightVCなら、
-
-```text
-coarse codec layers: 低遅延で即出す
-fine codec layers: 後続chunkで補正
-```
-
-が面白い。
-
-つまり **progressive codec-depth conversion**。
-
-```text
-t = now:
-  RVQ layer 1-4 を即時変換
-t + small delay:
-  RVQ layer 5-12 を補完
-```
-
-これ、低遅延と音質の両立にかなり効く可能性がある。
-
-# Astrapeを超えるLightVC案
-
-名前をつけるなら、
-
-## LightVC: Codec-Space One-Step Streaming VC
-
-```text
-Input waveform 44.1kHz/24kHz
-↓
-Pretrained codec encoder
-↓
-Codec latent/token
-↓
-Factorized streaming converter
-  - content path
-  - timbre token cross-attention
-  - prosody/rhythm controller
-  - AdaLN/FiLM speaker injection
-↓
-Progressive codec-depth decoder
-↓
-Output waveform
-```
-
-## モデル構成
-
-```text
-Codec:
-- Mimi / EnCodec / DAC / SoundStream系
-- encoder/decoderは基本frozen
-
-Converter:
-- 5M〜30M parameters
-- causal Conv + SSM/Mamba-lite + local attention
-- one-step latent/token conversion
-
-Conditioner:
-- universal timbre token encoder
-- target reference cache
-- prosody/rhythm token predictor
-
-Training:
-- synthetic parallel distillation
-- role assignment: standard / reconstruction / reversed
-- codec latent loss
-- STFT loss
-- speaker similarity loss
-- content preservation loss
-```
-
-X-VCの generated paired data と role-assignment strategy は、LightVCでもかなり使える。
-
-## 推論
-
-```text
-Frame: 20ms
-Chunk: 40ms
-Lookahead:
-- 0ms strict
-- 40ms balanced
-- 80ms quality
-
-Converter:
-- one forward per chunk
-- no ODE loop
-- no retrieval
-- no external F0 extractor
-```
-
-ここがAstrape超えポイント。
-
-```text
-Astrape:
-  continuous latent + CFM 4〜8 step + full custom encoder/decoder
-
-LightVC:
-  pretrained codec + one-step codec-space converter + factorized token control
-```
-
-## さらに攻めるなら：dual-path converter
-
-声質変換は全部同じモデルでやらず、2パスに分ける。
-
-```text
-Fast path:
-  low-latency coarse conversion
-  content/timbreの大枠だけ
-
-Refine path:
-  bounded lookaheadでtexture補正
-  breath/noise/high-frequency/detail
-```
-
-出力は常にfast pathで出しつつ、refine pathは次chunkに混ぜる。  
-これはストリーミングTTSの block-wise / depth-wise codec decoding の考え方に近い。
-
-## 研究としての一番強い新規性
-
-論文ネタにするなら、この組み合わせが強い。
-
-> **Progressive RVQ-depth voice conversion in codec space with synthetic teacher distillation and universal timbre token conditioning.**
-
-日本語にすると、
-
-> codecの時間方向だけでなく、RVQ depth方向にも段階的に変換するリアルタイムVC。
-
-これ、Astrapeの「時間chunkをcausalに処理する」より一段上の設計です。
-
-普通のstreaming VCは時間方向のlatencyばかり見ます。  
-でも neural codec は RVQ depth を持っているので、
-
-```text
-時間方向 latency
-×
-codebook depth方向 fidelity
-```
-
-の2軸で設計できる。
-
-つまり、
-
-```text
-低遅延モード:
-  coarse codeのみ変換
-
-高品質モード:
-  fine codeまで変換
-
-privacy mode:
-  timbre-bearing layersを強く変換
-
-natural mode:
-  lower layers preserve, upper layers convert
-```
-
-みたいな制御ができる。
-
-これはアプリとしても研究としても強い。
-
-# 実装優先順位
-
-まずはこれ。
-
-## Phase 1: codec latent distillation
-
-```text
-pretrained codecを選ぶ
-source/teacher converted pairを作る
-codec latent同士をone-step converterで学習
-```
-
-ここで VC として鳴るか確認。
-
-## Phase 2: target timbre token
-
-```text
-target referenceを複数chunkに分解
-speaker embedding + local timbre tokensを作る
-cross-attentionでconverterに入れる
-```
-
-## Phase 3: factorized RVQ depth
-
-```text
-coarse/fine codeを分ける
-coarseは低遅延
-fineは品質補正
-```
-
-## Phase 4: prosody/rhythm control
-
-```text
-source preserve
-target imitate
-blend
-privacy flatten
-```
-
-Discl-VC / R-VC系のネタをここで入れる。
-
-# 結論
-
-Astrapeを超えるなら、**CFMで波形/latentを生成するVC**ではなく、**codec-space translation engine**にするのが本命。
-
-一言で言うと：
-
-> **RVCでもAstrapeでもなく、codec tokenをリアルタイムに翻訳するVC。**
-
-最強案はこれ。
-
-```text
-Pretrained codec
-+ one-step codec-space converter
-+ synthetic parallel distillation      ← 削除 (2026-06 改訂)
-+ universal timbre token encoder
-+ progressive RVQ-depth conversion
-+ bounded future context
-```
-
-これなら、Astrapeの思想を継承しつつ、より軽く、よりSOTAっぽく、プロダクトにも落としやすいです。
+- Training: 10K VCTK utterances, immutable teacher, 5 epochs
+- Results:
+  - **4f SNR: +9.1 dB improvement** (1.6 → 10.7 dB)
+  - **4f MCD: -11.93** (32.05 → 20.11)
+  - Full-window reconstruction: unchanged (no catastrophic forgetting)
+  - B1 offline margin: maintained (+0.339)
+  - Rust/Candle parity: RMSE = 7.3e-3
+
+### Two Runtime Controls (Knobs)
+
+| Control | Range | Effect |
+|---------|-------|--------|
+| **wet/dry mix** | 0.0–1.0 | VC amount (0 = bypass, 1 = full conversion) |
+| **τ (tau)** | 0.1–10.0 | Soft RVQ temperature (low = hard quantization, high = smooth) |
 
 ---
 
-## 設計改訂メモ (2026-06)
+## Research Findings (What We Learned)
 
-**synthetic parallel distillation を削除。** 理由：
+### Proven
 
-1. **Seed-VC（想定teacher）自体がteacherなしで学習されている** — "timbre shifter"は信号処理拡張であり、neural teacherではない。SOTAゼロショットVC 16モデル中14がteacher-free。
-2. **蒸留は品質要件ではなく速度圧縮** — multi-step拡張を1-stepに圧縮するだけ。Mean-flow / shortcut flow matchingなら最初から1-stepで学習可能。
-3. **Teacherの品質が上限になる** — Astrape超えのCONCEPTと矛盾。
-4. **ライセンス汚染リスク** — Seed-VCはGPL-3.0かつアーカイブ済み。
-5. **Phase Aが数日→数時間に短縮** — teacherでfake pair生成する代わりに、実音声をDACエンコードするだけ。
+1. **Cross-text generalization**: B1 adapter trained on same-text pairs generalizes to cross-text with ZERO degradation (200-pair, Δmargin = +0.002). Same-text supervision bias does not exist.
 
-**代替：mean-flow / shortcut flow matching の直接学習（Paradigm 6）+ bottleneck warm-start（Paradigm 2）**
+2. **RVQ speaker/content structure exists**: Depth surgery (200-pair) revealed speaker information distribution:
+   - d1-3: 68% of speaker info (the "speaker core")
+   - d0: 12% (mixed content + speaker)
+   - d5-8: <6% each (fine detail, minimal speaker)
 
-```text
-Pretrained codec (DAC)
-+ one-step mean-flow converter (1-NFE, no ODE loop)
-+ bottleneck autoencoder warm-start (speaker disentanglement)
-+ timbre-shifter augmentation (signal processing, NOT a teacher)
-+ universal timbre token encoder
-+ progressive RVQ-depth factorized FM heads  ← 新規性の核心
-+ bounded future context
+3. **ECAPA is the optimal conditioning signal**: Pre-trained speaker embeddings outperform any codec-derived representation (raw latent, depth-filtered latent, codebook histograms, co-occurrence lookup tables).
+
+4. **Decoder fine-tune works**: Last 2 blocks fine-tune with immutable teacher and distillation losses dramatically improves short-window robustness without degrading full-window quality.
+
+### Disproven (Negative Results)
+
+1. **Learning-free VC is impossible**: Code choice is jointly (content, speaker)-dependent. Statistical methods (histogram, co-occurrence lookup) cannot factorize these dimensions.
+
+2. **ref_latent token bank fails**: Reference audio's codec representation (raw or depth-filtered) is a worse conditioning signal than ECAPA's pre-extracted speaker vector.
+
+3. **Per-depth discrete code modification is optimization-hostile**: Depth-aware adapters (V1: 8-dim code projection, V2: 1024-dim per-depth delta) both plateau below ECAPA B1 performance.
+
+4. **Naive RVQ token swap fails**: Token validity does not imply residual-chain validity.
+
+5. **Continuous latent L1/MSE regression collapses**: All latent-domain losses converge to codebook centroid.
+
+---
+
+## C2 Research Direction: Concept Voice Synthesis
+
+v1.0 is a functional zero-shot VC (source → target speaker). The next goal is **concept voice synthesis**: generating natural-sounding voices from abstract presets rather than speaker references.
+
+### The Gap
+
+"Male input → sensual female voice" requires more than speaker conversion:
+- **Natural female manifold**: The decoder/adapter must have seen diverse natural female speech
+- **Attribute control**: "breathy", "warm", "intimate" must be controllable dimensions
+- **Source timbre suppression**: Male vocal characteristics must be actively removed
+
+### C2 Roadmap
+
+| Phase | Goal | Status |
+|-------|------|--------|
+| **C2-0** | Female manifold dataset (Irodori-TTS 25K utterances, 500 speakers × 5 captions) | Generating |
+| **C2-1** | Concept embedding from caption labels (neutral/soft/breathy/warm/low_tension) | Planned |
+| **C2-2** | Domain bridge (source timbre leakage suppression, q0 correction) | Planned |
+| **C2-3** | Concept preset system (voice synth knob controls) | Planned |
+
+### Irodori-TTS Corpus
+
+Using `Irodori-TTS-600M-v3-VoiceDesign` (MIT, Flow Matching TTS with caption control) to generate a diverse female voice corpus from 500 speakers. Caption text acts as the attribute label:
+
+```
+neutral:     "落ち着いた自然な女性の声で、普通の速さで読み上げてください。"
+soft:        "柔らかく穏やかな声で、優しく語りかけるように読み上げてください。"
+breathy:     "息多めの甘い声で、囁くように親密な距離感で読み上げてください。"
+warm:        "温かく包容力のある声で、安心させるようにゆっくりと読み上げてください。"
+low_tension: "リラックスして力の抜いた声で、少し低めのトーンで読み上げてください。"
 ```
 
-target latent = 実際のtarget話者のDAC latent（real recording）。teacher不在。
+This simultaneously provides:
+- Large-scale female manifold for RVQ analysis
+- Attribute-labeled pairs for concept embedding training
+- Pairwise comparison material for perceptual studies
+
+---
+
+## Historical Context (Lessons Learned)
+
+### What Was Tried and Abandoned
+
+| Approach | Result | Lesson |
+|----------|--------|--------|
+| Continuous latent flow matching (Phase B/C) | Collapse to centroid | L1/MSE on latents always collapses |
+| VC teacher distillation (SynthVC-style) | License risk + quality ceiling | Teacher-free policy adopted |
+| Naive RVQ depth swap | Decoder-invalid trajectories | Residual chain must be preserved |
+| Cross-text target-bank retrieval | Content/speaker inseparable | Frame-level retrieval insufficient |
+| ref_latent token bank (true UTTE) | ECAPA strictly better | Pre-trained speaker extraction >> raw codec |
+| Per-depth knob adapter (V1/V2) | Plateau below B1 | Per-depth structure is optimization-hostile |
+| Learning-free code statistics | Margin -0.43 to -0.54 | Code choice is (content, speaker) joint function |
+
+### What Endured
+
+- **Codec-space VC**: VC happens in DAC latent space, not waveform space ✅
+- **One-step conversion**: No ODE loop, no diffusion sampling ✅
+- **Pure Rust inference**: Candle, no Python at deployment ✅
+- **Frozen codec backbone**: Encoder and decoder are frozen (decoder last-2-blocks fine-tuned for streaming) ✅
+- **MIT license**: All components MIT/Apache/ISC ✅
+
+---
+
+## Architecture Summary
+
+```
+┌─ Encoder (frozen) ──────────────────────────────────────┐
+│ DAC encoder: Conv1d(1→64→128→512→1024) + ResBlocks     │
+│ 44.1kHz PCM → [B, 1024, T] latent @ 86 Hz              │
+└──────────────────────────────────────────────────────────┘
+         │
+┌─ Soft RVQ ───────────────────────────────────────────────┐
+│ Sequential re-quantization with softmax(τ=5.0)          │
+│ q0 (source) fixed → depths 1-8 soft-quantized           │
+│ z_q = q0 + Σ soft_q_d                                   │
+└──────────────────────────────────────────────────────────┘
+         │                                    ┌─ ECAPA ─────┐
+┌─ B1 Adapter ─────────────────────────────────│  192-dim   │
+│ Conv1d(1024→256) + cross-attn(32 tokens)   │  speaker    │
+│ + GELU + Conv1d(256→1024) [zero-init]       │  embedding │
+│ 3.5M params                                 └────────────┘
+└────────────────────────────────────────────────────────────┘
+         │
+┌─ Decoder (R2 fine-tuned) ────────────────────────────────┐
+│ DAC decoder: conv1 + block.0-1 (frozen)                  │
+│              + block.2-3 (fine-tuned for short-window)    │
+│              + snake + conv2                              │
+│ [B, 1024, T] → 44.1kHz PCM                               │
+└──────────────────────────────────────────────────────────┘
+```
+
+## Deployment
+
+- **Platform**: Windows (ASIO/WASAPI), macOS (CoreAudio), Linux (ALSA)
+- **GUI**: egui/eframe (pure Rust)
+- **Audio**: cpal ring-buffer streaming
+- **Latency**: <50ms on CUDA (Balanced 4f), ~185ms on CPU (not real-time viable)
+- **Weights**: `dac_44khz_finetuned.safetensors` (306MB), `dac_quantizer.safetensors` (4.7MB), `utte_adapter_b1.safetensors` (7.1MB)
