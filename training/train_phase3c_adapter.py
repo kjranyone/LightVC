@@ -262,6 +262,15 @@ def train(args):
     dac = load_dac()
     ecapa = load_ecapa()
 
+    gender_clf = None
+    if args.gender_weight > 0:
+        ck = torch.load(args.gender_clf_path, map_location=DEVICE, weights_only=True)
+        gender_clf = {
+            "weight": ck["weight"].to(DEVICE),
+            "bias": ck["bias"].to(DEVICE),
+        }
+        print(f"Gender classifier loaded: {args.gender_clf_path} (gender_weight={args.gender_weight})")
+
     train_ds = PairDataset(data_dir / "train", args.max_frames,
                            ref_latent_dir=args.ref_latent_dir if args.utte_mode == "ref_latent" else None)
     eval_ds = PairDataset(data_dir / "eval", args.max_frames,
@@ -353,7 +362,7 @@ def train(args):
         adapter.train()
         meters = {k: [] for k in (
             "total", "speaker", "leak", "stft", "latent",
-            "spk_sim", "leak_sim", "delta_norm", "margin_l",
+            "spk_sim", "leak_sim", "delta_norm", "margin_l", "gender",
         )}
         t0 = time.time()
 
@@ -402,6 +411,14 @@ def train(args):
                 + args.delta_reg * loss_delta
             )
 
+            if args.gender_weight > 0 and gender_clf is not None:
+                audio_16k = resample_16k(audio)
+                emb = ecapa_embed(ecapa, audio_16k)
+                p_male = torch.sigmoid(emb @ gender_clf["weight"].T + gender_clf["bias"]).mean()
+                loss_gender = p_male
+                loss = loss + args.gender_weight * loss_gender
+                meters.setdefault("gender", []).append(float(p_male.detach().cpu()))
+
             if args.margin_weight > 0:
                 loss_margin = F.relu(
                     args.margin_m + leak_sim - spk_sim
@@ -438,12 +455,14 @@ def train(args):
                 meters[name].append(float(value.detach().cpu()))
 
             if step % args.log_every == 0:
+                gender_str = f" ♂={meters['gender'][-1]:.2f}" if meters.get("gender") else ""
                 print(
                     f"E{epoch} S{step}/{len(train_dl)} "
                     f"loss={meters['total'][-1]:.3f} "
                     f"spk={meters['spk_sim'][-1]:.3f} "
                     f"src={meters['leak_sim'][-1]:.3f} "
-                    f"Δ={meters['delta_norm'][-1]:.4f} "
+                    f"Δ={meters['delta_norm'][-1]:.4f}"
+                    f"{gender_str} "
                     f"lr={sched.get_last_lr()[0]:.2e}",
                     flush=True,
                 )
@@ -467,6 +486,7 @@ def train(args):
                 f"source={eval_result['secs_source']:.3f} "
                 f"margin={margin:+.3f} "
                 f"Δ={eval_result['delta_norm']:.4f}"
+                + (f" ♂={eval_result['p_male']:.3f}" if 'p_male' in eval_result else "")
             )
             ckpt = {
                 "generator": generator.state_dict() if generator else None,
@@ -495,6 +515,12 @@ def evaluate(args, generator, adapter, dac, ecapa, eval_dl):
     target_scores = []
     source_scores = []
     delta_norms = []
+    p_male_scores = []
+
+    gender_clf_eval = None
+    if hasattr(args, 'gender_weight') and args.gender_weight > 0 and Path(args.gender_clf_path).exists():
+        ck = torch.load(args.gender_clf_path, map_location=DEVICE, weights_only=True)
+        gender_clf_eval = {"weight": ck["weight"].to(DEVICE), "bias": ck["bias"].to(DEVICE)}
 
     for bi, batch in enumerate(eval_dl):
         if args.eval_batches >= 0 and bi >= args.eval_batches:
@@ -534,12 +560,18 @@ def evaluate(args, generator, adapter, dac, ecapa, eval_dl):
         delta_norms.append(
             float((z_q_adapted - z_q_base).pow(2).mean().sqrt().cpu())
         )
+        if gender_clf_eval is not None:
+            p_male = float(torch.sigmoid(emb @ gender_clf_eval["weight"].T + gender_clf_eval["bias"]).mean().cpu())
+            p_male_scores.append(p_male)
 
-    return {
+    result = {
         "secs_target": float(np.mean(target_scores)) if target_scores else 0.0,
         "secs_source": float(np.mean(source_scores)) if source_scores else 0.0,
         "delta_norm": float(np.mean(delta_norms)) if delta_norms else 0.0,
     }
+    if p_male_scores:
+        result["p_male"] = float(np.mean(p_male_scores))
+    return result
 
 
 if __name__ == "__main__":
@@ -579,6 +611,10 @@ if __name__ == "__main__":
     parser.add_argument("--margin_m", type=float, default=0.1,
                         help="margin for ranking loss")
     parser.add_argument("--grad_clip", type=float, default=1.0)
+    parser.add_argument("--gender_weight", type=float, default=0.0,
+                        help="weight for gender leakage penalty P(male)")
+    parser.add_argument("--gender_clf_path", type=str,
+                        default="checkpoints/gender_classifier/gender_classifier.pt")
     parser.add_argument("--seed", type=int, default=42,
                         help="random seed for reproducibility")
     parser.add_argument("--depth_aware", action="store_true",
