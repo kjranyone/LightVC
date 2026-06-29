@@ -1,27 +1,23 @@
 """
 Batch female voice corpus generation using Irodori-TTS VoiceDesign.
 
-Phase 1: Per-speaker zero-shot clone (manifold diversity)
-Phase 2: Caption-controlled attribute variants
-
-Output: female_tts_corpus/{speaker_id}/{text_id}_{caption_id}.wav
+Output: female_tts_corpus/{speaker_id}/{text_id}_{caption_id}.wav (44.1kHz mono)
 
 Usage:
   cd Irodori-TTS
   uv run --no-sync python ../LightVC/training/generate_female_corpus.py \
     --female-dir ../LightVC/female-dataset \
     --output-dir ../LightVC/data/female_tts_corpus \
-    --n-speakers 100 \
-    --texts-per-speaker 5
+    --n-speakers 5 --texts-per-speaker 2 --captions neutral,soft
 """
 import argparse
 import subprocess
 import sys
 from pathlib import Path
-from collections import defaultdict
 
 import numpy as np
 import soundfile as sf
+import librosa
 
 TEXTS = [
     "こんにちは。今日はとても良い天気ですね。",
@@ -46,11 +42,11 @@ CAPTIONS = {
 
 
 def select_reference_clips(female_dir, n_speakers):
-    speaker_dirs = sorted(Path(female_dir).iterdir())
-    speaker_dirs = [d for d in speaker_dirs if d.is_dir()]
+    speaker_dirs = sorted([d for d in Path(female_dir).iterdir() if d.is_dir()])
     rng = np.random.default_rng(42)
-    selected = list(rng.choice(len(speaker_dirs), size=min(n_speakers, len(speaker_dirs)), replace=False))
-    
+    n = min(n_speakers, len(speaker_dirs))
+    selected = list(rng.choice(len(speaker_dirs), size=n, replace=False))
+
     refs = []
     for idx in selected:
         sd = speaker_dirs[idx]
@@ -58,27 +54,41 @@ def select_reference_clips(female_dir, n_speakers):
         if not wavs:
             continue
         best = max(wavs, key=lambda w: sf.info(str(w)).frames)
-        refs.append((sd.name, best))
+        refs.append((sd.name, str(best)))
     return refs
 
 
+def resample_to_44k(wav_path):
+    audio, sr = sf.read(wav_path, dtype="float32")
+    if audio.ndim > 1:
+        audio = audio[:, 0]
+    if sr != 44100:
+        audio = librosa.resample(audio.astype(np.float64), orig_sr=sr, target_sr=44100).astype(np.float32)
+    return audio, 44100
+
+
 def run_irodori(text, caption, ref_wav, output_wav, hf_checkpoint, seed=42):
+    tmp_wav = "/tmp/irodori_tmp.wav"
     cmd = [
-        "uv", "run", "--no-sync", "python", "infer.py",
+        sys.executable, "infer.py",
         "--hf-checkpoint", hf_checkpoint,
         "--text", text,
         "--ref-wav", str(ref_wav),
         "--caption", caption,
-        "--output-wav", str(output_wav),
+        "--output-wav", tmp_wav,
         "--num-steps", "20",
         "--model-precision", "bf16",
         "--seed", str(seed),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-    if result.returncode != 0:
+    if result.returncode != 0 or not Path(tmp_wav).exists():
         print(f"  ERROR: {result.stderr[:200]}")
         return False
-    return output_wav.exists()
+
+    audio, sr = resample_to_44k(tmp_wav)
+    sf.write(str(output_wav), audio, sr)
+    Path(tmp_wav).unlink(missing_ok=True)
+    return True
 
 
 def main():
@@ -98,7 +108,7 @@ def main():
     refs = select_reference_clips(args.female_dir, args.n_speakers)
     print(f"Selected {len(refs)} speakers")
 
-    caption_keys = args.captions.split(",")
+    caption_keys = [c.strip() for c in args.captions.split(",")]
     texts = TEXTS[:args.texts_per_speaker]
 
     total = len(refs) * len(texts) * len(caption_keys)
@@ -108,30 +118,29 @@ def main():
     for spk_id, ref_wav in refs:
         spk_dir = output_dir / spk_id
         spk_dir.mkdir(exist_ok=True)
-        
+
         for ti, text in enumerate(texts):
             for ci, ck in enumerate(caption_keys):
                 caption = CAPTIONS[ck]
                 out_name = f"t{ti:02d}_{ck}.wav"
                 out_path = spk_dir / out_name
-                
+
                 if out_path.exists():
                     done += 1
                     continue
-                
+
                 ok = run_irodori(
                     text, caption, ref_wav, out_path,
                     args.hf_checkpoint, args.seed + done,
                 )
                 if ok:
                     done += 1
+                    info = sf.info(str(out_path))
+                    print(f"  [{done}/{total}] {spk_id}/{out_name} ({info.frames/info.samplerate:.1f}s)", flush=True)
                 else:
                     print(f"  SKIP: {spk_id}/{out_name}")
-                
-                if done % 10 == 0:
-                    print(f"  [{done}/{total}] last: {spk_id}/{out_name}", flush=True)
 
-    print(f"\nDone: {done}/{total} utterances generated → {output_dir}")
+    print(f"\nDone: {done}/{total} utterances -> {output_dir}")
 
 
 if __name__ == "__main__":
