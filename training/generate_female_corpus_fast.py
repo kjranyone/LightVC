@@ -32,12 +32,53 @@ TEXTS = [
     "この花の香り、とても好き。思い出すのは子供の頃の夏です。",
 ]
 
+TEXTS_EMOTIONAL = [
+    "えっ！？本当なの！？",
+    "ふふっ、ありがとうね。",
+    "やだもう、びっくりさせないでよー！",
+    "…うん、ちょっとね。",
+    "ねえねえ、聞いてる？",
+    "えへへ、ごめんごめん。",
+    "っ！…びっくりした…",
+    "んー、どうだろうねぇ。",
+    "はぁ…疲れたぁ。",
+    "よーし、やっていこう！",
+]
+
+TEXTS_LIVE = [
+    "あ、ちょっと待ってチャット見るね。",
+    "え？それ何？教えて教えて！",
+    "うそでしょ、もうそんな時間？",
+    "今日ね、すごいことがあったんだよ。",
+    "みんなー、聞こえてるー？",
+    "ちょっと声大きすぎたかも、ごめんね。",
+    "あははは！それな！それな！",
+    "ん？今なんて言った？聞き取れなかった。",
+    "…内緒だよ。",
+    "おつかれさまー、今日も良い一日だったね。",
+]
+
+TEXTS_WHISPER = [
+    "…好き。",
+    "…もう少し近くに来て。",
+    "…二人だけの秘密だよ。",
+    "…寝てる？",
+    "…ありがとう、ずっと支えてくれて。",
+]
+
+ALL_TEXTS = TEXTS + TEXTS_EMOTIONAL + TEXTS_LIVE + TEXTS_WHISPER
+
 CAPTIONS = {
     "neutral": "落ち着いた自然な女性の声で、普通の速さで読み上げてください。",
     "soft": "柔らかく穏やかな声で、優しく語りかけるように読み上げてください。",
     "breathy": "息多めの甘い声で、囁くように親密な距離感で読み上げてください。",
     "warm": "温かく包容力のある声で、安心させるようにゆっくりと読み上げてください。",
     "low_tension": "リラックスして力の抜いた声で、少し低めのトーンで読み上げてください。",
+    "young_bright": "若くて明るい声で、元気に生き生きと読み上げてください。",
+    "intimate_close": "とても近い距離で、親密で甘えるような声で読み上げてください。",
+    "cool_calm": "クールで落ち着いた声で、余裕を持って読み上げてください。",
+    "cute_high": "少し高めの可愛らしい声で、親しみやすく読み上げてください。",
+    "mature_deep": "大人っぽく少し低めの声で、落ち着いて読み上げてください。",
 }
 
 
@@ -64,6 +105,8 @@ def main():
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--n-speakers", type=int, default=500)
     parser.add_argument("--texts-per-speaker", type=int, default=10)
+    parser.add_argument("--text-sets", default="read",
+                        help="comma-separated: read,emotional,live,whisper,all")
     parser.add_argument("--captions", default="neutral,soft,breathy,warm,low_tension")
     parser.add_argument("--hf-checkpoint", default="Aratako/Irodori-TTS-600M-v3-VoiceDesign")
     parser.add_argument("--seed", type=int, default=42)
@@ -74,7 +117,20 @@ def main():
 
     refs = select_reference_clips(args.female_dir, args.n_speakers)
     caption_keys = [c.strip() for c in args.captions.split(",")]
-    texts = TEXTS[:args.texts_per_speaker]
+
+    text_sets = args.text_sets.split(",")
+    if "all" in text_sets:
+        texts = ALL_TEXTS
+    else:
+        text_map = {
+            "read": TEXTS, "emotional": TEXTS_EMOTIONAL,
+            "live": TEXTS_LIVE, "whisper": TEXTS_WHISPER,
+        }
+        texts = []
+        for ts in text_sets:
+            texts.extend(text_map.get(ts.strip(), []))
+    texts = texts[:args.texts_per_speaker]
+
     total = len(refs) * len(texts) * len(caption_keys)
 
     print(f"Speakers: {len(refs)}, Texts: {len(texts)}, Captions: {len(caption_keys)}")
