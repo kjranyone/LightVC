@@ -58,7 +58,7 @@ def multi_scale_stft_l1(audio_a, audio_b):
     return loss / 3.0
 
 
-def load_dac_pair():
+def load_dac_pair(warm_start=None):
     from transformers import AutoModel
 
     dac_teacher = AutoModel.from_pretrained("descript/dac_44khz").to(DEVICE).eval()
@@ -74,27 +74,77 @@ def load_dac_pair():
             p.requires_grad_(True)
             trainable += p.numel()
     print(f"Student trainable: {trainable:,} params ({trainable / 1e6:.2f}M)")
+
+    if warm_start and Path(warm_start).exists():
+        ck = torch.load(warm_start, map_location="cpu", weights_only=False)
+        delta = ck["decoder_state"]
+        full_sd = dac_student.state_dict()
+        n_loaded = 0
+        for k, v in delta.items():
+            if k in full_sd:
+                full_sd[k] = v.to(DEVICE)
+                n_loaded += 1
+        dac_student.load_state_dict(full_sd)
+        print(f"Warm start: {n_loaded} tensors from {warm_start} (epoch {ck.get('epoch', '?')})")
+
     return dac_teacher, dac_student
 
 
-def collect_files(n_utts):
-    wavs = sorted(VCTK_WAV.glob("*/*.wav"))
+def collect_files(n_utts, eval_speakers=None):
+    all_wavs = sorted(VCTK_WAV.glob("*/*.wav"))
+    if eval_speakers:
+        eval_set = set(eval_speakers.split(","))
+        train_wavs = [w for w in all_wavs if w.parent.name not in eval_set]
+        eval_wavs = [w for w in all_wavs if w.parent.name in eval_set]
+    else:
+        train_wavs = all_wavs
+        eval_wavs = []
+
     rng = np.random.default_rng(42)
-    selected = list(rng.choice(len(wavs), size=min(n_utts, len(wavs)), replace=False))
-    return [wavs[i] for i in selected]
+    n = min(n_utts, len(train_wavs))
+    indices = list(rng.choice(len(train_wavs), size=n, replace=False))
+    train_selected = [train_wavs[i] for i in indices]
+
+    speaker_info = Path("../data/vctk/VCTK-Corpus/VCTK-Corpus/speaker-info.txt")
+    if speaker_info.exists():
+        genders = {}
+        for line in speaker_info.read_text().strip().split("\n")[1:]:
+            parts = line.split()
+            if len(parts) >= 3:
+                genders[parts[0]] = parts[2]
+        train_genders = [genders.get(w.parent.name.lstrip("p"), "?") for w in train_selected]
+        n_f = train_genders.count("F")
+        n_m = train_genders.count("M")
+        print(f"Data: {len(train_selected)} train utterances")
+        print(f"  Gender: F={n_f} M={n_m} other={len(train_genders)-n_f-n_m}")
+        print(f"  Speakers: {len(set(w.parent.name for w in train_selected))}")
+        if eval_wavs:
+            print(f"  Eval: {len(eval_wavs)} utterances from {len(set(w.parent.name for w in eval_wavs))} held-out speakers")
+
+    lengths = []
+    import soundfile as sf
+    for w in train_selected[:200]:
+        info = sf.info(str(w))
+        lengths.append(info.frames / info.samplerate)
+    lengths = np.array(lengths)
+    print(f"  Duration (200 sample): mean={lengths.mean():.1f}s median={np.median(lengths):.1f}s range=[{lengths.min():.1f}, {lengths.max():.1f}]s")
+
+    return train_selected, eval_wavs
 
 
 def train(args):
-    print("=== R2-mini: Decoder Fine-Tune ===\n")
+    print("=== R2 Decoder Fine-Tune ===\n")
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
-    dac_teacher, dac_student = load_dac_pair()
+    dac_teacher, dac_student = load_dac_pair(warm_start=args.warm_start)
 
-    files = collect_files(args.n_utts)
-    print(f"Data: {len(files)} utterances from VCTK")
-    print(f"LR: {args.lr}, epochs: {args.epochs}, windows: {args.windows}")
-    print(f"Loss weights: short={args.w_short} full_distill={args.w_full_distill} full_orig={args.w_full_orig}\n")
+    files, eval_files = collect_files(args.n_utts, eval_speakers=args.eval_speakers)
+    print(f"\nLR: {args.lr}, epochs: {args.epochs}, windows: {args.windows}")
+    print(f"Loss weights: short={args.w_short} full_distill={args.w_full_distill} full_orig={args.w_full_orig}")
+    if args.warm_start:
+        print(f"Warm start: {args.warm_start}")
+    print()
 
     CKPT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -220,6 +270,10 @@ def train(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="R2-mini decoder fine-tune")
     parser.add_argument("--n_utts", type=int, default=1000)
+    parser.add_argument("--warm_start", type=str, default=None,
+                        help="path to R2-mini checkpoint for warm start")
+    parser.add_argument("--eval_speakers", type=str, default=None,
+                        help="comma-separated speaker IDs to hold out for eval (e.g. p361,p364)")
     parser.add_argument("--epochs", type=int, default=8)
     parser.add_argument("--lr", type=float, default=1e-5)
     parser.add_argument("--grad_clip", type=float, default=0.5)
