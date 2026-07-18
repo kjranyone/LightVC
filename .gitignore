@@ -18,6 +18,20 @@ samples/**/*.flac
 training/samples/
 training/hf_models/
 
+# ===== Render/eval audio outputs (generated, large) =====
+results/**/*.wav
+results/**/*.flac
+
+# ===== Model checkpoints (large) =====
+checkpoints/
+training/checkpoints/
+*.pt
+*.safetensors
+
+# ===== Datasets (large corpora, not for git) =====
+female-dataset/
+logs/
+
 # ===== Evaluation outputs (generated) =====
 training/eval_manifest.json
 training/eval_results.json
@@ -47,3 +61,12 @@ venv/
 *.swo
 .DS_Store
 Thumbs.db
+
+# ===== Agent worktrees / scratch =====
+.claude/worktrees/
+
+# ===== Tooling caches / archives (not for git) =====
+.kilo/
+.archive/
+node_modules/
+kansei/renders/
