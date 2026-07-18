@@ -30,6 +30,8 @@ pub fn render(
     prosody_mode: &mut lightvc_core::converter::ProsodyMode,
     prosody_blend: &mut f32,
     velocity_scale: &mut f32,
+    muted: &mut bool,
+    buffer_frames: &mut u32,
     metrics: &RtMetrics,
     mut on_load: impl FnMut(&str, &lightvc_core::converter::ConverterConfig),
     mut on_ensure_thread: impl FnMut(),
@@ -305,6 +307,107 @@ pub fn render(
 
     ui.add_space(crate::theme::space::MEDIUM);
 
+    // --- Latency card: E2E value + segment breakdown + buffer selector ---
+    // The buffer/resample terms are derived from the selected buffer size;
+    // `algo` comes from RtMetrics. Mirrors the inference loop's E2E estimate
+    // (buf + resamp + algo + resamp + buf).
+    {
+        let buf_ms = *buffer_frames as f32 / 44.1;
+        let resamp_ms = 3.0;
+        let algo_ms = metrics.algo_ms;
+        let e2e = buf_ms * 2.0 + resamp_ms * 2.0 + algo_ms;
+        // Segment (label, ms, color).
+        let segs: [(&str, f32, egui::Color32); 5] = [
+            ("buf", buf_ms, crate::theme::colors::CYAN),
+            ("resamp", resamp_ms, crate::theme::colors::MINT),
+            ("algo", algo_ms, crate::theme::colors::PINK),
+            ("resamp", resamp_ms, crate::theme::colors::MINT),
+            ("buf", buf_ms, crate::theme::colors::CYAN),
+        ];
+
+        crate::theme::info_card_frame().show(ui, |ui| {
+            ui.horizontal(|ui| {
+                crate::theme::subheading(ui, "Latency");
+                ui.add_space(crate::theme::space::SMALL);
+                ui.label(
+                    egui::RichText::new(format!("{e2e:.0} ms E2E"))
+                        .size(16.0)
+                        .strong()
+                        .color(crate::theme::colors::TEXT),
+                );
+
+                // Buffer size selector (right-aligned). Re-arms the stream.
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let old_buf = *buffer_frames;
+                    egui::ComboBox::from_id_salt("rt_buffer_size")
+                        .selected_text(format!("{} frames", *buffer_frames))
+                        .show_ui(ui, |ui| {
+                            for n in [128u32, 256, 512, 1024] {
+                                let label = if n == 256 {
+                                    "256 (paravo)".to_string()
+                                } else {
+                                    n.to_string()
+                                };
+                                ui.selectable_value(buffer_frames, n, label);
+                            }
+                        });
+                    if *buffer_frames != old_buf {
+                        on_control(RtControl::SetBufferSize(*buffer_frames));
+                        // A running stream must be re-armed to apply the new
+                        // buffer size (design §10). Stop then restart.
+                        if *running {
+                            on_control(RtControl::Stop);
+                            on_control(RtControl::StartWithDevices {
+                                input_idx: state.lock().unwrap().selected_input,
+                                output_idx: state.lock().unwrap().selected_output,
+                            });
+                        }
+                    }
+                    ui.label(
+                        egui::RichText::new("Buffer")
+                            .size(11.0)
+                            .color(crate::theme::colors::TEXT_DIM),
+                    );
+                });
+            });
+
+            // Proportional breakdown bar.
+            ui.add_space(crate::theme::space::TIGHT);
+            let bar_h = 14.0;
+            let (rect, _) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width(), bar_h),
+                egui::Sense::hover(),
+            );
+            let painter = ui.painter_at(rect);
+            let total = e2e.max(0.001);
+            let mut x = rect.min.x;
+            for (_, ms, color) in segs.iter() {
+                let w = rect.width() * (ms / total);
+                let seg_rect = egui::Rect::from_min_size(
+                    egui::pos2(x, rect.min.y),
+                    egui::vec2(w, bar_h),
+                );
+                painter.rect_filled(seg_rect, 2.0, crate::theme::with_alpha(*color, 200));
+                x += w;
+            }
+
+            // Segment legend.
+            ui.add_space(crate::theme::space::TIGHT);
+            ui.horizontal(|ui| {
+                for (name, ms, color) in segs.iter() {
+                    ui.label(
+                        egui::RichText::new(format!("{name} {ms:.0}"))
+                            .size(10.0)
+                            .color(*color),
+                    );
+                    ui.add_space(crate::theme::space::TIGHT);
+                }
+            });
+        });
+
+        ui.add_space(crate::theme::space::MEDIUM);
+    }
+
     // --- Row 3: Operation bar (Bypass | Mode pills | Start/Stop) ---
     {
         let frame = crate::theme::info_card_frame();
@@ -324,6 +427,20 @@ pub fn render(
                     }
                     if *bypass != old_bp {
                         on_control(RtControl::Bypass(*bypass));
+                    }
+
+                    // Mute (Transport): silence output without unarming.
+                    ui.add_space(crate::theme::space::SMALL);
+                    let old_mute = *muted;
+                    if crate::theme::pill_button(
+                        ui,
+                        if *muted { "MUTED" } else { "Mute" },
+                        *muted,
+                    ) {
+                        *muted = !*muted;
+                    }
+                    if *muted != old_mute {
+                        on_control(RtControl::Mute(*muted));
                     }
                 }
 
@@ -491,6 +608,8 @@ pub fn inference_loop(
 ) {
     let mut running = false;
     let mut bypass = pipeline_slot.lock().unwrap().is_none();
+    let mut muted = false;
+    let mut buffer_frames: u32 = 256;
     let mut wet_dry: f32 = 1.0;
     let mut engine: Option<lightvc_audio::AudioEngine> = None;
     let mut capture_consumer: Option<rtrb::Consumer<f32>> = None;
@@ -522,6 +641,7 @@ pub fn inference_loop(
     let mut out_rms_last: f32 = 0.0;
     let mut rtf_last: f32 = 0.0;
     let mut latency_ms_last: f32 = 0.0;
+    let mut algo_ms_last: f32 = 0.0;
 
     // [07-5] underrun auto-degradation: if the playback ring repeatedly
     // underruns (inference too slow), automatically downgrade the latency
@@ -538,6 +658,7 @@ pub fn inference_loop(
                         continue;
                     }
                     disconnected_reported = false;
+                    let buf = cpal::BufferSize::Fixed(buffer_frames);
                     // [05-6]: use explicitly selected devices when provided.
                     // [05-7]: device enumeration happens here (inference thread)
                     // because cpal Device is not Send on macOS. The UI thread
@@ -555,10 +676,10 @@ pub fn inference_loop(
                             let in_dev = host.input_devices().ok().and_then(|mut d| d.nth(ii));
                             let out_dev = host.output_devices().ok().and_then(|mut d| d.nth(oi));
                             match (in_dev, out_dev) {
-                                (Some(id), Some(od)) => lightvc_audio::AudioEngine::start(&id, &od),
+                                (Some(id), Some(od)) => lightvc_audio::AudioEngine::start_buffered(&id, &od, buf),
                                 _ => {
                                     eprintln!("Device selection failed, falling back to default");
-                                    lightvc_audio::AudioEngine::start_default()
+                                    lightvc_audio::AudioEngine::start_default_buffered(buf)
                                 }
                             }
                         }
@@ -570,8 +691,8 @@ pub fn inference_loop(
                             let in_dev = host.input_devices().ok().and_then(|mut d| d.nth(ii));
                             let out_dev = lightvc_audio::DuplexStream::default_output().ok();
                             match (in_dev, out_dev) {
-                                (Some(id), Some(od)) => lightvc_audio::AudioEngine::start(&id, &od),
-                                _ => lightvc_audio::AudioEngine::start_default(),
+                                (Some(id), Some(od)) => lightvc_audio::AudioEngine::start_buffered(&id, &od, buf),
+                                _ => lightvc_audio::AudioEngine::start_default_buffered(buf),
                             }
                         }
                         RtControl::StartWithDevices {
@@ -582,11 +703,11 @@ pub fn inference_loop(
                             let in_dev = lightvc_audio::DuplexStream::default_input().ok();
                             let out_dev = host.output_devices().ok().and_then(|mut d| d.nth(oi));
                             match (in_dev, out_dev) {
-                                (Some(id), Some(od)) => lightvc_audio::AudioEngine::start(&id, &od),
-                                _ => lightvc_audio::AudioEngine::start_default(),
+                                (Some(id), Some(od)) => lightvc_audio::AudioEngine::start_buffered(&id, &od, buf),
+                                _ => lightvc_audio::AudioEngine::start_default_buffered(buf),
                             }
                         }
-                        _ => lightvc_audio::AudioEngine::start_default(),
+                        _ => lightvc_audio::AudioEngine::start_default_buffered(buf),
                     };
                     match eng_result {
                         Ok((eng, bufs)) => {
@@ -694,6 +815,13 @@ pub fn inference_loop(
                 }
                 RtControl::SetWetDry(mix) => {
                     wet_dry = mix;
+                }
+                RtControl::Mute(m) => {
+                    muted = m;
+                }
+                RtControl::SetBufferSize(n) => {
+                    // Applied on the next Start; the UI re-arms a running stream.
+                    buffer_frames = n;
                 }
             }
         }
@@ -823,6 +951,11 @@ pub fn inference_loop(
                 }
             }
 
+            // Mute: silence output while keeping the stream armed.
+            if muted {
+                out.iter_mut().for_each(|s| *s = 0.0);
+            }
+
             let elapsed = t0.elapsed();
             in_rms_last = widgets::rms(&chunk);
             out_rms_last = widgets::rms(&out);
@@ -847,7 +980,13 @@ pub fn inference_loop(
                     .map(|p| p.algorithmic_latency_ms())
                     .unwrap_or(0.0)
             };
-            latency_ms_last = 10.0 + 3.0 + algo_ms + 3.0 + 10.0;
+            // Buffer-linked E2E estimate: capture/playback buffers scale with
+            // the selected buffer size (frames / 44.1k), + resample (~3 ms each
+            // side) + algorithmic. algo_ms is surfaced to the UI for the
+            // Latency breakdown bar.
+            let buf_ms = buffer_frames as f32 / 44.1;
+            algo_ms_last = algo_ms;
+            latency_ms_last = buf_ms + 3.0 + algo_ms + 3.0 + buf_ms;
 
             out_44k_accum.extend_from_slice(&out);
             did_work = true;
@@ -933,6 +1072,7 @@ pub fn inference_loop(
             underrun,
             current_mode,
             auto_degraded,
+            algo_ms: algo_ms_last,
         });
 
         if !did_work {

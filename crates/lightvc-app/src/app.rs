@@ -28,6 +28,10 @@ pub struct RtMetrics {
     pub current_mode: lightvc_core::converter::LatencyMode,
     /// True when the mode was auto-downgraded due to underruns ([F5]).
     pub auto_degraded: bool,
+    /// Algorithmic latency of the current chunk (ms). Exposed separately so
+    /// the Latency card can render the E2E breakdown; the fixed buffer/resample
+    /// terms are derived UI-side from the selected buffer size.
+    pub algo_ms: f32,
 }
 
 /// Control messages from UI to real-time inference thread.
@@ -51,6 +55,12 @@ pub enum RtControl {
     SetB1Timbre(candle_core::Tensor),
     SetB1Tau(f64),
     SetWetDry(f32),
+    /// Mute the output (silence) while keeping the stream armed. Distinct from
+    /// Bypass (which passes the dry signal through).
+    Mute(bool),
+    /// Fixed capture/playback buffer size in frames. Applied to the next
+    /// engine Start; the UI re-arms a running stream so it takes effect.
+    SetBufferSize(u32),
 }
 
 /// Type alias for the shared pipeline slot.
@@ -127,6 +137,10 @@ pub struct LightVcApp {
     b1_timbre_path: String,
     b1_tau: f32,
     wet_dry: f32,
+    /// Output mute (Transport). Silences the wet signal without unarming.
+    rt_muted: bool,
+    /// Selected fixed buffer size in frames (128/256/512/1024). 256 ≈ paravo.
+    rt_buffer_frames: u32,
 }
 
 impl LightVcApp {
@@ -179,6 +193,8 @@ impl LightVcApp {
             b1_timbre_path: String::new(),
             b1_tau: 5.0,
             wet_dry: 1.0,
+            rt_muted: false,
+            rt_buffer_frames: 256,
         }
     }
 
@@ -236,6 +252,7 @@ impl LightVcApp {
             underrun: 2,
             current_mode: lightvc_core::converter::LatencyMode::Balanced,
             auto_degraded: false,
+            algo_ms: 20.0,
         };
         // Initial tab: Realtime (most informative for screenshots).
         self.current_tab = Tab::Realtime;
@@ -633,6 +650,8 @@ impl LightVcApp {
                 let mut b1_timbre_path = self.b1_timbre_path.clone();
                 let mut b1_tau = self.b1_tau;
                 let mut wet_dry = self.wet_dry;
+                let mut rt_muted = self.rt_muted;
+                let mut rt_buffer_frames = self.rt_buffer_frames;
                 let metrics = self.rt_metrics.clone();
                 let converter_pick = self.rt_converter_pick.clone();
 
@@ -653,6 +672,8 @@ impl LightVcApp {
                                 &mut rt_prosody_mode,
                                 &mut rt_prosody_blend,
                                 &mut rt_velocity_scale,
+                                &mut rt_muted,
+                                &mut rt_buffer_frames,
                                 &metrics,
                                 |c, cfg| Self::load_converter_static(&state, c, cfg.clone()),
                                 || Self::ensure_rt_thread_static(&state),
@@ -743,6 +764,8 @@ impl LightVcApp {
                 self.b1_timbre_path = b1_timbre_path;
                 self.b1_tau = b1_tau;
                 self.wet_dry = wet_dry;
+                self.rt_muted = rt_muted;
+                self.rt_buffer_frames = rt_buffer_frames;
             }
             Tab::Catalog => {
                 let mut catalog = std::mem::take(&mut self.catalog);
