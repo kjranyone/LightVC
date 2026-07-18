@@ -72,6 +72,34 @@ impl AudioEngine {
         )
     }
 
+    /// Start with default devices and an explicit fixed buffer size.
+    pub fn start_default_buffered(
+        buffer_size: cpal::BufferSize,
+    ) -> Result<(Self, AudioBuffers)> {
+        let input = default_input()?;
+        let output = default_output()?;
+        Self::start_buffered(&input, &output, buffer_size)
+    }
+
+    /// Start with explicit devices and an explicit fixed buffer size.
+    pub fn start_buffered(
+        input_device: &Device,
+        output_device: &Device,
+        buffer_size: cpal::BufferSize,
+    ) -> Result<(Self, AudioBuffers)> {
+        let in_cfg = input_device.default_input_config()?;
+        let out_cfg = output_device.default_output_config()?;
+        Self::start_with(
+            input_device,
+            output_device,
+            in_cfg.sample_rate(),
+            out_cfg.sample_rate(),
+            in_cfg.channels(),
+            out_cfg.channels(),
+            buffer_size,
+        )
+    }
+
     /// Start with full control over stream parameters ([05-2]).
     #[allow(clippy::too_many_arguments)]
     pub fn start_with(
