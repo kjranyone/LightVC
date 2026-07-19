@@ -1,6 +1,6 @@
 # LightVC 鳥瞰ロードマップ（データ × モデル × 評価 × 製品）
 
-> status: **生きた計画**。最終更新 2026-07-13。
+> status: **生きた計画**。最終更新 2026-07-19。
 > 反省起点: E0–E2 を深掘りする間、全体計画が無く「低レベル原則」「whisper 欠落」「augmentation 不在」を全て事後発見した。本書はその再発防止＝各段の依存物（データ・指標・判定者）を着手前に確定させる。
 
 ## 0. 製品要件（不変、README より）
@@ -11,11 +11,15 @@ ASMR・官能バ美肉向けリアルタイム VC。E2E <50ms / Rust(Candle) / M
 
 ```text
 [content encoder(因果蒸留)] → [retrieval/timbre] → [prosody policy] → [★vocoder] → [runtime]
-      未着手(G-enc)             部分資産(M2)          部分資産(render_m2)   E2進行中      資産あり(要改修)
+      未着手(G-enc)             部分資産(M2)          部分資産(render_m2)  耳ゲート通過+Rust移植DONE  app配線待ち
 ```
 
-**クリティカルパス**: vocoder（E2→Phase B）→ 多話者化+timbre 条件 → content encoder 蒸留（G-enc）→ 結線（E5/G-cross）→ M3 realtime。
-vocoder が耳ゲートを通らない限り上流に投資しない（B4 の教訓: 後段が「綺麗な失敗」を作る）。
+**現在地（2026-07-19）**: vocoder = **耳ゲート通過**（freebig ≈ BigVGAN, 2026-07-16/17, **ADOPTED**）＋ **Rust/Candle 移植 DONE**（freebig 非causal SNR 106.6dB / freeC causal SNR 88.5dB, `candle_vocoder_port.md` §0.5）＋ **リアルタイム達成**（チャンク streaming K=4 で RTF 0.94, +8.7ms）。config **C = causal 5.8ms**。
+判明した結論: 従来の品質ギャップの主因は **"未訓練/データ被覆"** だった（arch・損失・位相・source-filter のいずれでもない）。手作り DSP／source-filter／位相ヘッド系（§4 反証済み系譜, `RESEARCH` の A/S 天井）は **negative result** として整合し、波形ニューラルボコーダ（freebig）が勝った。
+
+**クリティカルパス**: 「vocoder が耳ゲートを通らない限り上流に投資しない」制約は **解除**（通過済）。
+→ **次フェーズ = 上流**: content encoder（G-enc 因果蒸留）＋ **多参照 Factor コンポーザ前段**（`current/zeroshot_vc.md` の Z0→Z6、うち **Z4 disentanglement gate を最優先**）＋ vocoder の **app 配線**（`lightvc-app` inference_loop → Candle `FreeVocoder`, K=4〜8）。
+残る vocoder 側の最適化課題は K=2/256 サンプル厳密低レイテンシ（単スレ未達 → マルチスレ/高速 GEMM、`candle_vocoder_port.md` §0.5）。
 
 ## 2. データ戦略の一枚絵
 
@@ -64,12 +68,12 @@ README 既定「主データにしない」は維持。追加で明確化:
 |---|---|---|---|
 | E0 | オラクル物理 | golden set / gate v1–v3 / 耳 | **済**（v1.5） |
 | E1 | overfit 学習性 | floor 較正 | **済** |
-| E2-A | 単一話者 recon (no-GAN) | oracle キャッシュ / E0 バッテリー | **進行中（100k）** |
-| E2-B | +GAN texture | MPD/MRD 流用確認 / **ゲイン augmentation** / 耳AB(gt vs net vs nsf3_gan) | 次 |
-| E2-C | 多話者+timbre 条件 | **quiet マイニング** / 話者選定 / timbre encoder 結線 | 未 |
-| G-enc | content encoder 蒸留 | HuBERT teacher / 摂動 augmentation / leakage 指標 | 未 |
+| E2-A | 単一話者 recon (no-GAN) | oracle キャッシュ / E0 バッテリー | **済**（freebig 耳ゲート通過, ADOPTED） |
+| E2-B | +GAN texture | MPD/MRD 流用確認 / **ゲイン augmentation** / 耳AB(gt vs net vs nsf3_gan) | **済**（freebig ≈ BigVGAN で耳ゲート合格） |
+| E2-C | 多話者+timbre 条件 | **quiet マイニング** / 話者選定 / timbre encoder 結線 | 次（上流フェーズと並走） |
+| G-enc | content encoder 蒸留 | HuBERT teacher / 摂動 augmentation / leakage 指標 | 次（Z4 gate 最優先） |
 | E5 | B4 結線 (VC) | CIPT / srcshift ペア / G-cross ゲート | 未 |
-| E4/M3 | realtime/Rust | causality CI / パリティ / RTF | レンダラ側は済 |
+| E4/M3 | realtime/Rust | causality CI / パリティ / RTF | **Rust 移植 DONE**（parity SNR 88–106dB / K=4 RTF 0.94）・残 = app 配線 |
 
 **判定者の分担（固定）**: 機械=アーティファクト検出（gate 指標、耳ラベルで較正済）／人間=官能評価のみ（Smoothness/Tenderness/…、README の HITL）。診断 AB を人間に投げない。
 
@@ -79,4 +83,4 @@ README 既定「主データにしない」は維持。追加で明確化:
 2. **ゲイン augmentation 未実装** — E2-B と同時（数行）。
 3. nsf3_gan との同一データ AB 未実施（content 特徴の抽出待ち）。
 4. 枝B（BigVGAN 蒸留）の並走未着手 — E2-B が耳で崩れた場合の保険なので、E2-B 失敗時に起動。
-5. Candle 側パリティ（E4）は torch 実装凍結後。
+5. ~~Candle 側パリティ（E4）は torch 実装凍結後。~~ **解消**（freebig/freeC 移植 DONE, parity SNR 88–106dB, `candle_vocoder_port.md` §0.5）。残 = app 配線と K=2 厳密低レイテンシ最適化。
