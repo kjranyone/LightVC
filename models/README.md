@@ -4,11 +4,15 @@ realtime app / CLI が読み込む Candle 推論重み。**大きい重みは gi
 
 ## freeC ボコーダ（低レイテンシ 5.8ms 合成 / streaming ~39ms E2E）
 
-- `freeC.safetensors` (~107MB) — **git 管理外**（`.gitignore`）。別端末では以下で入手:
-  1. **GitHub Release アセット**（推奨）: `gh release download <tag> -p freeC.safetensors -D models/`
-  2. **Git LFS**: `git lfs pull`（LFS 設定時）
-  3. **直接転送**: scp / クラウド / USB で `models/freeC.safetensors` に置く
-- `mel_basis_44k_2048_128.safetensors` (513KB) — **git 追跡済**（clone で付属、固定 slaney mel filterbank）。
+- `freeC.safetensors` (~107MB) — **git 管理外**。**Hugging Face で配布**: <https://huggingface.co/mus8tte/lightvc>
+  ```bash
+  huggingface-cli download mus8tte/lightvc --include 'vocoder/*' --local-dir models_dl/
+  # -> models_dl/vocoder/{freeC.safetensors, mel_basis_44k_2048_128.safetensors}
+  ```
+  （app には `--weights models_dl/vocoder/freeC.safetensors --mel-basis models_dl/vocoder/mel_basis_44k_2048_128.safetensors` で渡す、or `models/` にコピー）
+- `mel_basis_44k_2048_128.safetensors` (513KB) — **git 追跡済**（clone で付属）＋HFにも同梱。
+
+> LightVC の重みは Hugging Face の **monorepo `mus8tte/lightvc`** に component 別サブフォルダで集約（`vocoder/` 済、`content-encoder/` `vc/` `voices/` は今後）。
 
 ### 生成元（再エクスポート手順）
 `training/checkpoints/freeC/foundation_lowlatency_5p8ms.pt` の `gen`（`window` buffer 除く）→ safetensors。
