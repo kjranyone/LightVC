@@ -369,6 +369,40 @@ impl LightVcApp {
         }
     }
 
+    /// Load the FreeVocoder resynthesis backend (mic → mel → freeC vocoder →
+    /// out). `voc_path` = freeC vocoder weights, `mel_basis_path` = librosa
+    /// slaney mel filterbank (`mel_basis` key). `k` = mel frames per chunk.
+    #[allow(dead_code)]
+    fn load_freevoc_static(
+        state: &Arc<Mutex<AppState>>,
+        voc_path: &str,
+        mel_basis_path: &str,
+        k: usize,
+    ) {
+        let result = (|| -> anyhow::Result<()> {
+            let device = candle_core::Device::Cpu;
+            let resynth = lightvc_core::free_resynth::FreeResynth::new(
+                std::path::Path::new(voc_path),
+                std::path::Path::new(mel_basis_path),
+                k,
+                device,
+            )?;
+
+            let mut s = state.lock().unwrap();
+            let arc = Arc::new(Mutex::new(lightvc_core::Backend::FreeVoc(resynth)));
+            s.pipeline = Some(arc.clone());
+            *s.pipeline_slot.lock().unwrap() = Some(arc);
+            s.status = "FreeVocoder resynthesis loaded".to_string();
+            s.error = None;
+            Ok(())
+        })();
+
+        if let Err(e) = result {
+            let mut s = state.lock().unwrap();
+            s.error = Some(format!("FreeVoc load failed: {e}"));
+        }
+    }
+
     fn send_control(state: &Arc<Mutex<AppState>>, ctrl: RtControl) {
         let s = state.lock().unwrap();
         if let Some(ref tx) = s.rt_control_tx {

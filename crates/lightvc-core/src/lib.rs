@@ -8,7 +8,9 @@ pub mod codec;
 pub mod converter;
 pub mod dac_model;
 pub mod flow_converter;
+pub mod free_resynth;
 pub mod free_vocoder;
+pub mod mel;
 pub mod pipeline;
 pub mod soft_rvq;
 pub mod streaming;
@@ -17,6 +19,7 @@ pub mod weights;
 
 pub use b1_pipeline::{B1Offline, B1Streaming, StageTimings};
 pub use codec::{DacCodec, DacConfig};
+pub use free_resynth::FreeResynth;
 pub use converter::{AnyConverter, Converter, ConverterConfig, FlowConverter, LatencyMode};
 pub use pipeline::VcPipeline;
 pub use soft_rvq::SoftRVQ;
@@ -28,6 +31,8 @@ use anyhow::Result;
 pub enum Backend {
     Legacy(VcPipeline),
     B1(B1Streaming),
+    /// FreeVocoder resynthesis: mic → mel (Rust) → freeC vocoder → out.
+    FreeVoc(FreeResynth),
 }
 
 impl Backend {
@@ -35,6 +40,7 @@ impl Backend {
         match self {
             Backend::Legacy(p) => p.process_chunk(pcm),
             Backend::B1(p) => p.process_chunk(pcm),
+            Backend::FreeVoc(p) => p.process_chunk(pcm),
         }
     }
 
@@ -42,6 +48,7 @@ impl Backend {
         match self {
             Backend::Legacy(p) => p.chunk_samples(),
             Backend::B1(p) => p.chunk_samples(),
+            Backend::FreeVoc(p) => p.chunk_samples(),
         }
     }
 
@@ -52,6 +59,7 @@ impl Backend {
                 let mode = p.chunk_mode();
                 mode.algorithmic_latency_samples() as f32 / 44.1
             }
+            Backend::FreeVoc(p) => p.algorithmic_latency_ms(),
         }
     }
 
@@ -75,6 +83,7 @@ impl Backend {
         match self {
             Backend::Legacy(p) => p.reset(),
             Backend::B1(p) => p.reset(),
+            Backend::FreeVoc(p) => p.reset(),
         }
     }
 
@@ -82,6 +91,8 @@ impl Backend {
         match self {
             Backend::Legacy(p) => p.set_target(pcm),
             Backend::B1(_) => Ok(()),
+            // Resynthesis has no reference target (input mel === output mel).
+            Backend::FreeVoc(_) => Ok(()),
         }
     }
 
@@ -89,6 +100,7 @@ impl Backend {
         match self {
             Backend::Legacy(p) => p.process_full(pcm),
             Backend::B1(p) => p.process_full(pcm),
+            Backend::FreeVoc(p) => p.process_full(pcm),
         }
     }
 
@@ -96,6 +108,7 @@ impl Backend {
         match self {
             Backend::Legacy(p) => p.mode(),
             Backend::B1(_) => converter::LatencyMode::Balanced,
+            Backend::FreeVoc(_) => converter::LatencyMode::Balanced,
         }
     }
 
@@ -109,6 +122,7 @@ impl Backend {
         match self {
             Backend::Legacy(p) => p.codec().codec().device(),
             Backend::B1(p) => p.codec().device(),
+            Backend::FreeVoc(p) => p.device(),
         }
     }
 }
