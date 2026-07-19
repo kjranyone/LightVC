@@ -1,0 +1,45 @@
+axes:
+  smoothness:
+    label: Smoothness
+    question: "どちらがざらつかない？"
+    bad_tags: [metallic, rough, upscaled]
+  tenderness:
+    label: Tenderness
+    question: "どちらが耳に痛くない？"
+    bad_tags: [piercing, hard_sibilance]
+  clarity:
+    label: Clarity
+    question: "どちらが小声でも明瞭？"
+    bad_tags: [muffled, blurred]
+  closeness:
+    label: Closeness
+    question: "どちらが近く感じる？"
+    bad_tags: [distant, flat]
+  embodiment:
+    label: Embodiment
+    question: "どちらが身体感・息の自然さがある？"
+    bad_tags: [noisy_breath, synthetic_breath]
+  cuteness:
+    label: Cuteness
+    question: "どちらが可愛いが無理がない？"
+    bad_tags: [forced, childish_wrong]
+  control:
+    label: Control
+    question: "どちらが自分で喋っている感じが残る？"
+    bad_tags: [detached, overconverted]
+  fatigue:
+    label: Fatigue
+    question: "どちらが長く聴けそう？"
+    bad_tags: [tiring, pressure]
+  asmr_softness:
+    label: ASMR Softness
+    question: "どちらが小声でも柔らかく、舞台囁きっぽくない？"
+    bad_tags: [stage_whisper, hard_whisper, dry_close]
+  sibilance_comfort:
+    label: Sibilance Comfort
+    question: "どちらがサ行・息が刺さらない？"
+    bad_tags: [needle_sibilance, hard_sibilance, sandy_tail]
+  breath_shape:
+    label: Breath Shape
+    question: "どちらが息がノイズではなく身体感に聞こえる？"
+    bad_tags: [wet_noise, synthetic_breath, noisy_breath]
