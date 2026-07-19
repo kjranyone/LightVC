@@ -1,16 +1,20 @@
 //! `FreeResynth` — mic → mel (Rust) → FreeVocoder → out resynthesis backend.
 //!
-//! Wires the causal-streaming `MelExtractor` (freeC analysis, `hop=128`) into
-//! the causal `FreeVocoder` (`Grid::FREEC`, `hop=128`) for real-time vocoder
-//! re-synthesis. There is *no* voice-conversion front-end yet: the input mel is
-//! the mel of the input audio itself, so `FreeResynth` reconstructs the input
-//! through the neural vocoder (a passthrough that exercises the full mel→wave
-//! path on the realtime thread).
+//! Wires the lookahead-centered streaming `MelExtractor` (freeC analysis,
+//! `hop=128`) into the causal `FreeVocoder` (`Grid::FREEC`, `hop=128`) for
+//! real-time vocoder re-synthesis. There is *no* voice-conversion front-end
+//! yet: the input mel is the mel of the input audio itself, so `FreeResynth`
+//! reconstructs the input through the neural vocoder (a passthrough that
+//! exercises the full mel→wave path on the realtime thread).
 //!
 //! `process_chunk` consumes exactly `chunk_samples() = k*hop` samples at
-//! 44.1 kHz, produces `k` mel frames, and streams them through the vocoder for
-//! `k*hop` output samples (1:1 length). Streaming state (mel trailing window,
-//! vocoder conv left-context + OLA ring) persists across calls via `&mut self`.
+//! 44.1 kHz. The mel analyzer is centered (matches the vocoder's trained grid),
+//! so it buffers `MEL_LOOKAHEAD = 1088` samples of lookahead: the first calls
+//! return fewer than `k*hop` samples (empty during the initial ~24.7 ms), then
+//! steady state is 1:1 (`k` mel frames → `k*hop` output samples per chunk). The
+//! variable/short output is absorbed by the caller's output accumulator.
+//! Streaming state (mel rolling buffer, vocoder conv left-context + OLA ring)
+//! persists across calls via `&mut self`.
 
 use anyhow::Result;
 use candle_core::{Device, Tensor};
@@ -81,12 +85,17 @@ impl FreeResynth {
         }
     }
 
-    /// Algorithmic latency (ms) at 44.1 kHz: the causal synthesis window plus
-    /// the `(k-1)*hop` chunk-buffering term. The left-aligned mel analysis adds
-    /// no lookahead latency. freeC (`win=256`, `k=4`) ⇒ 14.5 ms.
+    /// Algorithmic latency (ms) at 44.1 kHz, summing:
+    ///   * mel-analysis lookahead — `MEL_LOOKAHEAD = 1088` samples (24.7 ms):
+    ///     the centered STFT must see ~`win/2` of future audio per frame,
+    ///   * the causal synthesis window `g.win` (freeC 256 ⇒ 5.8 ms),
+    ///   * chunk buffering `(k-1)*hop`.
+    /// freeC (`k=4`) ⇒ (1088 + 256 + 384)/44.1 = 39.2 ms. `k ≤ 7` keeps the
+    /// algorithmic budget under 50 ms.
     pub fn algorithmic_latency_ms(&self) -> f32 {
         let g = self.voc.grid();
-        (g.win as f32 + (self.k as f32 - 1.0) * g.hop as f32) / 44.1
+        (crate::mel::MEL_LOOKAHEAD as f32 + g.win as f32 + (self.k as f32 - 1.0) * g.hop as f32)
+            / 44.1
     }
 
     #[inline]

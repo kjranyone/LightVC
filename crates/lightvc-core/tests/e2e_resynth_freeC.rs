@@ -5,16 +5,18 @@
 //!   best-lag SNR (expect ≈60 dB near lag 0; the only delta vs the 88 dB
 //!   `parity_freeC` gate is the Rust-vs-Python mel).
 //!
-//! `streaming_causal_framing_freeC` — HONEST framing audit: the realtime path
-//!   (causal left-aligned streaming mel + causal streaming vocoder) cannot
-//!   reflect-pad or center like training's `center=False`+960-pad analysis, so
-//!   its frames are right-aligned trailing windows. This quantifies how far the
-//!   streaming output drifts from the offline E2E output — whether the offset
-//!   is a pure shift (absorbable, high best-lag SNR) or real degradation.
+//! `streaming_e2e_recovery_freeC` — RECOVERY gate for the realtime path. The
+//!   lookahead-centered streaming mel (`stream_push`, 1088-sample lookahead)
+//!   reproduces the offline centered framing exactly, so the realtime path
+//!   (streaming mel → causal streaming vocoder) now matches the PyTorch E2E
+//!   reference at the causal `nfft/2` lag. This asserts the recovery from the
+//!   old left-aligned mel's ~1.3 dB collapse back to ~60 dB, and audits the
+//!   streaming-mel-vs-offline-mel identity and the streaming-vs-offline E2E lag.
 
 use std::path::PathBuf;
 
 use candle_core::{DType, Device};
+use lightvc_core::free_resynth::FreeResynth;
 use lightvc_core::free_vocoder::{FreeVocoder, Grid};
 use lightvc_core::mel::MelExtractor;
 
@@ -70,10 +72,10 @@ fn e2e_resynth_freeC() {
 
 #[test]
 #[allow(non_snake_case)]
-fn streaming_causal_framing_freeC() {
+fn streaming_e2e_recovery_freeC() {
     let device = Device::Cpu;
     if !fixtures_ready() {
-        eprintln!("skip streaming_causal_framing_freeC: fixtures absent (gitignored).");
+        eprintln!("skip streaming_e2e_recovery_freeC: fixtures absent (gitignored).");
         return;
     }
     let ext = MelExtractor::from_safetensors(
@@ -87,15 +89,30 @@ fn streaming_causal_framing_freeC() {
 
     let t = candle_core::safetensors::load(fixture("e2e_freeC.safetensors"), &device).unwrap();
     let audio = t.get("audio").unwrap().to_dtype(DType::F32).unwrap();
+    let ref_wave = t.get("wave").unwrap().to_dtype(DType::F32).unwrap();
     let audio_v = audio.flatten_all().unwrap().to_vec1::<f32>().unwrap();
+    let y_ref = ref_wave.flatten_all().unwrap().to_vec1::<f32>().unwrap();
 
-    // Offline E2E reference (centered mel + center=True iSTFT).
+    // Attribution 1: the lookahead-centered streaming mel must be bit-identical
+    // to the offline mel over every frame it emits (it just stops a few frames
+    // early where end reflect-pad would be needed).
     let mel_off = ext.extract_offline(&audio_v).unwrap();
-    let y_off = voc.forward(&mel_off).unwrap().flatten_all().unwrap().to_vec1::<f32>().unwrap();
-
-    // Realtime path: causal left-aligned streaming mel + causal streaming
-    // vocoder (K=4 chunk, the realtime operating point).
     let mel_str = ext.extract_stream_all(&audio_v).unwrap();
+    let (t_off, t_str) = (mel_off.dim(2).unwrap(), mel_str.dim(2).unwrap());
+    let mel_off_pref = mel_off.narrow(2, 0, t_str).unwrap();
+    let (mel_snr, mel_max) = mel_stats(&mel_off_pref, &mel_str);
+    println!(
+        "streaming_e2e_recovery_freeC: streaming mel vs offline mel (first {t_str}/{t_off} frames) \
+         SNR {mel_snr:.2} dB, max_abs {mel_max:.3e}"
+    );
+    assert!(
+        mel_snr >= 120.0,
+        "streaming mel not identical to offline mel: SNR {mel_snr:.2} dB (framing regressed)"
+    );
+
+    // THE GATE: realtime path = lookahead-centered streaming mel → causal
+    // streaming vocoder (K=4, the realtime operating point) vs the PyTorch E2E
+    // reference wave. best-lag absorbs the causal `nfft/2` synthesis offset.
     let y_str = voc
         .stream_all_chunked(&mel_str, 4)
         .unwrap()
@@ -103,44 +120,72 @@ fn streaming_causal_framing_freeC() {
         .unwrap()
         .to_vec1::<f32>()
         .unwrap();
-
-    // Attribution: run the SAME causal streaming mel through the OFFLINE
-    // (center=True) vocoder. Isolates the mel-framing damage from the vocoder
-    // streaming (which chunk_stream_freeC already shows is ~90 dB innocent).
-    let y_str_off = voc
-        .forward(&mel_str)
-        .unwrap()
-        .flatten_all()
-        .unwrap()
-        .to_vec1::<f32>()
-        .unwrap();
-    let (snr_mel, lag_mel, xc_mel) = best_lag(&y_off, &y_str_off, 2048);
+    let (snr, lag, xc) = best_lag(&y_ref, &y_str, 512);
     println!(
-        "streaming_causal_framing_freeC: mel-framing only (offline voc) SNR {snr_mel:.2} dB \
-         @lag{lag_mel}, xcorr {xc_mel:.6}"
+        "streaming_e2e_recovery_freeC: streaming E2E vs PyTorch ref  best-lag SNR {snr:.2} dB \
+         @lag{lag}, xcorr {xc:.6}  (was 1.26 dB with left-aligned mel)"
     );
 
-    // Framing offset can be up to ~win/2 - hop/2 (mel) + nfft/2 (vocoder OLA),
-    // so search a wide lag window and report the best alignment honestly.
-    let (snr, lag, xc) = best_lag(&y_off, &y_str, 2048);
-    // Also report the residual once the streaming warm-up (first ~16 mel
-    // frames = 2048 samples, trailing window still filling) is skipped.
-    let warm = 2048usize;
-    let (snr_w, _, xc_w) = best_lag_from(&y_off, &y_str, 2048, warm);
+    // Attribution 2: offline E2E (centered mel + center=True iSTFT) vs the same
+    // reference — the streaming path should recover to within a hair of it.
+    let y_off = voc.forward(&mel_off).unwrap().flatten_all().unwrap().to_vec1::<f32>().unwrap();
+    let (snr_off, lag_off, _) = best_lag(&y_ref, &y_off, 512);
     println!(
-        "streaming_causal_framing_freeC: full best-lag SNR {snr:.2} dB @lag{lag}, xcorr {xc:.6}"
+        "streaming_e2e_recovery_freeC: offline E2E vs ref  best-lag SNR {snr_off:.2} dB @lag{lag_off}"
     );
+
+    assert!(xc >= 0.999, "streaming E2E xcorr {xc:.6} < 0.999 — framing still off");
+    assert!(
+        snr >= 45.0,
+        "streaming E2E best-lag SNR {snr:.2} dB < 45 dB — not recovered (was 1.26 dB)"
+    );
+}
+
+/// Deployed realtime path: `FreeResynth::process_chunk` fed incrementally in
+/// `chunk_samples()` blocks (persistent mel rolling-buffer + vocoder state).
+/// Exercises the cross-call drain logic the `extract_stream_all` single-push
+/// test cannot, and confirms the same E2E recovery vs the PyTorch reference.
+#[test]
+#[allow(non_snake_case)]
+fn free_resynth_incremental_recovery_freeC() {
+    let device = Device::Cpu;
+    if !fixtures_ready() {
+        eprintln!("skip free_resynth_incremental_recovery_freeC: fixtures absent (gitignored).");
+        return;
+    }
+    let mut rs = FreeResynth::new(
+        &fixture("freeC.safetensors"),
+        &fixture("mel_basis_44k_2048_128.safetensors"),
+        4,
+        device.clone(),
+    )
+    .unwrap();
     println!(
-        "streaming_causal_framing_freeC: post-warmup(skip {warm}) SNR {snr_w:.2} dB, xcorr {xc_w:.6}"
+        "free_resynth_incremental_recovery_freeC: algorithmic latency {:.2} ms (K=4, chunk {} samp)",
+        rs.algorithmic_latency_ms(),
+        rs.chunk_samples()
     );
+
+    let t = candle_core::safetensors::load(fixture("e2e_freeC.safetensors"), &device).unwrap();
+    let audio = t.get("audio").unwrap().to_dtype(DType::F32).unwrap();
+    let ref_wave = t.get("wave").unwrap().to_dtype(DType::F32).unwrap();
+    let audio_v = audio.flatten_all().unwrap().to_vec1::<f32>().unwrap();
+    let y_ref = ref_wave.flatten_all().unwrap().to_vec1::<f32>().unwrap();
+
+    let cs = rs.chunk_samples();
+    let mut y = Vec::with_capacity(audio_v.len());
+    for blk in audio_v.chunks(cs) {
+        y.extend_from_slice(&rs.process_chunk(blk).unwrap());
+    }
+    let (snr, lag, xc) = best_lag(&y_ref, &y, 512);
     println!(
-        "streaming_causal_framing_freeC: interpretation — high xcorr + low SNR ⇒ near-shift with \
-         fractional-frame framing error; low xcorr ⇒ genuine analysis mismatch (needs causal-\
-         integrated mel or shorter analysis window)."
+        "free_resynth_incremental_recovery_freeC: incremental E2E vs ref  best-lag SNR {snr:.2} dB \
+         @lag{lag}, xcorr {xc:.6}  (emitted {} / ref {} samples)",
+        y.len(),
+        y_ref.len()
     );
-    // Not a hard pass/fail gate: this is a design-characterization test. Only
-    // guard against a total collapse (mel/vocoder wiring broken).
-    assert!(xc > 0.3, "streaming output uncorrelated with offline (xcorr {xc:.6}) — path broken");
+    assert!(xc >= 0.999, "incremental E2E xcorr {xc:.6} < 0.999");
+    assert!(snr >= 45.0, "incremental E2E best-lag SNR {snr:.2} dB < 45 dB — not recovered");
 }
 
 /// (SNR dB, max abs err) of two mel tensors of identical shape.

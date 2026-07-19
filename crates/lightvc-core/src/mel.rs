@@ -1,11 +1,13 @@
 //! Mel-spectrogram extraction (bigvgan `mel_spectrogram` parity, offline +
-//! causal-streaming). Feeds `free_vocoder::FreeVocoder` (freeC grid).
+//! lookahead-centered streaming). Feeds `free_vocoder::FreeVocoder` (freeC grid).
 //!
 //! Offline algorithm (numerically matches `bigvgan meldataset.mel_spectrogram`,
 //! `center=False`):
 //!   reflect-pad `(n_fft-hop)/2 = 960` both ends → framed STFT
 //!   (`n_fft=2048, hop=128, win=2048, Hann periodic`) → magnitude
 //!   `sqrt(re^2+im^2+1e-9)` → `mel_basis @ mag` → `log(clamp(x, min=1e-5))`.
+//!   In original coordinates, frame `t` spans `[t*hop-960, t*hop+1088)` — i.e.
+//!   effectively **centered**, with ~`win/2` of forward lookahead.
 //!
 //! candle-core 0.10 has no FFT/complex dtype, so the STFT is a **matrix DFT**
 //! (the `free_vocoder` iSTFT tables' forward twin). Only the magnitude is used,
@@ -13,12 +15,19 @@
 //! is folded into the DFT matrices. `mel_basis` (librosa slaney) is loaded from
 //! safetensors — librosa's mel filterbank is not reimplemented here.
 //!
-//! Streaming (`MelStreamState`): reflect-pad and centering are impossible
-//! without lookahead, so each frame is a **left-aligned trailing window** (the
-//! last `win` real samples, zero-padded before the stream start). This is the
-//! causal analysis the freeC vocoder is deployed with; the resulting framing
-//! offset vs the offline (centered) path is quantified in
-//! `tests/e2e_resynth_freeC.rs`.
+//! Streaming (`MelStreamState`): a **lookahead-centered** analyzer that
+//! reproduces the offline framing *exactly*. Input samples are buffered in a
+//! rolling window; frame `t` is emitted only once the stream reaches original
+//! index `t*hop + (win-1-960)`, so its analysis window is the identical centered
+//! `[t*hop-960, t*hop+1088)` span the offline path uses — the front reflect-pad
+//! is reconstructed from real past samples (`x[1..=960]`), so every emitted
+//! frame is bit-for-bit the offline frame. The trailing frames that would need
+//! *end* reflect-pad (unknown future) are simply not emitted. Cost: a fixed
+//! analysis lookahead of `MEL_LOOKAHEAD = win-960 = 1088` samples (24.7 ms @
+//! 44.1 kHz). This replaces the old left-aligned trailing window (which put the
+//! streaming mel on a different, ~7.5-frame-shifted grid than the freeC vocoder
+//! was trained on, collapsing streaming E2E SNR to ~1.3 dB). Verified in
+//! `tests/e2e_resynth_freeC.rs::streaming_e2e_recovery_freeC`.
 
 use candle_core::{Device, Result, Tensor};
 
@@ -31,6 +40,12 @@ const PAD: usize = (N_FFT - HOP) / 2; // 960
 const MAG_EPS: f64 = 1e-9;
 const LOG_CLAMP_MIN: f64 = 1e-5;
 
+/// Forward-lookahead (in 44.1 kHz samples) the lookahead-centered streaming mel
+/// must buffer before it can emit a frame on the offline grid: `win - PAD`
+/// (= 1088, ≈ 24.7 ms). This is the analysis latency of `stream_push`; the
+/// causal `free_vocoder` synthesis path adds none.
+pub const MEL_LOOKAHEAD: usize = WIN - PAD; // 1088
+
 /// Immutable mel analyzer: DFT tables (window folded in) + mel filterbank.
 pub struct MelExtractor {
     device: Device,
@@ -39,10 +54,13 @@ pub struct MelExtractor {
     mel_basis_t: Tensor, // [NB, N_MELS]  (mel_basis transposed, contiguous)
 }
 
-/// Causal-streaming state: rolling trailing window + sub-hop sample carry.
+/// Lookahead-centered streaming state: a rolling real-sample buffer indexed in
+/// original (pre-pad) coordinates, plus the index of the next offline frame to
+/// emit. Reproduces the offline reflect-pad + `center=False` framing exactly.
 pub struct MelStreamState {
-    hist: Vec<f32>,  // [WIN] most-recent samples, left zero-padded at start
-    carry: Vec<f32>, // buffered samples not yet forming a full hop
+    buf: Vec<f32>,     // real input samples x[base .. base+buf.len())
+    base: usize,       // original (pre-pad) index of buf[0]
+    next_frame: usize, // index t of the next offline frame to emit
 }
 
 impl MelExtractor {
@@ -116,39 +134,71 @@ impl MelExtractor {
         self.frames_to_mel(&frames, t)
     }
 
-    /// Fresh causal-streaming state (zeroed trailing window, empty carry).
+    /// Fresh lookahead-centered streaming state (empty buffer, frame 0 next).
     pub fn new_stream(&self) -> MelStreamState {
-        MelStreamState { hist: vec![0f32; WIN], carry: Vec::with_capacity(HOP) }
+        MelStreamState { buf: Vec::new(), base: 0, next_frame: 0 }
     }
 
-    /// Push mono samples; emit every newly-completed left-aligned frame as a
-    /// `[1, N_MELS, nf]` tensor (or `None` if fewer than `HOP` samples have
-    /// accumulated since the last emission). Each emitted frame is the DFT of
-    /// the trailing `WIN` real samples — no lookahead, no reflect pad.
+    /// Reconstruct the offline reflect-padded sample at padded index `p`
+    /// (`p < PAD` ⇒ front reflect `x[PAD-p]`, else real `x[p-PAD]`), reading the
+    /// rolling buffer. `p-PAD >= base` and `PAD-p >= base` are guaranteed for
+    /// every index any not-yet-emitted frame references, so no bounds slack.
+    #[inline]
+    fn padded_at(st: &MelStreamState, p: usize) -> f32 {
+        let orig = if p < PAD { PAD - p } else { p - PAD };
+        st.buf[orig - st.base]
+    }
+
+    /// Push mono samples; emit every frame that has become fully available on
+    /// the **offline centered grid** as a `[1, N_MELS, nf]` tensor (or `None`
+    /// while still within the startup lookahead). Frame `t` uses the identical
+    /// window offline frame `t` uses (`padded[t*HOP .. t*HOP+WIN]`), so it is
+    /// bit-for-bit the offline mel. Costs `MEL_LOOKAHEAD` samples of latency;
+    /// the trailing frames needing end reflect-pad are never emitted.
     pub fn stream_push(
         &self,
         st: &mut MelStreamState,
         samples: &[f32],
     ) -> Result<Option<Tensor>> {
-        st.carry.extend_from_slice(samples);
-        let nf = st.carry.len() / HOP;
-        if nf == 0 {
+        st.buf.extend_from_slice(samples);
+        let n_seen = st.base + st.buf.len();
+        // Frame t needs original samples through index t*HOP + (WIN-1-PAD),
+        // i.e. n_seen >= t*HOP + MEL_LOOKAHEAD. Highest emittable frame:
+        if n_seen < MEL_LOOKAHEAD {
             return Ok(None);
         }
-        let mut frames = vec![0f32; nf * WIN];
-        for f in 0..nf {
-            // Roll the trailing window left by HOP, append the next hop.
-            st.hist.copy_within(HOP.., 0);
-            st.hist[WIN - HOP..].copy_from_slice(&st.carry[f * HOP..f * HOP + HOP]);
-            frames[f * WIN..f * WIN + WIN].copy_from_slice(&st.hist);
+        let last_t = (n_seen - MEL_LOOKAHEAD) / HOP;
+        if last_t < st.next_frame {
+            return Ok(None);
         }
-        st.carry.drain(..nf * HOP);
+        let nf = last_t - st.next_frame + 1;
+        let mut frames = vec![0f32; nf * WIN];
+        for i in 0..nf {
+            let p0 = (st.next_frame + i) * HOP; // window start in padded coords
+            for n in 0..WIN {
+                frames[i * WIN + n] = Self::padded_at(st, p0 + n);
+            }
+        }
+        st.next_frame = last_t + 1;
+
+        // Drop samples no longer referenced. While any remaining frame still
+        // reaches into the front reflect region (next_frame*HOP < PAD) keep the
+        // full head (x[1..=PAD]); otherwise retain from the lowest real index
+        // the next frame reads, next_frame*HOP - PAD.
+        let retain_lo = (st.next_frame * HOP).saturating_sub(PAD);
+        if retain_lo > st.base {
+            st.buf.drain(..retain_lo - st.base);
+            st.base = retain_lo;
+        }
+
         let frames = Tensor::from_vec(frames, (nf, WIN), &self.device)?;
         Ok(Some(self.frames_to_mel(&frames, nf)?))
     }
 
-    /// Convenience: causal-streaming log-mel over a whole signal (fresh state,
-    /// one frame per `HOP` samples). Returns `[1, N_MELS, N/HOP]`.
+    /// Convenience: lookahead-centered streaming log-mel over a whole signal
+    /// (fresh state). Emits every frame on the offline grid that does not need
+    /// end reflect-pad, so `T_stream = 1 + (N - MEL_LOOKAHEAD)/HOP` — a few
+    /// frames short of the offline `T` at the tail. Returns `[1, N_MELS, T_stream]`.
     pub fn extract_stream_all(&self, audio: &[f32]) -> Result<Tensor> {
         let mut st = self.new_stream();
         match self.stream_push(&mut st, audio)? {
