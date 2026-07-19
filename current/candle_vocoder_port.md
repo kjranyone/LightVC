@@ -1,6 +1,6 @@
 # freebig (FreeVocoder) Rust/Candle 推論移植スコープ
 
-> status: **IMPLEMENTED**（freebig 非causal + freeC causal 移植 DONE・parity 通過・チャンク streaming で realtime 達成。残 = app 配線と K=2 最適化）
+> status: **IMPLEMENTED**（freebig 非causal + freeC causal 移植 DONE・parity 通過・チャンク streaming で realtime 達成・app 配線 DONE(offline E2E 62dB)。残 = streaming path A(centered mel) 実装 と K=2 最適化。★2026-07-19: streaming mel-framing 発見＝真遅延 ~30ms・§0.5 参照）
 > 最終更新: 2026-07-19
 > 対象: 出荷ボコーダ `freebig` = `training/free_vocoder.py::FreeVocoder`、重み `checkpoints/freebig/foundation_bigvgan_parity.pt`（key `'gen'`）
 > ルール遵守: 推論は全て Rust(Candle)・Python ランタイム不要・**PyTorch↔Rust 推論キー名は完全一致**・groups=1 標準 conv 前提（XPU depthwise 回避）
@@ -42,6 +42,16 @@
 
   正しさ: chunk 出力 == per-frame 出力（SNR 90.3dB）。**RTF<1 かつ 50ms 予算内 = K∈{4,8,16}**。実体: `crates/lightvc-core/tests/chunk_stream_freeC.rs`、ベンチ `crates/lightvc-core/examples/bench_freec_stream.rs`。
 
+### app 配線結果 + streaming mel-framing 発見（2026-07-19, commit 82462a5）
+
+app 配線（旧 残タスク #1）を実施し、**offline E2E resynth 62dB 達成**（数値ゲート、commit 82462a5）＝ mel→freeC→波形の一気通し（非 streaming）は Python 一致。だが **streaming 検証で重要な訂正が顕在化**した:
+
+- **原因（freeC の訓練 mel 実態）**: freeC が訓練された mel = BigVGAN `mel_spectrogram`（`center=False` + reflect-pad `(n_fft−hop)//2=960`, n_fft/win=2048, hop=128）。この pad は各フレームを**実質 centered** にする（原座標で frame t=[t·hop−960, t·hop+1088]、中心≈t·hop+64、**前方 ~1088≈win/2 サンプルの先読みを内包**）。
+- **崩壊（数値ゲート）**: ゆえに**真causal 左寄せ（trailing 窓・先読み0）mel は freeC 訓練 mel を再現できず、streaming 出力は best-lag でも SNR 1.26dB / xcorr 0.62 に崩壊**。
+- **帰属分離＝100% mel 起因・vocoder streaming 無罪**: 同一の左寄せ streaming mel を **offline** vocoder に通しても同値 → 劣化は mel の causal-framing に 100% 起因。vocoder 単独（centered mel 供給時）は 90dB を維持。上のチャンク streaming parity（90.3dB）は mel が正しい前提での数字。
+- **正しい遅延内訳**: 「freeC causal 5.8ms」は**合成窓(256)側だけの数字**。matching 品質の streaming には **mel 解析側に ~win/2≈1024 サンプル≈23ms の先読み**が必要。→ **真 streaming E2E 遅延 ≒ 合成 5.8ms + mel 解析 ~23ms + buffer ≒ 30ms**（まだ <50ms・Beatrice/paravo 級）。
+- **path**: **(A)** centered streaming mel（win/2 先読みバッファで訓練 mel に一致）で ~30ms・良品質 ＝ **採用**（実装進行中）。**(B)** freeC を causal 左寄せ mel で**再訓練**すれば真 ~5.8ms（将来）。`vocoder.md` §3.7 の左寄せ台帳（「左寄せ=遅延0/群遅延スミアのみ」）は本発見で **freeC について反証済み**（framing はボコーダ毎に検証する規律を追加）。
+
 ### 未達（正直に）
 
 - **K=2 / 256 サンプルバッファ（Beatrice/paravo 相当の厳密低レイテンシ）は単スレでは未達**。原因は **gemm の N=1 gemv 高速パス喪失**（K を上げると GEMM の N が増え効率化するが、K=1〜2 では gemv になり非効率）。op 再配向による fast-path 試作は**逆効果で撤回**。→ **マルチスレッド化 or 高速 GEMM が必要**（将来最適化、§残タスク(3)）。
@@ -52,7 +62,7 @@
 
 ### 残タスク
 
-1. **realtime app 配線** — `lightvc-app` の inference_loop を Candle `FreeVocoder` に接続（K=4〜8 運用）。
+1. ~~realtime app 配線~~ **済（commit 82462a5, offline E2E 62dB）**。ただし streaming は上記 mel-framing 発見により **path A（centered streaming mel, win/2≈23ms 先読みバッファで訓練 mel 一致）を実装中**＝真遅延 ~30ms を目標。path B（causal-mel 再訓練で ~5.8ms）は将来。
 2. **耳ゲート** — parity 保証（SNR 88〜106dB）により Python freebig と数値的に等価ゆえ自明。採用可否は `current/vocoder.md` Gate V の freebig 本体で既に通過済み。
 3. **K=2 最適化** — マルチスレッド or 高速 GEMM で厳密低レイテンシ格子を狙う。
 

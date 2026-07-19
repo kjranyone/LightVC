@@ -49,6 +49,7 @@ mel（128, 上流解析窓 n_fft2048/hop512/win2048=71dB 往復グリッド, 高
 ### config C（freeC）— 低遅延派生（status: 訓練継続中）
 
 - **出力合成グリッド（win/nfft256, hop128）を mel解析窓（2048据置＝条件解像度は上流で維持）から分離**し causal 化。causal 時のアルゴリズム遅延 = win/sr = 256/44100 = **実測5.8ms**（`FreeVocoder.latency_ms`）。it70k で耳「劣化なし」（freebig 比, ユーザー確認）。300k訓練中。
+- **★2026-07-19 訂正（app 配線 streaming 検証）**: この 5.8ms は**合成窓側のみ**の数字。freeC の訓練 mel は centered（BigVGAN mel_spectrogram、win/2 先読みを内包）と判明し、真causal 左寄せ mel では streaming が SNR 1.26dB に崩壊（**mel 起因・vocoder 無罪**）。matching 品質 streaming の**真遅延 ≒ 合成 5.8 + mel 解析 ~23 + buffer ≒ 30ms**（<50ms・Beatrice/paravo 級）。**path A（centered streaming mel）採用**（実装進行中）、path B（causal-mel 再訓練で ~5.8ms）は将来。詳細＝§3.7 / `candle_vocoder_port.md` §0.5。
 - ckpt=`training/checkpoints/freeC/last.pt`、証拠wav=`results/e2_triage/*_freeC.wav`。
 - **「品質を保ったまま <50ms causal」の実証アーム**。CPU 推論 RTF0.046（単スレ 22倍速）＝計算は無罪。残課題は Rust/Candle 移植 と streaming 窓遅延台帳（§3.7 の台帳規律を継承）。
 
@@ -213,7 +214,7 @@ frame 毎・2枝、Oppenheim–Schafer 標準手順:
 | 要素 | lookahead / 遅延 |
 |---|---|
 | 入力デバイスブロック | 2.9–11.6ms |
-| mel/特徴窓（**左寄せ必須**。torch.stft/librosa の center=True 禁止） | 0（群遅延スミアのみ） |
+| mel/特徴窓（左寄せの場合。ただし **★2026-07-19 訂正**参照＝採用中 freeC は centered mel 訓練ゆえ左寄せ不可） | 左寄せ訓練時 0（群遅延スミアのみ）／freeC 実態 **~23ms**（win/2 先読み、下記訂正） |
 | 制御補間（f0/d/a、causal [t−1,t] アンカー） | 0 先読み（応答遅れ hop/2=5.8ms のみ、出力遅延に加算されない） |
 | F0 窓（男声 80Hz → 20–25ms 左窓） | 0（同上。立ち上がり応答は鈍る） |
 | content encoder LA | 0–23ms（B4 側予算） |
@@ -223,6 +224,9 @@ frame 毎・2枝、Oppenheim–Schafer 標準手順:
 | 出力デバイスブロック | 2.9–11.6ms |
 | **vocoder 経路計** | **~20–35ms**（+encoder LA で <50ms。タイト） |
 
+- **★2026-07-19 訂正（app 配線 streaming 検証で反証, `candle_vocoder_port.md` §0.5）**: 上表「mel 窓＝左寄せなら遅延0（群遅延スミアのみ）」の前提は **採用中の freeC で反証された**。freeC の訓練 mel = BigVGAN `mel_spectrogram`（`center=False` + reflect-pad `(n_fft−hop)//2=960`, n_fft/win=2048, hop=128）で、この pad が各フレームを**実質 centered** にする（原座標で frame t=[t·hop−960, t·hop+1088]、中心≈t·hop+64、**前方 ~1088≈win/2 の先読みを内包**）。ゆえに真causal 左寄せ（trailing 窓・先読み0）mel は freeC 訓練 mel を再現できず、streaming 出力は best-lag でも **SNR 1.26dB / xcorr 0.62 に崩壊**（数値ゲート）。**帰属分離＝同一 streaming mel を offline vocoder に通しても同値 → 劣化は 100% mel の causal-framing 起因、vocoder streaming は無罪**（vocoder 単独 90dB）。
+- **正しい遅延内訳**: 「freeC causal 5.8ms」は**合成窓(256)側だけの数字**。matching 品質の streaming には **mel 解析側に ~win/2≈1024 サンプル≈23ms の先読み**が要る。→ **真の streaming E2E 遅延 ≒ 合成 5.8ms + mel 解析 ~23ms + buffer ≒ 30ms**（まだ <50ms・Beatrice/paravo 級）。
+- **採用 path**: **(A)** centered streaming mel（win/2 先読みバッファで訓練 mel に一致）で ~30ms・良品質 ＝ **採用**（実装進行中）。**(B)** freeC を causal 左寄せ mel で**再訓練**すれば真 ~5.8ms（将来）。左寄せ台帳の「0 先読み」は *mel を左寄せで訓練した vocoder に限り*成立する → **framing はボコーダ毎に検証**する規律を追加。
 - **causality CI テスト（必須ゲート）**: 時刻 T 以降の入力をランダム化 → T 以前の出力が**ビット一致**。center=True 混入（0.73s 前科）を構造的に捕まえる。
 - **streaming ≡ offline パリティ**。streaming 状態 = {OLA 尾バッファ (K_v−1)、位相 acc（mod 2π）、subframe gain 補間、frame-net conv cache}。
 - 予備カード: MS-Wavehax（arXiv:2506.03554）は「LA=1frame で非因果同等 MOS」→ 最後まで品質不足なら **LA=11.6ms を追加投資する選択肢**が予算内に残る。
