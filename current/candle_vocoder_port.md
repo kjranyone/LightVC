@@ -1,7 +1,7 @@
 # freebig (FreeVocoder) Rust/Candle 推論移植スコープ
 
-> status: **PROPOSED**（設計スコープのみ・実装未着手）
-> 最終更新: 2026-07-18
+> status: **IMPLEMENTED**（freebig 非causal + freeC causal 移植 DONE・parity 通過・チャンク streaming で realtime 達成。残 = app 配線と K=2 最適化）
+> 最終更新: 2026-07-19
 > 対象: 出荷ボコーダ `freebig` = `training/free_vocoder.py::FreeVocoder`、重み `checkpoints/freebig/foundation_bigvgan_parity.pt`（key `'gen'`）
 > ルール遵守: 推論は全て Rust(Candle)・Python ランタイム不要・**PyTorch↔Rust 推論キー名は完全一致**・groups=1 標準 conv 前提（XPU depthwise 回避）
 > 位置づけ: `current/vocoder.md` 枝B（BigVGAN/Vocos 系 自作 weights）の Rust ランタイム。既存 DAC decoder 経路とは別系統の新規モジュール。
@@ -14,6 +14,47 @@
 - Candle 側の部品（Conv1d / LayerNorm / Linear / gelu_erf / cos/sin/exp/clamp）は**全て既存 0.10.2 に有り**、conv/LN/Linear のロード規約も既存コードに前例がある。
 - **唯一の欠落 = FFT**。candle-core 0.10.2 に rfft/istft は無い（現物確認済み）。iSTFT は **行列型 DFT（`ltv_render._build_ola_mm` と同型の GEMM）で自前実装**する。複素 dtype も無いので mag·cos/mag·sin を実 tensor 2 本で持つ。
 - streaming（config C, causal, 5.8ms）は `torch.istft(center=True)` を使わず、`ltv_render._ola_fold` 相当の**カスタム causal OLA を逐次フレームで**回す。
+
+---
+
+## 0.5. 実装結果 (2026-07-19, DONE)
+
+本スコープ（§1〜§7 の計画）は**実装・検証まで完了**した。以下は計画に対する実測の反映。§1〜§7 は設計根拠として残置（"要現物確認"・"RTF 未知"等は本節で解消済み）。
+
+### 完了事項
+
+- **freebig（非causal）Candle 移植 完了** — parity **SNR 106.6dB / xcorr 1.0**。
+  実体: `crates/lightvc-core/src/free_vocoder.rs`、パリティテスト `crates/lightvc-core/tests/parity_freebig.rs`。commit `2ab3746`。
+  §2 のキー完全一致・転置不要（Conv1d `[out,in,k]`／Linear `[out,in]` そのまま）・自前 iSTFT（**行列 DFT + hann 窓 + window² NOLA 正規化 + center 処理**、§3.2 の設計通り）を実装。**FFT 欠落・複素 dtype 欠落は re/im 実 tensor 2 本 + GEMM で解決**（§6 の最大リスクは顕在化せず）。
+- **freeC（causal, 5.8ms）移植 完了** — parity **SNR 88.5dB / xcorr 1.0**。
+  格子を `Grid{nfft, win, hop, causal}`（`FREEBIG` / `FREEC` の 2 プリセット）としてパラメタ化。commit `0175e5e`。§6「config C grid が未確定」は**確定・実装済**。
+- **streaming 一致**: causal OLA は offline（center=True）と **128 サンプル（= nfft/2）シフトで一致**（best-lag SNR **90.3dB**）。対称窓 NOLA ゆえの構造的シフトで、**freeC の再訓練は不要**。
+- **チャンク streaming（K frames/step）** — commit `fafe48a`。単スレ CPU RTF 実測:
+
+  | K (frames/step) | 追加バッファ | RTF | 判定 |
+  |---|---|---|---|
+  | 1 | — | 1.51 | 未達 |
+  | 2 | — | 1.74 | 未達 |
+  | 4 | +8.7ms | **0.94** | **realtime 達成** |
+  | 8 | +20ms | 0.61 | 達成 |
+  | 16 | — | 0.41 | 達成 |
+  | offline batch | — | 0.125 | 8x |
+
+  正しさ: chunk 出力 == per-frame 出力（SNR 90.3dB）。**RTF<1 かつ 50ms 予算内 = K∈{4,8,16}**。実体: `crates/lightvc-core/tests/chunk_stream_freeC.rs`、ベンチ `crates/lightvc-core/examples/bench_freec_stream.rs`。
+
+### 未達（正直に）
+
+- **K=2 / 256 サンプルバッファ（Beatrice/paravo 相当の厳密低レイテンシ）は単スレでは未達**。原因は **gemm の N=1 gemv 高速パス喪失**（K を上げると GEMM の N が増え効率化するが、K=1〜2 では gemv になり非効率）。op 再配向による fast-path 試作は**逆効果で撤回**。→ **マルチスレッド化 or 高速 GEMM が必要**（将来最適化、§残タスク(3)）。
+
+### 重み変換（§4 の実施結果）
+
+- `training/checkpoints/{freebig,freeC}/foundation*.pt` の `'gen'` state_dict → safetensors（`window` buffer drop・**キー不変**）→ `crates/lightvc-core/tests/parity/*.safetensors`（gitignore、checkpoint 読み取りのみ）。§4 手順通り、リネーム・転置なし。
+
+### 残タスク
+
+1. **realtime app 配線** — `lightvc-app` の inference_loop を Candle `FreeVocoder` に接続（K=4〜8 運用）。
+2. **耳ゲート** — parity 保証（SNR 88〜106dB）により Python freebig と数値的に等価ゆえ自明。採用可否は `current/vocoder.md` Gate V の freebig 本体で既に通過済み。
+3. **K=2 最適化** — マルチスレッド or 高速 GEMM で厳密低レイテンシ格子を狙う。
 
 ---
 
