@@ -8,6 +8,7 @@ pub mod codec;
 pub mod converter;
 pub mod dac_model;
 pub mod flow_converter;
+pub mod free_vocoder;
 pub mod pipeline;
 pub mod soft_rvq;
 pub mod streaming;
