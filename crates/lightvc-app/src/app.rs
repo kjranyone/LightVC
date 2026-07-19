@@ -137,6 +137,10 @@ pub struct LightVcApp {
     b1_timbre_path: String,
     b1_tau: f32,
     wet_dry: f32,
+    // FreeVocoder resynth UI state (mic → mel → freeC vocoder → out)
+    freevoc_weights: String,
+    freevoc_mel_basis: String,
+    freevoc_k: usize,
     /// Output mute (Transport). Silences the wet signal without unarming.
     rt_muted: bool,
     /// Selected fixed buffer size in frames (128/256/512/1024). 256 ≈ paravo.
@@ -193,6 +197,11 @@ impl LightVcApp {
             b1_timbre_path: String::new(),
             b1_tau: 5.0,
             wet_dry: 1.0,
+            freevoc_weights: std::env::var("LIGHTVC_FREEC_WEIGHTS")
+                .unwrap_or_else(|_| "models/freeC.safetensors".into()),
+            freevoc_mel_basis: std::env::var("LIGHTVC_MEL_BASIS")
+                .unwrap_or_else(|_| "models/mel_basis_44k_2048_128.safetensors".into()),
+            freevoc_k: 4,
             rt_muted: false,
             rt_buffer_frames: 256,
         }
@@ -372,7 +381,6 @@ impl LightVcApp {
     /// Load the FreeVocoder resynthesis backend (mic → mel → freeC vocoder →
     /// out). `voc_path` = freeC vocoder weights, `mel_basis_path` = librosa
     /// slaney mel filterbank (`mel_basis` key). `k` = mel frames per chunk.
-    #[allow(dead_code)]
     fn load_freevoc_static(
         state: &Arc<Mutex<AppState>>,
         voc_path: &str,
@@ -684,6 +692,9 @@ impl LightVcApp {
                 let mut b1_timbre_path = self.b1_timbre_path.clone();
                 let mut b1_tau = self.b1_tau;
                 let mut wet_dry = self.wet_dry;
+                let mut freevoc_weights = self.freevoc_weights.clone();
+                let mut freevoc_mel_basis = self.freevoc_mel_basis.clone();
+                let mut freevoc_k = self.freevoc_k;
                 let mut rt_muted = self.rt_muted;
                 let mut rt_buffer_frames = self.rt_buffer_frames;
                 let metrics = self.rt_metrics.clone();
@@ -782,6 +793,34 @@ impl LightVcApp {
                                     ui.colored_label(egui::Color32::GREEN, "● B1 adapter active");
                                 }
                             });
+
+                            ui.separator();
+                            ui.collapsing("FreeVocoder Resynth", |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label("Weights:");
+                                    ui.text_edit_singleline(&mut freevoc_weights);
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Mel basis:");
+                                    ui.text_edit_singleline(&mut freevoc_mel_basis);
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("K frames:");
+                                    ui.add(egui::Slider::new(&mut freevoc_k, 1..=7));
+                                });
+                                let load_enabled =
+                                    !freevoc_weights.is_empty() && !freevoc_mel_basis.is_empty();
+                                ui.add_enabled_ui(load_enabled, |ui| {
+                                    if ui.button("Load FreeVoc Resynth").clicked() {
+                                        Self::load_freevoc_static(
+                                            &state,
+                                            &freevoc_weights,
+                                            &freevoc_mel_basis,
+                                            freevoc_k,
+                                        );
+                                    }
+                                });
+                            });
                         });
                 });
 
@@ -798,6 +837,9 @@ impl LightVcApp {
                 self.b1_timbre_path = b1_timbre_path;
                 self.b1_tau = b1_tau;
                 self.wet_dry = wet_dry;
+                self.freevoc_weights = freevoc_weights;
+                self.freevoc_mel_basis = freevoc_mel_basis;
+                self.freevoc_k = freevoc_k;
                 self.rt_muted = rt_muted;
                 self.rt_buffer_frames = rt_buffer_frames;
             }
