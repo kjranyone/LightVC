@@ -276,42 +276,43 @@ impl FreeVocoder {
         })
     }
 
-    /// Push one mel frame (`[1,128,1]` or `[128]`), emit `hop` finalized samples.
-    ///
-    /// Causal OLA: no center trim, no future lookahead. Output sample `j` is the
-    /// causal-framing reconstruction at absolute position `frame_idx*hop + j`.
-    pub fn step(&self, st: &mut StreamState, mel_frame: &Tensor) -> Result<Vec<f32>> {
-        assert!(self.grid.causal, "streaming requires a causal grid");
-        let frame = mel_frame.reshape((1, N_MELS, 1))?;
+    /// Causal spectral backbone over a chunk of `c` mel frames, advancing the
+    /// conv left-context state. `mel_chunk`: `[1,128,c]` -> `(re,im)` each
+    /// `[c, NB]`. Identical math to the per-frame path (same 6-frame context per
+    /// output column), just one Candle dispatch per op instead of `c`.
+    fn spectral_chunk(&self, st: &mut StreamState, mel_chunk: &Tensor) -> Result<(Tensor, Tensor)> {
+        let c = mel_chunk.dim(D::Minus1)?;
 
-        // embed: conv over [ctx(K-1) | frame(1)] -> 1 output frame.
-        let inp = Tensor::cat(&[&st.embed_ctx, &frame], D::Minus1)?; // [1,128,K]
-        let mut x = self.embed.forward(&inp)?; // [1,dim,1]
-        st.embed_ctx = inp.narrow(D::Minus1, 1, K - 1)?.contiguous()?;
+        // embed: conv over [ctx(K-1) | chunk(c)] -> c output frames.
+        let inp = Tensor::cat(&[&st.embed_ctx, mel_chunk], D::Minus1)?; // [1,128,K-1+c]
+        let mut x = self.embed.forward(&inp)?; // [1,dim,c]
+        st.embed_ctx = inp.narrow(D::Minus1, c, K - 1)?.contiguous()?;
 
         // ConvNeXt blocks.
         for (i, b) in self.blocks.iter().enumerate() {
-            let r = x.clone();
-            let ci = Tensor::cat(&[&st.block_ctx[i], &x], D::Minus1)?; // [1,dim,K]
-            let h = b.dw.forward(&ci)?; // [1,dim,1]
+            let r = &x;
+            let ci = Tensor::cat(&[&st.block_ctx[i], &x], D::Minus1)?; // [1,dim,K-1+c]
+            let h = b.dw.forward(&ci)?; // [1,dim,c]
             let h = b.pointwise(&h)?;
-            st.block_ctx[i] = ci.narrow(D::Minus1, 1, K - 1)?.contiguous()?;
-            x = (r + h)?;
+            st.block_ctx[i] = ci.narrow(D::Minus1, c, K - 1)?.contiguous()?;
+            x = (r + &h)?;
         }
 
-        // norm + head on the single frame.
-        let x = x.transpose(1, 2)?.contiguous()?; // [1,1,dim]
+        // norm + head over the c frames.
+        let x = x.transpose(1, 2)?.contiguous()?; // [1,c,dim]
         let x = self.norm.forward(&x)?;
-        let h = self.head.forward(&x)?; // [1,1,2*NB]
+        let h = self.head.forward(&x)?; // [1,c,2*NB]
         let nb = self.grid.nb();
         let mag = h.narrow(D::Minus1, 0, nb)?.exp()?.clamp(0.0, 1e2)?;
         let p = h.narrow(D::Minus1, nb, nb)?;
-        let re = (&mag * p.cos()?)?.reshape((1, nb))?;
-        let im = (&mag * p.sin()?)?.reshape((1, nb))?;
-        let y = self.synth_frames(&re, &im)?; // [1][WIN]
-        let y = &y[0];
+        let re = (&mag * p.cos()?)?.reshape((c, nb))?;
+        let im = (&mag * p.sin()?)?.reshape((c, nb))?;
+        Ok((re, im))
+    }
 
-        // Causal OLA into the rolling [win] buffer, emit leading hop samples.
+    /// Causal OLA one synthesized frame into the rolling `[win]` buffer and emit
+    /// the leading `hop` finalized samples.
+    fn ola_emit(&self, st: &mut StreamState, y: &[f32]) -> Vec<f32> {
         let (win, hop) = (self.grid.win, self.grid.hop);
         for n in 0..win {
             st.ola[n] += (y[n] as f64) * (self.window[n] as f64);
@@ -331,18 +332,65 @@ impl FreeVocoder {
             st.ola[n] = 0.0;
             st.env[n] = 0.0;
         }
+        out
+    }
+
+    /// Push one mel frame (`[1,128,1]` or `[128]`), emit `hop` finalized samples.
+    ///
+    /// Causal OLA: no center trim, no future lookahead. Output sample `j` is the
+    /// causal-framing reconstruction at absolute position `frame_idx*hop + j`.
+    pub fn step(&self, st: &mut StreamState, mel_frame: &Tensor) -> Result<Vec<f32>> {
+        assert!(self.grid.causal, "streaming requires a causal grid");
+        let frame = mel_frame.reshape((1, N_MELS, 1))?;
+        let (re, im) = self.spectral_chunk(st, &frame)?; // [1,NB]
+        let y = self.synth_frames(&re, &im)?; // [1][WIN]
+        Ok(self.ola_emit(st, &y[0]))
+    }
+
+    /// Push a chunk of `c` mel frames (`[1,128,c]`), emit `c*hop` finalized
+    /// samples (frame-major). Amortizes the per-op Candle dispatch overhead of
+    /// `step` by 1/c: the whole chunk runs through the conv backbone in a single
+    /// forward, then each frame is causal-OLA'd in order. Bit-equivalent to
+    /// calling `step` `c` times (same conv left-context, same OLA rolling), so
+    /// causality is preserved — the chunk only ever sees past + current frames.
+    /// Added latency vs per-frame: `(c-1)*hop` samples of buffering.
+    pub fn step_chunk(&self, st: &mut StreamState, mel_chunk: &Tensor) -> Result<Vec<f32>> {
+        assert!(self.grid.causal, "streaming requires a causal grid");
+        let mel_chunk = if mel_chunk.rank() == 3 {
+            mel_chunk.clone()
+        } else {
+            mel_chunk.reshape((1, N_MELS, ()))?
+        };
+        let c = mel_chunk.dim(D::Minus1)?;
+        let (re, im) = self.spectral_chunk(st, &mel_chunk)?; // [c,NB]
+        let frames = self.synth_frames(&re, &im)?; // [c][WIN]
+        let mut out: Vec<f32> = Vec::with_capacity(c * self.grid.hop);
+        for y in &frames {
+            out.extend_from_slice(&self.ola_emit(st, y));
+        }
         Ok(out)
     }
 
     /// Convenience: run all mel frames through the streaming path, concatenating
     /// the `hop`-sized emissions. Returns `[1, hop*T]`.
     pub fn stream_all(&self, mel: &Tensor) -> Result<Tensor> {
+        self.stream_all_chunked(mel, 1)
+    }
+
+    /// Like `stream_all`, but feeds the streaming path in chunks of `chunk`
+    /// frames (`step_chunk`). Output is independent of `chunk` (bit-equivalent),
+    /// only the op-dispatch amortization differs. Returns `[1, hop*T]`.
+    pub fn stream_all_chunked(&self, mel: &Tensor, chunk: usize) -> Result<Tensor> {
+        assert!(chunk >= 1);
         let t = mel.dim(D::Minus1)?;
         let mut st = self.new_stream()?;
         let mut out: Vec<f32> = Vec::with_capacity(t * self.grid.hop);
-        for f in 0..t {
-            let frame = mel.narrow(D::Minus1, f, 1)?;
-            out.extend_from_slice(&self.step(&mut st, &frame)?);
+        let mut f = 0usize;
+        while f < t {
+            let c = chunk.min(t - f);
+            let mc = mel.narrow(D::Minus1, f, c)?;
+            out.extend_from_slice(&self.step_chunk(&mut st, &mc)?);
+            f += c;
         }
         let n = out.len();
         Tensor::from_vec(out, (1, n), &self.device)
