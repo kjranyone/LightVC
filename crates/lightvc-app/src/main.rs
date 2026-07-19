@@ -3,6 +3,7 @@
 //! Subcommands:
 //!   - `roundtrip`: Validate DAC encode/decode on a WAV file
 //!   - `convert`:   Apply converter to a WAV file (offline)
+//!   - `resynth`:   FreeVocoder resynthesis (WAV → mel → freeC vocoder → WAV)
 //!   - `gui`:       Launch the desktop GUI (3 tabs: offline/realtime/catalog)
 
 mod app;
@@ -24,6 +25,7 @@ fn main() -> anyhow::Result<()> {
         cli::Command::Roundtrip(cmd) => cli::run_roundtrip(cmd),
         cli::Command::Convert(cmd) => cli::run_convert(cmd),
         cli::Command::ConvertB1(cmd) => cli::run_convert_b1(cmd),
+        cli::Command::Resynth(cmd) => cli::run_resynth(cmd),
         cli::Command::Gui(cmd) => cli::run_gui(cmd),
     };
     // Explicit exit to avoid hang on mmap/safetensors drop on Windows

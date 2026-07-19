@@ -9,7 +9,7 @@ use lightvc_audio::Resampler;
 use lightvc_core::{
     converter::{AnyConverter, ConverterConfig, LatencyMode},
     pipeline::VcPipeline,
-    DacConfig,
+    DacConfig, FreeResynth,
 };
 
 #[derive(Parser)]
@@ -31,6 +31,9 @@ pub enum Command {
     Convert(ConvertCmd),
     /// Apply B1 UTTE adapter pipeline to a WAV file (offline).
     ConvertB1(ConvertB1Cmd),
+    /// FreeVocoder resynthesis (WAV → Rust mel → freeC vocoder → WAV),
+    /// streamed through the deployed `chunk_samples()` realtime path.
+    Resynth(ResynthCmd),
     /// Launch desktop GUI (3 tabs: offline/realtime/catalog).
     Gui(GuiCmd),
 }
@@ -139,6 +142,28 @@ pub struct ConvertB1Cmd {
 
     #[arg(long)]
     pub metal: bool,
+}
+
+#[derive(Parser)]
+pub struct ResynthCmd {
+    #[arg(short, long)]
+    pub input: PathBuf,
+
+    #[arg(long, env = "LIGHTVC_FREEC_WEIGHTS", help = "freeC vocoder safetensors")]
+    pub weights: PathBuf,
+
+    #[arg(
+        long,
+        env = "LIGHTVC_MEL_BASIS",
+        help = "librosa slaney mel filterbank safetensors (key `mel_basis`)"
+    )]
+    pub mel_basis: PathBuf,
+
+    #[arg(short, long, default_value = "resynth_output.wav")]
+    pub output: PathBuf,
+
+    #[arg(long, default_value = "4", help = "Mel frames per streaming chunk (k*hop samples)")]
+    pub k: usize,
 }
 
 pub fn select_device(cuda: bool, metal: bool) -> Result<Device> {
@@ -363,6 +388,47 @@ pub fn run_convert_b1(cmd: ConvertB1Cmd) -> Result<()> {
     Ok(())
 }
 
+pub fn run_resynth(cmd: ResynthCmd) -> Result<()> {
+    println!("LightVC FreeVocoder Resynthesis");
+    println!("  Input:     {}", cmd.input.display());
+    println!("  Weights:   {}", cmd.weights.display());
+    println!("  Mel basis: {}", cmd.mel_basis.display());
+    println!("  Output:    {}", cmd.output.display());
+
+    let mut rs = FreeResynth::new(&cmd.weights, &cmd.mel_basis, cmd.k, Device::Cpu)?;
+    let chunk = rs.chunk_samples();
+    println!(
+        "  Streaming: K={} → {} samples/chunk ({:.1} ms), algorithmic latency {:.1} ms",
+        cmd.k,
+        chunk,
+        chunk as f32 / 44.1,
+        rs.algorithmic_latency_ms()
+    );
+
+    let (src_pcm, src_sr) = load_wav_mono(&cmd.input)?;
+    let pcm_44k = if src_sr != 44_100 {
+        println!("  Resampling {} → 44100 Hz...", src_sr);
+        resample_to_44100(&src_pcm, src_sr)?
+    } else {
+        src_pcm
+    };
+    println!("  Loaded: {} samples @ 44.1 kHz", pcm_44k.len());
+
+    // Feed the deployed realtime path in fixed `chunk_samples()` blocks. The
+    // trailing remainder (< chunk, hence < one whole mel frame after the mel
+    // state's carry) is fed as-is; any sub-frame tail stays buffered in the mel
+    // state and is simply dropped when the stream ends (the honest streaming
+    // semantics — no artificial zero-padding of the analysis window).
+    let mut output = Vec::with_capacity(pcm_44k.len());
+    for blk in pcm_44k.chunks(chunk) {
+        output.extend_from_slice(&rs.process_chunk(blk)?);
+    }
+
+    save_wav_mono_f32(&cmd.output, &output, 44_100)?;
+    println!("  Saved: {} ({} samples)", cmd.output.display(), output.len());
+    Ok(())
+}
+
 pub fn run_gui(cmd: GuiCmd) -> Result<()> {
     println!("LightVC GUI starting...");
 
@@ -440,6 +506,25 @@ pub fn save_wav_mono(path: &std::path::Path, samples: &[f32], sample_rate: u32) 
     let mut writer = hound::WavWriter::create(path, spec)?;
     for &s in samples {
         writer.write_sample(s.clamp(-1.0, 1.0))?;
+    }
+    writer.finalize()?;
+    Ok(())
+}
+
+/// Float WAV writer that preserves the sample's native range (no `[-1, 1]`
+/// clamp). Used for FreeVocoder resynthesis, whose output legitimately peaks
+/// above unity (like the training reference); clamping would clip those peaks
+/// and corrupt the resynthesis fidelity.
+pub fn save_wav_mono_f32(path: &std::path::Path, samples: &[f32], sample_rate: u32) -> Result<()> {
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate,
+        bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    };
+    let mut writer = hound::WavWriter::create(path, spec)?;
+    for &s in samples {
+        writer.write_sample(s)?;
     }
     writer.finalize()?;
     Ok(())
