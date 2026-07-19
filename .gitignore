@@ -70,3 +70,5 @@ Thumbs.db
 .archive/
 node_modules/
 kansei/renders/
+# ship the tiny fixed mel filterbank; keep large vocoder weights out
+!models/mel_basis_44k_2048_128.safetensors
