@@ -24,6 +24,9 @@ dependencies = [
     "dtw-python>=1.7.5",
     "bigvgan>=2.4.1",
     "vocos>=0.1.0",
+    "faster-whisper>=1.2.1",
+    "speechbrain>=1.1.0",
+    "openai-whisper>=20250625",
 ]
 
 [project.optional-dependencies]
