@@ -12,15 +12,15 @@ training/data/
 training/checkpoints/
 *.npz
 
-# ===== Audio samples (binary, not for git) =====
-samples/**/*.wav
-samples/**/*.flac
+# ===== Audio data (any location, not for git) =====
+*.wav
+*.flac
+*.mp3
+*.ogg
+*.m4a
+*.aac
 training/samples/
 training/hf_models/
-
-# ===== Render/eval audio outputs (generated, large) =====
-results/**/*.wav
-results/**/*.flac
 
 # ===== Model checkpoints (large) =====
 checkpoints/
