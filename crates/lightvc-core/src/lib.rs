@@ -7,14 +7,21 @@ pub mod b1_pipeline;
 pub mod codec;
 pub mod converter;
 pub mod dac_model;
+pub mod eg;
 pub mod flow_converter;
 pub mod free_resynth;
 pub mod free_vocoder;
 pub mod mel;
 pub mod pipeline;
+pub mod ship_front;
+pub mod ys1_codec;
+pub mod simd;
 pub mod soft_rvq;
 pub mod streaming;
 pub mod utte_adapter;
+pub mod v1d;
+pub mod v2f_infer;
+pub mod vc_stream;
 pub mod weights;
 
 pub use b1_pipeline::{B1Offline, B1Streaming, StageTimings};
@@ -33,6 +40,8 @@ pub enum Backend {
     B1(B1Streaming),
     /// FreeVocoder resynthesis: mic → mel (Rust) → freeC vocoder → out.
     FreeVoc(FreeResynth),
+    /// バ美声変換: mic → front → E → G(f0 シフト) → v2f。ブロック 256 固定。
+    Vc(vc_stream::VcStream),
 }
 
 impl Backend {
@@ -41,6 +50,13 @@ impl Backend {
             Backend::Legacy(p) => p.process_chunk(pcm),
             Backend::B1(p) => p.process_chunk(pcm),
             Backend::FreeVoc(p) => p.process_chunk(pcm),
+            Backend::Vc(p) => {
+                // 学習系の慣習: front/E/G は x32768、V 出力は [-1,1]
+                anyhow::ensure!(pcm.len() == vc_stream::VcStream::BLOCK,
+                                "Vc は 256 サンプル固定");
+                let x32: Vec<f32> = pcm.iter().map(|v| v * 32768.0).collect();
+                Ok(p.process_block(&x32))
+            }
         }
     }
 
@@ -49,6 +65,7 @@ impl Backend {
             Backend::Legacy(p) => p.chunk_samples(),
             Backend::B1(p) => p.chunk_samples(),
             Backend::FreeVoc(p) => p.chunk_samples(),
+            Backend::Vc(_) => vc_stream::VcStream::BLOCK,
         }
     }
 
@@ -60,6 +77,8 @@ impl Backend {
                 mode.algorithmic_latency_samples() as f32 / 44.1
             }
             Backend::FreeVoc(p) => p.algorithmic_latency_ms(),
+            // V の OLA 固有遅延 384 サンプル (E/G の CTX は左文脈=履歴で遅延ではない)
+            Backend::Vc(_) => 384.0 / 44.1,
         }
     }
 
@@ -84,6 +103,7 @@ impl Backend {
             Backend::Legacy(p) => p.reset(),
             Backend::B1(p) => p.reset(),
             Backend::FreeVoc(p) => p.reset(),
+            Backend::Vc(p) => p.reset(),
         }
     }
 
@@ -93,6 +113,8 @@ impl Backend {
             Backend::B1(_) => Ok(()),
             // Resynthesis has no reference target (input mel === output mel).
             Backend::FreeVoc(_) => Ok(()),
+            // Vc の目標は cartridge (G 重み) に焼き込み済み
+            Backend::Vc(_) => Ok(()),
         }
     }
 
@@ -101,6 +123,16 @@ impl Backend {
             Backend::Legacy(p) => p.process_full(pcm),
             Backend::B1(p) => p.process_full(pcm),
             Backend::FreeVoc(p) => p.process_full(pcm),
+            Backend::Vc(p) => {
+                let n = (pcm.len() / vc_stream::VcStream::BLOCK)
+                    * vc_stream::VcStream::BLOCK;
+                let mut y = Vec::with_capacity(n);
+                for b in pcm[..n].chunks(vc_stream::VcStream::BLOCK) {
+                    let x32: Vec<f32> = b.iter().map(|v| v * 32768.0).collect();
+                    y.extend(p.process_block(&x32));
+                }
+                Ok(y)
+            }
         }
     }
 
@@ -109,6 +141,7 @@ impl Backend {
             Backend::Legacy(p) => p.mode(),
             Backend::B1(_) => converter::LatencyMode::Balanced,
             Backend::FreeVoc(_) => converter::LatencyMode::Balanced,
+            Backend::Vc(_) => converter::LatencyMode::Balanced,
         }
     }
 
@@ -123,6 +156,11 @@ impl Backend {
             Backend::Legacy(p) => p.codec().codec().device(),
             Backend::B1(p) => p.codec().device(),
             Backend::FreeVoc(p) => p.device(),
+            Backend::Vc(_) => {
+                static CPU: std::sync::OnceLock<candle_core::Device> =
+                    std::sync::OnceLock::new();
+                CPU.get_or_init(|| candle_core::Device::Cpu)
+            }
         }
     }
 }

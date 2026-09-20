@@ -34,6 +34,10 @@ pub enum Command {
     /// FreeVocoder resynthesis (WAV → Rust mel → freeC vocoder → WAV),
     /// streamed through the deployed `chunk_samples()` realtime path.
     Resynth(ResynthCmd),
+    /// v2f (harmonic-prior, causal, 30 ms class) resynthesis: WAV → WAV.
+    V2f(V2fCmd),
+    /// バ美声変換 (front→E→G→V ストリーム): WAV → WAV。
+    Vc(VcCmd),
     /// Launch desktop GUI (3 tabs: offline/realtime/catalog).
     Gui(GuiCmd),
 }
@@ -385,6 +389,122 @@ pub fn run_convert_b1(cmd: ConvertB1Cmd) -> Result<()> {
     save_wav_mono(&cmd.output, &output, 44_100)?;
     println!("  Saved: {}", cmd.output.display());
 
+    Ok(())
+}
+
+#[derive(clap::Args)]
+pub struct V2fCmd {
+    /// Input WAV (44.1 kHz mono)
+    pub input: std::path::PathBuf,
+    /// Flat f32 weights (training/export_v2f.py)
+    #[arg(short, long, default_value = "models/v2f.bin")]
+    pub weights: std::path::PathBuf,
+    /// Mel filterbank [80][513] flat f32
+    #[arg(long, default_value = "models/mel_fb_1024_80.bin")]
+    pub mel_fb: std::path::PathBuf,
+    /// Mel->linear map [257][80] flat f32
+    #[arg(long, default_value = "models/mel2lin_W.bin")]
+    pub mel2lin: std::path::PathBuf,
+    #[arg(short, long, default_value = "v2f_output.wav")]
+    pub output: std::path::PathBuf,
+}
+
+#[derive(clap::Args)]
+pub struct VcCmd {
+    /// Input WAV (44.1 kHz mono, 男声)
+    pub input: std::path::PathBuf,
+    /// E 重み (training/export_eg.py --kind e)
+    #[arg(long, default_value = "models/e1.bin")]
+    pub e: std::path::PathBuf,
+    /// G 重み = voice cartridge (training/export_eg.py --kind g)
+    #[arg(long, default_value = "models/g1.bin")]
+    pub g: std::path::PathBuf,
+    /// V 重み
+    #[arg(long, default_value = "models/v2f.bin")]
+    pub v: std::path::PathBuf,
+    #[arg(long, default_value = "models/mel_fb_1024_80.bin")]
+    pub mel_fb: std::path::PathBuf,
+    #[arg(long, default_value = "models/mel2lin_W.bin")]
+    pub mel2lin: std::path::PathBuf,
+    /// f0 シフト (半音・cartridge 定数)
+    #[arg(long, default_value_t = 15.0)]
+    pub shift: f32,
+    /// E/G を f16 重みで実行 (帯域半減で ~2 倍速。要 F16C)。proxy 判定は f32 と
+    /// 同値を確認済み (SECS 0.722 / CER 一致)。--f16=false で f32 に戻せる
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    pub f16: bool,
+    #[arg(short, long, default_value = "vc_output.wav")]
+    pub output: std::path::PathBuf,
+}
+
+pub fn run_vc(cmd: VcCmd) -> Result<()> {
+    use lightvc_core::eg::Eg1d;
+    use lightvc_core::v2f_infer::{V2fEngine, V2fStream};
+    use lightvc_core::vc_stream::VcStream;
+    let rdf = |p: &std::path::Path| -> Result<Vec<f32>> {
+        Ok(std::fs::read(p)
+            .map_err(|e| anyhow::anyhow!("{}: {e}", p.display()))?
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect())
+    };
+    println!("LightVC voice conversion (causal, streaming)");
+    let e = std::sync::Arc::new(Eg1d::from_flat(&rdf(&cmd.e)?, 80, 768, 256, 8));
+    let g = std::sync::Arc::new(Eg1d::from_flat(&rdf(&cmd.g)?, 770, 80, 256, 6));
+    let eng = std::sync::Arc::new(
+        V2fEngine::load(&cmd.v, &cmd.mel_fb, &cmd.mel2lin, 24, 8)
+            .map_err(|e| anyhow::anyhow!("weights: {e}"))?);
+    let fb = rdf(&cmd.mel_fb)?;
+    let (x, sr) = load_wav_mono(&cmd.input)?;
+    anyhow::ensure!(sr == 44_100, "44.1 kHz expected, got {sr}");
+    // 学習系の慣習: front/E/G は ×32768 スケール、V 出力は [-1,1]
+    let x32: Vec<f32> = x.iter().map(|v| v * 32768.0).collect();
+    let v = V2fStream::with_threads(eng, 2);
+    let mut vc = if cmd.f16 {
+        use lightvc_core::eg::Eg1dH;
+        use lightvc_core::vc_stream::EgAny;
+        VcStream::new_any(
+            EgAny::F16(std::sync::Arc::new(Eg1dH::from_net(&e))),
+            EgAny::F16(std::sync::Arc::new(Eg1dH::from_net(&g))),
+            v, fb, cmd.shift)
+    } else {
+        VcStream::new(e, g, v, fb, cmd.shift)
+    };
+    let n = (x32.len() / VcStream::BLOCK) * VcStream::BLOCK;
+    let mut y = Vec::with_capacity(n);
+    let t0 = std::time::Instant::now();
+    for b in x32[..n].chunks(VcStream::BLOCK) {
+        y.extend(vc.process_block(b));
+    }
+    let el = t0.elapsed().as_secs_f64();
+    println!("  {} samples  shift {:+.1} st  RTF {:.3}", n, cmd.shift,
+             el / (n as f64 / 44_100.0));
+    save_wav_mono_f32(&cmd.output, &y, 44_100)?;
+    println!("  Saved: {}", cmd.output.display());
+    Ok(())
+}
+
+pub fn run_v2f(cmd: V2fCmd) -> Result<()> {
+    use lightvc_core::v2f_infer::V2fEngine;
+    println!("LightVC v2f resynthesis (causal, 30 ms class)");
+    let eng = V2fEngine::load(&cmd.weights, &cmd.mel_fb, &cmd.mel2lin, 24, 8)
+        .map_err(|e| anyhow::anyhow!("weights: {e}"))?;
+    let (x, sr) = load_wav_mono(&cmd.input)?;
+    anyhow::ensure!(sr == 44_100, "44.1 kHz expected, got {sr}");
+    // prior の雑音は決定的に（xorshift。乱数品質は要らない、再現性が要る）
+    let mut st = 0x9e3779b97f4a7c15u64;
+    let noise: Vec<f32> = (0..x.len()).map(|_| {
+        st ^= st << 13;
+        st ^= st >> 7;
+        st ^= st << 17;
+        ((st >> 40) as f32 / 8388608.0) - 1.0
+    }).collect();
+    let t0 = std::time::Instant::now();
+    let y = eng.process(&x, &noise);
+    let el = t0.elapsed().as_secs_f64();
+    println!("  {} samples  RTF {:.3}", y.len(), el / (x.len() as f64 / 44_100.0));
+    save_wav_mono(&cmd.output, &y, 44_100)?;
+    println!("  Saved: {}", cmd.output.display());
     Ok(())
 }
 

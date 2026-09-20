@@ -3086,6 +3086,7 @@ dependencies = [
  "candle-transformers",
  "hf-hub",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

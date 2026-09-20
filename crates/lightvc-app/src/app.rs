@@ -141,6 +141,9 @@ pub struct LightVcApp {
     freevoc_weights: String,
     freevoc_mel_basis: String,
     freevoc_k: usize,
+    // バ美声 VC (v2f チェーン) UI state
+    vc_dir: String,
+    vc_shift: f32,
     /// Output mute (Transport). Silences the wet signal without unarming.
     rt_muted: bool,
     /// Selected fixed buffer size in frames (128/256/512/1024). 256 ≈ paravo.
@@ -202,6 +205,8 @@ impl LightVcApp {
             freevoc_mel_basis: std::env::var("LIGHTVC_MEL_BASIS")
                 .unwrap_or_else(|_| "models/mel_basis_44k_2048_128.safetensors".into()),
             freevoc_k: 4,
+            vc_dir: "models".to_string(),
+            vc_shift: 15.0,
             rt_muted: false,
             rt_buffer_frames: 256,
         }
@@ -408,6 +413,48 @@ impl LightVcApp {
         if let Err(e) = result {
             let mut s = state.lock().unwrap();
             s.error = Some(format!("FreeVoc load failed: {e}"));
+        }
+    }
+
+    /// バ美声 VC backend をロード (mic → front → E → G → v2f)。
+    /// `dir` に v2f.bin / e1.bin / g1.bin / mel_fb_1024_80.bin / mel2lin_W.bin。
+    /// E/G は f16 (proxy 同値確認済み・RTF 2 倍)。
+    fn load_vc_static(state: &Arc<Mutex<AppState>>, dir: &str, shift: f32) {
+        let result = (|| -> anyhow::Result<()> {
+            use lightvc_core::eg::{Eg1d, Eg1dH};
+            use lightvc_core::v2f_infer::{V2fEngine, V2fStream};
+            use lightvc_core::vc_stream::{EgAny, VcStream};
+            let d = std::path::Path::new(dir);
+            let rdf = |p: &std::path::Path| -> anyhow::Result<Vec<f32>> {
+                Ok(std::fs::read(p)
+                    .map_err(|e| anyhow::anyhow!("{}: {e}", p.display()))?
+                    .chunks_exact(4)
+                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                    .collect())
+            };
+            let e = Eg1d::from_flat(&rdf(&d.join("e1.bin"))?, 80, 768, 256, 8);
+            let g = Eg1d::from_flat(&rdf(&d.join("g1.bin"))?, 770, 80, 256, 6);
+            let eng = std::sync::Arc::new(
+                V2fEngine::load(&d.join("v2f.bin"), &d.join("mel_fb_1024_80.bin"),
+                                &d.join("mel2lin_W.bin"), 24, 8)
+                    .map_err(|e| anyhow::anyhow!("v2f weights: {e}"))?);
+            let fb = rdf(&d.join("mel_fb_1024_80.bin"))?;
+            let v = V2fStream::with_threads(eng, 2);
+            let vc = VcStream::new_any(
+                EgAny::F16(std::sync::Arc::new(Eg1dH::from_net(&e))),
+                EgAny::F16(std::sync::Arc::new(Eg1dH::from_net(&g))),
+                v, fb, shift);
+            let mut s = state.lock().unwrap();
+            let arc = Arc::new(Mutex::new(lightvc_core::Backend::Vc(vc)));
+            s.pipeline = Some(arc.clone());
+            *s.pipeline_slot.lock().unwrap() = Some(arc);
+            s.status = format!("バ美声 VC loaded (shift {shift:+.0} st)");
+            s.error = None;
+            Ok(())
+        })();
+        if let Err(e) = result {
+            let mut s = state.lock().unwrap();
+            s.error = Some(format!("VC load failed: {e}"));
         }
     }
 
@@ -692,6 +739,8 @@ impl LightVcApp {
                 let mut b1_timbre_path = self.b1_timbre_path.clone();
                 let mut b1_tau = self.b1_tau;
                 let mut wet_dry = self.wet_dry;
+                let mut vc_dir = self.vc_dir.clone();
+                let mut vc_shift = self.vc_shift;
                 let mut freevoc_weights = self.freevoc_weights.clone();
                 let mut freevoc_mel_basis = self.freevoc_mel_basis.clone();
                 let mut freevoc_k = self.freevoc_k;
@@ -795,6 +844,21 @@ impl LightVcApp {
                             });
 
                             ui.separator();
+                            ui.collapsing("バ美声 VC (v2f)", |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label("Models dir:");
+                                    ui.text_edit_singleline(&mut vc_dir);
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Pitch shift (st):");
+                                    ui.add(egui::Slider::new(&mut vc_shift, 0.0..=24.0));
+                                });
+                                if ui.button("Load バ美声 VC").clicked() {
+                                    Self::load_vc_static(&state, &vc_dir, vc_shift);
+                                }
+                            });
+
+                            ui.separator();
                             ui.collapsing("FreeVocoder Resynth", |ui| {
                                 ui.horizontal(|ui| {
                                     ui.label("Weights:");
@@ -824,6 +888,8 @@ impl LightVcApp {
                         });
                 });
 
+                self.vc_dir = vc_dir;
+                self.vc_shift = vc_shift;
                 self.conv_path_buf = conv_path;
                 self.rt_config = rt_config;
                 self.rt_running = rt_running;

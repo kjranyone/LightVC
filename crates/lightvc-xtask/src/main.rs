@@ -4,9 +4,11 @@
 //!   cargo xtask bundle         — Build release + create .clap and .vst3 bundles
 //!   cargo xtask install        — Bundle + copy to system plugin directories
 //!   cargo xtask clean          — Remove target/bundled
+//!   cargo xtask package        — Bundle + zip + sha256 (G0-15)
 
 use std::env;
 use std::fs;
+use std::process::Command;
 use std::path::{Path, PathBuf};
 
 const PLUGIN_NAME: &str = "LightVC";
@@ -20,6 +22,7 @@ fn main() -> anyhow::Result<()> {
         "bundle" => bundle()?,
         "install" => install()?,
         "clean" => clean()?,
+        "package" => package()?,
         "help" | _ => print_help(),
     }
     Ok(())
@@ -58,12 +61,127 @@ fn build_release() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// G0-15: 配布 zip と sha256 を作る。
+///
+/// ⚠ 同梱するのは**バンドル・モデル・NOTICE・README・遅延台帳**のみ。
+/// ASIO SDK はプロプライエタリで再配布禁止なので絶対に入れない（`CLAUDE.md`）。
+fn package() -> anyhow::Result<()> {
+    bundle()?;
+    let root = workspace_root();
+    let out = bundled_dir();
+    let ver = env!("CARGO_PKG_VERSION");
+    let os = if cfg!(target_os = "windows") { "windows" }
+             else if cfg!(target_os = "macos") { "macos" } else { "linux" };
+    let stage = root.join("target").join("package");
+    if stage.exists() { fs::remove_dir_all(&stage)?; }
+    fs::create_dir_all(&stage)?;
+
+    copy_tree(&out, &stage)?;
+
+    // モデルと配布に要る書類。**無ければ落とす**（黙って欠いた zip を出さない）。
+    // CLI 本体（README が案内する `lightvc-app v2f` の実体）
+    let app = if cfg!(target_os = "windows") { "lightvc-app.exe" } else { "lightvc-app" };
+    let app_src = target_dir().join(app);
+    if !app_src.exists() {
+        anyhow::bail!("CLI が無い: {}（cargo build --release -p lightvc-app）", app_src.display());
+    }
+    fs::copy(&app_src, stage.join(app))?;
+
+    let mut manifest = String::from("# LightVC 配布内容\n\n| ファイル | sha256 |\n|---|---|\n");
+    // ⚠ models/ を丸ごと入れない——旧世代の重み（converter/DAC 系 1.3 GB）が
+    //   同居している。**出荷する物を明示列挙**（欠品は fail-closed のまま）。
+    for rel in ["models/v2f.bin", "models/v2f_v2f_prior_20260819_013905.json",
+                "models/mel_fb_1024_80.bin", "models/mel2lin_W.bin",
+                // バ美声変換段 (lightvc-app vc): E + voice cartridge (G)
+                "models/e1.bin", "models/e1.json",
+                "models/g1.bin", "models/g1.json",
+                "NOTICE", "README.md", "results/z0/latency_decision.md"] {
+        let src = root.join(rel);
+        if !src.exists() {
+            anyhow::bail!("配布物が無い: {rel}（G0-15 は欠品のまま zip を作らない）");
+        }
+        let dst = if rel.starts_with("models/") {
+            let d = stage.join("models");
+            fs::create_dir_all(&d)?;
+            d.join(Path::new(rel).file_name().unwrap())
+        } else {
+            stage.join(Path::new(rel).file_name().unwrap())
+        };
+        if src.is_dir() { copy_tree(&src, &dst)?; } else { fs::copy(&src, &dst)?; }
+    }
+    for e in walk(&stage)? {
+        let rel = e.strip_prefix(&stage)?.to_string_lossy().replace('\\', "/");
+        manifest.push_str(&format!("| `{rel}` | `{}` |\n", sha256_file(&e)?));
+    }
+    fs::write(stage.join("MANIFEST.md"), &manifest)?;
+
+    let zip = root.join("target").join(format!("LightVC-{ver}-{os}.zip"));
+    let ok = Command::new("zip").arg("-qr").arg(&zip).arg(".").current_dir(&stage)
+        .status().map(|s| s.success()).unwrap_or(false)
+        || Command::new("python3")
+            .args(["-c", concat!(
+                "import sys, zipfile, os\n",
+                "z = zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED)\n",
+                "for r, _, fs in os.walk('.'):\n",
+                "    for f in fs:\n",
+                "        p = os.path.join(r, f)\n",
+                "        z.write(p, os.path.relpath(p, '.'))\n",
+                "z.close()\n")])
+            .arg(&zip).current_dir(&stage)
+            .status().map(|s| s.success()).unwrap_or(false);
+    anyhow::ensure!(ok, "zip も python3(zipfile) も使えない");
+    let sum = sha256_file(&zip)?;
+    fs::write(zip.with_extension("zip.sha256"), format!("{sum}  {}\n",
+        zip.file_name().unwrap().to_string_lossy()))?;
+    eprintln!("\n配布 zip: {}\n  sha256: {sum}", zip.display());
+    Ok(())
+}
+
+fn copy_tree(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    fs::create_dir_all(dst)?;
+    for e in fs::read_dir(src)? {
+        let e = e?;
+        let to = dst.join(e.file_name());
+        if e.file_type()?.is_dir() { copy_tree(&e.path(), &to)?; } else { fs::copy(e.path(), to)?; }
+    }
+    Ok(())
+}
+
+fn walk(d: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    let mut v = Vec::new();
+    for e in fs::read_dir(d)? {
+        let e = e?;
+        if e.file_type()?.is_dir() { v.extend(walk(&e.path())?); } else { v.push(e.path()); }
+    }
+    v.sort();
+    Ok(v)
+}
+
+/// sha256（依存を足さずに済ませる。配布物の同一性を示すだけなので十分）。
+fn sha256_file(p: &Path) -> anyhow::Result<String> {
+    let out = Command::new("sha256sum").arg(p).output()?;
+    if !out.status.success() {
+        let out = Command::new("shasum").args(["-a", "256"]).arg(p).output()?;
+        anyhow::ensure!(out.status.success(), "sha256sum / shasum が要る");
+        return Ok(String::from_utf8_lossy(&out.stdout).split_whitespace().next()
+            .unwrap_or("").to_string());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).split_whitespace().next().unwrap_or("").to_string())
+}
+
 fn bundle() -> anyhow::Result<()> {
     build_release()?;
 
-    let dll_src = target_dir().join(format!("{DLL_NAME}.dll"));
+    // OS ごとの成果物名（旧版は Linux でも .dll を探して必ず落ちた）
+    let dll_src = if cfg!(target_os = "windows") {
+        target_dir().join(format!("{DLL_NAME}.dll"))
+    } else if cfg!(target_os = "macos") {
+        target_dir().join(format!("lib{DLL_NAME}.dylib"))
+    } else {
+        target_dir().join(format!("lib{DLL_NAME}.so"))
+    };
     if !dll_src.exists() {
-        anyhow::bail!("DLL not found: {}", dll_src.display());
+        anyhow::bail!("plugin artifact not found: {}", dll_src.display());
     }
 
     let out = bundled_dir();

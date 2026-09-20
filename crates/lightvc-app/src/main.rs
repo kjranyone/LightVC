@@ -26,6 +26,8 @@ fn main() -> anyhow::Result<()> {
         cli::Command::Convert(cmd) => cli::run_convert(cmd),
         cli::Command::ConvertB1(cmd) => cli::run_convert_b1(cmd),
         cli::Command::Resynth(cmd) => cli::run_resynth(cmd),
+        cli::Command::V2f(cmd) => cli::run_v2f(cmd),
+        cli::Command::Vc(cmd) => cli::run_vc(cmd),
         cli::Command::Gui(cmd) => cli::run_gui(cmd),
     };
     // Explicit exit to avoid hang on mmap/safetensors drop on Windows
