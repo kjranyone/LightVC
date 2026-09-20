@@ -1,0 +1,33 @@
+# 2026-08-09 削除一覧（rev6 の証拠・正典が指す重みは除外）
+## 正典が「再開しない」と明記した族（vocoder.md §2「不採用の歴史記録」）
+4.6G	training/checkpoints/nsf3
+2.3G	training/checkpoints/nsf3b
+1.6G	training/checkpoints/nsf3b_gan
+1.6G	training/checkpoints/nsf3c
+3.1G	training/checkpoints/nsf3c_gan
+1.6G	training/checkpoints/nsf3d
+4.6G	training/checkpoints/nsf3e
+6.1G	training/checkpoints/nsf3e_gan
+7.7G	training/checkpoints/nsf3_gan
+4.0K	training/checkpoints/nsf3_hf
+1.6G	training/checkpoints/nsf3_hfn
+779M	training/checkpoints/nsf3_hfn2
+4.0K	training/checkpoints/nsf3mel
+35M	training/checkpoints/afhn_recon
+212M	training/checkpoints/aa_modhard
+64M	training/checkpoints/b3_design
+4.0K	training/checkpoints/b3_v1
+51M	training/checkpoints/b3_v1q
+19M	training/checkpoints/bank_vc
+## 使われていない評価キャッシュ / smoke 生成物
+953M	results/rddsp_gpu/prep_300_12_5_512_128_1_3.0_0.3_v2.pt
+716M	results/rddsp_gpu/prep_300_24.pt
+204M	results/rddsp_gpu/prep_80_12_5_512_128_1_3.0_0.3.pt
+61M	results/rddsp_gpu/vcsmoke_s0.pt
+7.7M	results/rddsp_gpu/diag_shipsmoke_ch96_s0.pt
+7.7M	results/rddsp_gpu/gvsmoke_ch96_s0.pt
+7.7M	results/rddsp_gpu/gvsmoke2_ch96_s0.pt
+2.0M	results/rddsp_gpu/smoke_ch48_s0.pt
+2.0M	results/rddsp_gpu/gansmoke_ch48_s0.pt
+## z0c_ear に置き換わった盲検出力
+8.5M	results/gvoc_blind

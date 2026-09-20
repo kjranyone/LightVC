@@ -1,0 +1,11 @@
+{
+ "z0": "z_rtf_over",
+ "ear": "e_ok",
+ "env": {
+  "DIM": "24",
+  "NLAYER": "8"
+ },
+ "expect_ok": false,
+ "via_step6": false,
+ "expect_reason_contains": "RTF 判定が FAIL"
+}

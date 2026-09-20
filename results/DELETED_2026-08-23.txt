@@ -1,0 +1,8 @@
+# 2026-08-23 整理（RESEARCH.md 参照なし・smoke・負け腕中間 snap）
+# 残す方針: 出荷現行・現行ラダー・RESEARCH 参照の best・聴取サンプル・削除台帳
+428M	total
+# 中間 snap の削除（best と last のみ保持・RESEARCH 参照は best）
+diag_dim640: s10000/s20000 削除
+diag_cplx1/cplx4/direct128: s*.pt 削除
+g2c_full/v21_g0/v23_gp/v23_gpc/diag_v2f_gmel: 中間 snap 削除（best/last 保持）
+v2f_prior_20260819_013905: 中間 snap 19 本削除（best/last/conv/gate 記録は保持）

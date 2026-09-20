@@ -1,0 +1,17 @@
+{
+ "basis": "blas_floor",
+ "owner_approved": true,
+ "decided_at": "36 巡目（学習起動前）。規則 5: 走行前に宣言する",
+ "rationale": "推論は全て Rust (Candle) で Python ランタイムを持たない（CLAUDE.md）。PyTorch の e2e 実測 0.1956 のうち 1.072 ms/呼び出しは op 起動のインタプリタ費で、K=2（ブロック 5.805 ms）ではこれが支配的になる。製品に存在しない費用を予算に計上すると、dim 256 -> 192 -> 128 と容量を 3 倍捨てても製品は 1 秒も速くならない。∴ 実形状 GEMM の合計（K=2 で 0.421 ms = RTF 0.0724）を採用基準にする。",
+ "known_optimism": "blas_floor は LayerNorm / GELU / complex / cat を含まない。実装では上振れする。∴ これを合格の最終根拠にしない——**最終判定は PROCEDURE_APP.md C.4 の Rust 実測（gate_stage: measured）**であり、本基準は学習起動の可否だけに使う。",
+ "rejected": {
+  "marginal": "大 emit の傾きからの外挿。K=2 の小行列効率を反映せず楽すぎる（0.0109）",
+  "pytorch_e2e": "Rust に存在しないインタプリタ費を含む（0.1956）"
+ },
+ "measurements": {
+  "pytorch_e2e_worst_of_3_procs": 0.248,
+  "blas_floor": 0.0724,
+  "fixed_ms_per_call": 1.072,
+  "marginal_ms_per_frame": 0.0316
+ }
+}

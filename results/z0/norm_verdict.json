@@ -1,0 +1,38 @@
+{
+ "wavehax ch96 +cplx": {
+  "end": -0.0847,
+  "slope_per_1k": -0.003925,
+  "recovery": 0.0,
+  "step": 20000
+ },
+ "wavehax ch16 +cplx": {
+  "end": -0.0619,
+  "slope_per_1k": -0.0019749999999999993,
+  "recovery": 0.1431,
+  "step": 20000
+ },
+ "wavehax ch96 (cplx なし)": {
+  "end": 0.0912,
+  "slope_per_1k": 0.0116375,
+  "recovery": 0.2255,
+  "step": 20000
+ },
+ "v2f ch16 cummean": {
+  "end": -0.053,
+  "slope_per_1k": 0.0003125000000000003,
+  "recovery": 0.1786,
+  "step": 20000
+ },
+ "v2f ch16 freq": {
+  "end": -0.0788,
+  "slope_per_1k": -0.003299999999999999,
+  "recovery": 0.1422,
+  "step": 20000
+ },
+ "v2f ch16 none": {
+  "end": -0.1169,
+  "slope_per_1k": -0.0011125000000000006,
+  "recovery": 0.09589999999999999,
+  "step": 20000
+ }
+}

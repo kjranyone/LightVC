@@ -1,0 +1,28 @@
+{
+ "lookahead_ms": 0.0,
+ "inconclusive": false,
+ "detail": {
+  "E": {
+   "prefix_maxdiff": 0.0,
+   "edit_moved": 4.554782867431641
+  },
+  "G": {
+   "prefix_maxdiff": 0.0,
+   "edit_moved": 19.722307205200195
+  }
+ },
+ "e": "../results/diag_e1/diag_e1_best.pt",
+ "g": "../results/diag_cartA/diag_cartA_best.pt",
+ "e_arch": {
+  "arch": "e1",
+  "dim": 256,
+  "L": 8,
+  "ctx": 62
+ },
+ "g_arch": {
+  "arch": "g1",
+  "dim": 256,
+  "L": 6,
+  "ctx": 30
+ }
+}

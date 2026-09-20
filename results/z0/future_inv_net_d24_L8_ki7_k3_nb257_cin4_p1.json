@@ -1,0 +1,15 @@
+{
+ "lookahead_ms": 0.0,
+ "unbounded": false,
+ "inconclusive": false,
+ "probes": 16,
+ "dim": 24,
+ "L": 8,
+ "k_in": 7,
+ "k": 3,
+ "nbin": 257,
+ "cin": 4,
+ "prior": true,
+ "arch": "v2f",
+ "ckpt": "(arch-only)"
+}

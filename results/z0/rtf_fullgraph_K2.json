@@ -1,0 +1,23 @@
+{
+ "total_rtf": 0.3158,
+ "impl": "simd v2f ch24/L8 + front (closed-form excitation)",
+ "runs": 4,
+ "p95_worst_of_runs": 0.3158,
+ "p95_runs": [
+  0.2997,
+  0.3158,
+  0.2903,
+  0.2903
+ ],
+ "p50_runs": [
+  0.2731,
+  0.2735,
+  0.2734,
+  0.2725
+ ],
+ "budget": 0.35,
+ "pass_line_with_tolerance": 0.3413,
+ "margin": 0.0255,
+ "cmd": "cargo run --release --example full_graph_v2f -p lightvc-core -- 500",
+ "note": "起動をまたいだ p95 の最悪値で判定。別ジョブの負荷下での測定（捨てない）。"
+}

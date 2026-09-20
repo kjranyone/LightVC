@@ -1,0 +1,50 @@
+{
+ "input": {
+  "schema": 1,
+  "primary_os": "windows",
+  "secondary_os": [
+   "linux"
+  ],
+  "audio_backend": [
+   "wasapi",
+   "asio"
+  ],
+  "plugin_formats": [
+   "standalone",
+   "vst3"
+  ],
+  "target_cpu": "x86_64 4C8T 相当",
+  "app_audio_device": "（アプリが使う I/F: 型番 / ドライバ / 設定）",
+  "reference_audio_device": "（測定器側の基準機: 型番 / ドライバ / 設定）",
+  "thread_budget": 2,
+  "io_block_samples": 64,
+  "io_block_samples_measured": 64,
+  "net_block_frames": 2,
+  "queue_depth_io_blocks": 2,
+  "rtf_target": 0.49,
+  "_rtf_target": "未測定。PROCEDURE.md 2.4b を通すまで −1.1c は正直に FAIL させる",
+  "owner_accepted_over_30ms": null,
+  "_owner_accepted_over_30ms": "オーナーが 30-50ms 帯を受容した場合に {\"by\":..., \"at\":..., \"evidence\":\"results/z0/latency_decision.md\"} を書く。null なら -1.1c は 30ms 未満を要求する",
+  "sinc_len": 256,
+  "ad_da_estimate_ms": 10.0,
+  "resamp_samples": 0,
+  "hop": 128,
+  "hop_a": 256,
+  "nfft_s": 512,
+  "sample_rate": 44100,
+  "asio_sdk_available": true,
+  "windows_build": "native",
+  "asio_sdk_evidence": {
+   "obtained_at": "2026-08-11",
+   "path": "/opt/asio",
+   "by": "owner"
+  },
+  "reserve_owner_approved": null
+ },
+ "expect": {
+  "pass": false,
+  "reserve_owner_approved": null,
+  "total_ms": 28.87
+ },
+ "contract": "lookahead_frames_D_ahead = 0\n"
+}

@@ -1,0 +1,15 @@
+{
+ "z0": "z_cin",
+ "ear": "e_ok",
+ "env": {
+  "DIM": "24",
+  "NLAYER": "8"
+ },
+ "expect_ok": false,
+ "via_step6": false,
+ "expect_reason_contains": "証跡の cin",
+ "verdict": [
+  "PASS",
+  0.05
+ ]
+}

@@ -1,0 +1,15 @@
+{
+ "z0": "z_green_noov",
+ "ear": "e_ng",
+ "env": {
+  "DIM": "24",
+  "NLAYER": "8"
+ },
+ "expect_ok": false,
+ "via_step6": false,
+ "expect_reason_contains": "手順 2 へ",
+ "verdict": [
+  "PASS",
+  0.05
+ ]
+}

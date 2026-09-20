@@ -1,0 +1,15 @@
+{
+ "z0": "z_green",
+ "ear": "e_ok",
+ "env": {
+  "DIM": "48",
+  "NLAYER": "8"
+ },
+ "expect_ok": false,
+ "via_step6": false,
+ "expect_reason_contains": "env DIM",
+ "verdict": [
+  "PASS",
+  0.05
+ ]
+}

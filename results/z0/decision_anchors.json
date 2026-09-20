@@ -1,0 +1,338 @@
+[
+ [
+  "PROCEDURE.md",
+  "劣化 δ = 0.15 内"
+ ],
+ [
+  "PROCEDURE_APP.md",
+  "p95 ≥ 50 ms は失格"
+ ],
+ [
+  "PROCEDURE_APP.md",
+  "先頭 **2.0 秒以上を破棄**"
+ ],
+ [
+  "PROCEDURE.md",
+  "| 1 | **入力リング** | **1792 sample**"
+ ],
+ [
+  "PROCEDURE.md",
+  "| 5 | **励起リング** | **384 sample**"
+ ],
+ [
+  "PROCEDURE_APP.md",
+  "cd training && uv run python latency_gate.py ../results/z0/t"
+ ],
+ [
+  "PROCEDURE.md",
+  "if [ -e ../results/$TAG ]; then echo \"既存 TAG あり。中止\"; return "
+ ],
+ [
+  "PROCEDURE.md",
+  "[ -n \"$HFW\" ] || { echo \"HFW 未設定。3.2 で決めた値を export する（abi_no"
+ ],
+ [
+  "PROCEDURE.md",
+  "| **net に残る予算**（合格線 0.35） | 無し | **0.21** |"
+ ],
+ [
+  "PROCEDURE_APP.md",
+  "\"rtf_target\": null,"
+ ],
+ [
+  "PROCEDURE_APP.md",
+  "<!-- gate: expect-nonzero /WASAPI/"
+ ],
+ [
+  "PROCEDURE_APP.md",
+  "\"asio_sdk_available\": false,"
+ ],
+ [
+  "PROCEDURE.md",
+  "**4.1 と 4.2 は同じシェルで続けて実行する**（`$TAG` を引き継ぐため）。"
+ ],
+ [
+  "PROCEDURE.md",
+  "## 手順 4 [GPU]【手順 1 が「手順 2 へ」かつ手順 3 完了後】学習"
+ ],
+ [
+  "PROCEDURE.md",
+  "### 4.1 起動前チェック"
+ ],
+ [
+  "PROCEDURE.md",
+  "### 4.2 起動"
+ ],
+ [
+  "PROCEDURE_APP.md",
+  "#### C.5-key"
+ ],
+ [
+  "PROCEDURE.md",
+  "**5.2 のレンダより先に実行する。**"
+ ],
+ [
+  "PROCEDURE.md",
+  "Nv < 4 なら判定に進まず 1.5 の再レンダ規定へ"
+ ],
+ [
+  "PROCEDURE.md",
+  "δ = 0.15 の非劣化検定は"
+ ],
+ [
+  "PROCEDURE.md",
+  "CI 全体が [−0.15, +0.15] に収まること"
+ ],
+ [
+  "PROCEDURE.md",
+  "**`ε_pesq = 0.05`（2.2b の resume 検収）"
+ ],
+ [
+  "PROCEDURE.md",
+  "`ε_lsd = 0.10 dB`"
+ ],
+ [
+  "PROCEDURE.md",
+  "[ $i -ge 300 ]"
+ ],
+ [
+  "PROCEDURE.md",
+  "**連続 50 回**"
+ ],
+ [
+  "PROCEDURE.md",
+  "直近 100 step の中央値の 100 倍を超えたら skip"
+ ],
+ [
+  "PROCEDURE.md",
+  "**step 18000（判別器投入の直前）の評価で TEST が prior 単体を下回る**"
+ ],
+ [
+  "PROCEDURE.md",
+  "引数で音源を渡す場合も 3 本未満なら FAIL"
+ ],
+ [
+  "PROCEDURE.md",
+  "`data/full_prep` の実音声から 16 本以上"
+ ],
+ [
+  "PROCEDURE.md",
+  "既定の標本数 `k` を 3 → 8 以上にし"
+ ],
+ [
+  "PROCEDURE.md",
+  "改修**後**に**最大絶対差 < 1e-5** を確認する"
+ ],
+ [
+  "PROCEDURE.md",
+  "assert x['utterances'] >= 400"
+ ],
+ [
+  "PROCEDURE.md",
+  "x['octave_jumps_current'] * 1.01"
+ ],
+ [
+  "PROCEDURE.md",
+  "d.get('spread_min_runs', 3)"
+ ],
+ [
+  "PROCEDURE.md",
+  "export PIN_OK=${PIN_OK:-0}"
+ ],
+ [
+  "PROCEDURE.md",
+  "| 合格 | **中央値 RTF ≤ 0.35** かつ **最大値 ≤ 0.5** |"
+ ],
+ [
+  "PROCEDURE.md",
+  "| 0 ≤ 余裕 < ぶれ幅 | **INCONCLUSIVE** |"
+ ],
+ [
+  "PROCEDURE.md",
+  "| **履歴の起動回数 < 3** | **INCONCLUSIVE** |"
+ ],
+ [
+  "PROCEDURE.md",
+  "**その腕の a が本走行の a より 2 本以上多い**"
+ ],
+ [
+  "PROCEDURE.md",
+  "**4 候補すべてが 5.3 で落ちたら、ボコーダ族の探索を止める。**"
+ ],
+ [
+  "PROCEDURE.md",
+  "    --front $FRONT --prior $PRIOR --ch $DIM --layers $NLAYER"
+ ],
+ [
+  "PROCEDURE.md",
+  "**既定「混ぜる（1.0）」。変えるならオーナー判断**"
+ ],
+ [
+  "PROCEDURE.md",
+  "| **`gain_augmentation`** | **既定「する（true）」** |"
+ ],
+ [
+  "PROCEDURE.md",
+  "3. `build(80, N_HELD)` の `N_HELD` を **24** に。"
+ ],
+ [
+  "PROCEDURE.md",
+  "**選んではいけないもの**: 時間方向の upsample（ConvTranspose）を信号経路に持つ系。"
+ ],
+ [
+  "PROCEDURE.md",
+  "| **front-end 0 ms／ネット込みは UNBOUNDED** | **⚠ 製品不可** |"
+ ],
+ [
+  "PROCEDURE.md",
+  "export N_TRIAL=10        # 1.6 が「下限合格」なら 20"
+ ],
+ [
+  "PROCEDURE.md",
+  "5.3.1 を飛ばして 5.4 に行かない"
+ ],
+ [
+  "PROCEDURE.md",
+  "| **TEST が 5 チェックポイント連続で悪化** |"
+ ],
+ [
+  "PROCEDURE.md",
+  "実測 ETA が**当初見積の 2 倍**を超えた"
+ ],
+ [
+  "PROCEDURE.md",
+  "**隔離の方法**（worktree は使わない。相対パスと 44 GB のデータ参照が壊れるため）:"
+ ],
+ [
+  "PROCEDURE.md",
+  "**別シェルで 4.2 を実行する場合は、上で表示された TAG を手で `export` してから行う。**"
+ ],
+ [
+  "PROCEDURE_APP.md",
+  "| **< 30 ms**、**かつ `2σ_hw` を足しても 30 ms 未満** | **合格** → 手順 G "
+ ],
+ [
+  "PROCEDURE_APP.md",
+  "**手順 G の入場条件は「p95 < 30 ms」または「30–50 ms でオーナーが可と決めた」のいずれか。**"
+ ],
+ [
+  "PROCEDURE_APP.md",
+  "**full graph 端点は出力波形の SNR ≥ 60 dB**"
+ ],
+ [
+  "PROCEDURE_APP.md",
+  "full graph 合計 **RTF ≤ 0.5**（開発 Linux 機の数字で代用しない）"
+ ],
+ [
+  "PROCEDURE_APP.md",
+  "p95 が測定ビルドと ±10% 以内"
+ ],
+ [
+  "PROCEDURE_APP.md",
+  "**出力が −1 dBFS を超えない**"
+ ],
+ [
+  "PROCEDURE_APP.md",
+  "**その DAW のバッファ `io_host` に対する期待値と ±`io_host`（1 ホストブロック）以内**"
+ ],
+ [
+  "PROCEDURE_APP.md",
+  "**50 ms 以上になるバッファは UI で警告し、`e2e_*.json` に「失格域」と記録する**"
+ ],
+ [
+  "PROCEDURE_APP.md",
+  "  \"io_block_samples_measured\": null,"
+ ],
+ [
+  "PROCEDURE_APP.md",
+  "**未来不変性 CI**: **C.3 の定義そのまま**（実音声プローブ・"
+ ],
+ [
+  "PROCEDURE_APP.md",
+  "- [ ] **パディング無効ビルドで `L_conv` の p50 を測り、設計値と ±2 サンプルで一致する**<b"
+ ],
+ [
+  "PROCEDURE_APP.md",
+  "`latency_ledger.json`（`pass: true` かつ `io_measured: true`"
+ ],
+ [
+  "PROCEDURE_APP.md",
+  "**F.2 の合否は 44.1 kHz で付ける**"
+ ],
+ [
+  "PROCEDURE_APP.md",
+  "| **`deterministic: false`**（`p99 − p50 > io`（実測優先）） | **不合格"
+ ],
+ [
+  "PROCEDURE_APP.md",
+  "**−1.1 で `asio_sdk_available: false` のまま `io_block_samples` "
+ ],
+ [
+  "PROCEDURE_APP.md",
+  "`io_block_samples` / `queue_depth_io_blocks` / `resamp_sampl"
+ ],
+ [
+  "PROCEDURE_APP.md",
+  "**4 時間連続稼働**"
+ ],
+ [
+  "PROCEDURE.md",
+  "`unbounded=False` かつ `inconclusive=False`"
+ ],
+ [
+  "PROCEDURE.md",
+  "export N_TRIAL=10   # **未設定だと"
+ ],
+ [
+  "PROCEDURE.md",
+  "export FRONT=ship PRIOR=nhv GAINAUG=1            # 製品経路。GAIN"
+ ],
+ [
+  "PROCEDURE.md",
+  "    --steps 200000 --every 2000 --snap 8000 --dstart 20000"
+ ],
+ [
+  "PROCEDURE.md",
+  "| **`mlin`** | **合成（`HOP_S`）** | **`[..., 7:]`**"
+ ],
+ [
+  "PROCEDURE.md",
+  "- **隣り合う試行では X/Y/Z の割り当てが必ず違う。**"
+ ],
+ [
+  "PROCEDURE.md",
+  "すべての ckpt を `../results/<TAG>/` に置く"
+ ],
+ [
+  "PROCEDURE.md",
+  "Nv < 4 なら**評価系を直してから**再取得する"
+ ],
+ [
+  "PROCEDURE.md",
+  "- **同点 1 位を無効にしない**のは"
+ ],
+ [
+  "PROCEDURE.md",
+  "### 5.3.1 【合格の直前に必ず通す】G の mel での確認（**copy-synthesis 退化の検出**）"
+ ],
+ [
+  "PROCEDURE.md",
+  "**台帳の判定が PASS でなければ即停止する**（上の 2 つの `||{...}` が自動で kill する）。"
+ ],
+ [
+  "PROCEDURE.md",
+  "**INCONCLUSIVE ＝ 上の枝を選ばない**"
+ ],
+ [
+  "PROCEDURE.md",
+  "test -e ../results/z0/knob_contract.json || { echo \"PROCEDUR"
+ ],
+ [
+  "PROCEDURE.md",
+  "export TAG=diag_gvoc_nhv_176k_$(date +%Y%m%d_%H%M%S)"
+ ],
+ [
+  "PROCEDURE.md",
+  "export TAG=diag_win1024_$(date +%Y%m%d_%H%M%S)"
+ ]
+]

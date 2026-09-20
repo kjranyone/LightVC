@@ -1,0 +1,91 @@
+
+# 2026-08-24 アグレッシブ整理（オーナー指示: 劣後音声に保持価値なし）
+# 残存=現行チェーン(e2/ciptB/v2f_prior/R0走行中) + ラダー腕 + FAIL記録 + 較正セット + 削除台帳
+diag_cartA
+diag_cartB
+diag_cartC
+diag_cipt
+diag_ciptC
+diag_ciptC2
+diag_ciptC3
+diag_clamp
+diag_cplx1
+diag_cplx4
+diag_dim128_051042
+diag_dim640
+diag_direct128
+diag_dom
+diag_dom_g2c
+diag_dom_gmelV
+diag_e1
+diag_e1_look1
+diag_ear_gmelV
+diag_ear_gmelVB
+diag_ear_gmelVL
+diag_g1
+diag_g1_60k
+diag_g1_tv
+diag_g2
+diag_g2b
+diag_g2b_tv
+diag_KILLED_rtf_v1d_prior_20260812_073552
+diag_v2f16_cplx1
+diag_v2f16_cummean
+diag_v2f16_cummean_nc
+diag_v2f16_ema
+diag_v2f16_fixed
+diag_v2f16_nocplx
+diag_v2f16_none
+diag_v2f24L6_long
+diag_v2f24_long
+diag_v2f_gmelB
+diag_v2f_gmelL
+diag_wavehax_ch16
+diag_wavehax_ch16_nc
+diag_wavehax_ch96
+diag_wavehax_ctrl
+_doc_backup_20260811_054254
+e0_cache
+e0_modhunt
+e0_oracle_ltv
+e2_listen
+e2_triage
+g2c_full
+gvoc_logs
+interpretable_vc
+rddsp_ear
+rddsp_gpu
+rddsp_v1
+rddsp_v17
+rddsp_v18
+v1d_prior_20260812_074521
+v21_gs
+z0c_ear
+z0c_ear_INVALID_norm_20260811
+e0_diag.json
+e0_discriminator_hunt.json
+e0_modhunt.json
+e0_oracle_ltv.json
+e1_overfit_ltv.json
+e2_ltv_eval_a.json
+e2_ltv_eval_b.json
+e2_ltv_eval_c.json
+e2_ltv_eval_e300.json
+e2_ltv_eval_e.json
+e2_ltv_eval_espec.json
+e2_ltv_eval_gan2.json
+e2_ltv_eval_gan.json
+e2_ltv_eval_ganlc0.json
+e2_ltv_eval_ganlong.json
+e2_ltv_eval.json
+e2_triage.json
+nsf3_scoreboard.json
+decoder_finetuned_parity.safetensors
+diag_v2f_gmelB/L_last, diag_f0aug_last, diag_v23_w2_last 削除(FAIL腕・bestのみ保持)
+v23_decompose: 中間検証wav 13本削除(較正ラベル済み・R0判定用のdom_shift0/f309/gt/cs_domは保持)
+diag_ear: 中間arm削除 / diag_ear_v23: s1000/4000/8000削除(代表3本保持)
+v21_g0/v23_gp/v23_gpc: last削除(bestのみ)
+diag_v2f_gmel: last・conv(8wav)削除・best+listen3本+判定log保持
+diag_v23_w2: snap削除(s2000=引用値・bestのみ保持)
+latent48 削除(17.8k発話・344MB・中断時点)
+train_cfml.py 削除

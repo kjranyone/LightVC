@@ -1,0 +1,44 @@
+[
+ {
+  "net": 0.1,
+  "tol": 0.0087,
+  "runs": 6,
+  "want": "PASS",
+  "why": "余裕十分"
+ },
+ {
+  "net": 0.202,
+  "tol": 0.0087,
+  "runs": 6,
+  "want": "FAIL",
+  "why": "余裕 < 凍結許容差。走行を足しても解けない＝ラダーを降りる"
+ },
+ {
+  "net": 0.4,
+  "tol": 0.0087,
+  "runs": 6,
+  "want": "FAIL",
+  "why": "予算超過"
+ },
+ {
+  "net": 0.1,
+  "tol": null,
+  "runs": 6,
+  "want": "INCONCLUSIVE",
+  "why": "許容差が未凍結（規則 5）"
+ },
+ {
+  "net": 0.1,
+  "tol": 0.0087,
+  "runs": 2,
+  "want": "INCONCLUSIVE",
+  "why": "起動 n < MIN_RUNS。**ここだけ**走行を足して解ける"
+ },
+ {
+  "net": 0.202,
+  "tol": 0.0087,
+  "runs": 2,
+  "want": "INCONCLUSIVE",
+  "why": "n 不足が先に立つ"
+ }
+]

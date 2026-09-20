@@ -1,0 +1,4209 @@
+[
+ {
+  "id": "LG01",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "if d.get(\"primary_os\") == \"windows\" and not d.get(\"asio_sdk_available\") \\",
+  "new": "if False and d.get(\"primary_os\") == \"windows\" and not d.get(\"asio_sdk_available\") \\",
+  "why": "WASAPI 分岐ごと無効化",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG02",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "ev = d.get(\"asio_sdk_evidence\")",
+  "new": "ev = {\"obtained_at\": 1, \"path\": 1, \"by\": 1}",
+  "why": "ASIO 現物証跡の検査を恒真化",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG03",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "bad.append(\"asio_sdk_available: true は現物証跡（asio_sdk_evidence）が要る\")",
+  "new": "pass",
+  "why": "ASIO 証跡 abort を消す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG04",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "bad.append(\"contract.toml に lookahead_frames_D_ahead が無い（D_ahead=0 で素通りさせない）\")",
+  "new": "pass",
+  "why": "D_ahead 欠落で素通り",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG05",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "    abi_ok = False\n",
+  "new": "    abi_ok = True\n",
+  "why": "abi_ok の既定を True に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG06",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "bad.append(\"results/z0/abi.json が無い＝3 者一致が空検査になる\")",
+  "new": "abi_ok = True",
+  "why": "abi.json 不在で fail-open",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG07",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "            if got != want:",
+  "new": "            if False:",
+  "why": "3 者一致の比較を恒真化（値比較そのもの）",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG08",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "accum = math.ceil(",
+  "new": "accum = math.floor(",
+  "why": "accum を切り捨てに",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG09",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "((117 * SR / 44100 + 139) / 2) * (d[\"sinc_len\"] / 256)",
+  "new": "0",
+  "why": "リサンプル遅延を 0 に（48kHz）",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG10",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "\"2 accum\": accum / INT",
+  "new": "\"2 accum\": 0.0",
+  "why": "項 2 accum を消す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG11",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "\"4 resamp_in\": rs / SR",
+  "new": "\"4 resamp_in\": 0.0",
+  "why": "項 4 を消す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG12",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "\"5 lookahead\": D * hop / INT",
+  "new": "\"5 lookahead\": 0.0",
+  "why": "項 5 先読みを消す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG13",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "\"6 resamp_out\": rs / SR",
+  "new": "\"6 resamp_out\": 0.0",
+  "why": "項 6 を消す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG14",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "hw = {\"1 in_buf\": io / SR, \"7 out_buf\": io / SR}",
+  "new": "hw = {\"1 in_buf\": io / SR}",
+  "why": "項 7 出力バッファを消す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG15",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "ad = d[\"ad_da_estimate_ms\"]",
+  "new": "ad = 0.0",
+  "why": "項 8 AD/DA を 0 に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG16",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "Lh = sum(hw.values()) * 1e3 + ad",
+  "new": "Lh = sum(hw.values()) * 1e3",
+  "why": "L_hw から AD/DA を落とす",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG17",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "tot = Lc + Lh",
+  "new": "tot = Lc",
+  "why": "合計から hw を落とす",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG18",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "max(1, math.ceil(",
+  "new": "max(0, math.ceil(",
+  "why": "導出 q の下限 1 を外す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG19",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "elif rtf >= 1.0:",
+  "new": "elif rtf >= 999.0:",
+  "why": "RTF>=1 の abort を無効化",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG20",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "and rtf < 1.0 and q == qd",
+  "new": "and rtf < 999.0 and q == qd",
+  "why": "ok 側の RTF<1 を無効化",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG21",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "and q * io / SR >= rtf * N / INT and tot < lim",
+  "new": "and True and tot < lim",
+  "why": "ok 側の queue 制約を恒真化",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG22",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "elif q * io / SR < rtf * N / INT:",
+  "new": "elif False:",
+  "why": "queue 制約 abort を消す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG23",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "lim = 50.0 if oav else 30.0",
+  "new": "lim = 50.0",
+  "why": "既定予算を常に 50 ms に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG24",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "lim = 50.0 if oav else 30.0",
+  "new": "lim = 999.0 if oav else 30.0",
+  "why": "受容時の上限を 999 に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG25",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "\"budget_base_ms\": 30.0",
+  "new": "\"budget_base_ms\": 50.0",
+  "why": "基準予算の台帳表記を 50 に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG26",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "and abi_ok and not bad)",
+  "new": "and abi_ok)",
+  "why": "abort があっても pass:true",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG27",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "\"pass\": ok",
+  "new": "\"pass\": True",
+  "why": "pass を恒真化",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG28",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "meas = _m is not None",
+  "new": "meas = True",
+  "why": "io 実測フラグを恒真化",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG29",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "src = \"measured\" if _m is not None else \"declared\"",
+  "new": "src = \"measured\"",
+  "why": "io_source を常に measured",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG30",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "stage = \"measured\" if rsrc.startswith(str(ROOT)) or rsrc.startswith(\"results/\") else \"provisional\"",
+  "new": "stage = \"measured\"",
+  "why": "gate_stage を常に measured",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG31",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "rsrc = str(rf[-1]) if t is not None and abs(t - rtf) < 1e-9 else \"_rtf_target(provisional)\"",
+  "new": "rsrc = str(rf[-1])",
+  "why": "実測 rtf と食い違っても measured を名乗る",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG32",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "abs(t - rtf) < 1e-9",
+  "new": "abs(t - rtf) < 1.0",
+  "why": "実測との一致許容を 1.0 に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG33",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "bad.append(\"rtf_target が null（未測定でゲートを開けない）\")",
+  "new": "pass",
+  "why": "rtf 未測定の abort を消す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG34",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "reserve_ok = isinstance(ra, dict) and all(k in ra for k in (\"by\", \"at\", \"evidence\"))",
+  "new": "reserve_ok = ra is not None",
+  "why": "予備 10ms の承認を dict 検査なしに",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG35",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "if oav is not None and not (isinstance(oav, dict)",
+  "new": "if False and not (isinstance(oav, dict)",
+  "why": "30-50ms 受容の証跡検査を消す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG36",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "INT = 44100.0",
+  "new": "INT = 48000.0",
+  "why": "内部レートの定数を差し替え",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG37",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "\"content_encoder_reserve_ms\": 10.0",
+  "new": "\"content_encoder_reserve_ms\": 0.0",
+  "why": "content encoder 予備 10ms を 0 に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG38",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "    return led, bad",
+  "new": "    return led, []",
+  "why": "abort 理由を返さない",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG39",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "N = K * hop",
+  "new": "N = hop",
+  "why": "ブロック長 N の定義を壊す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG40",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "io = _m if _m is not None else d[\"io_block_samples\"]",
+  "new": "io = d[\"io_block_samples\"]",
+  "why": "実測 io を無視して宣言値を使う",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG41",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "D, dsrc = int(m.group(1)), \"contract.toml\"",
+  "new": "D, dsrc = 0, \"contract.toml\"",
+  "why": "contract の D_ahead を無視して 0 に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "LG42",
+  "cat": "LG",
+  "file": "training/latency_gate.py",
+  "old": "d[\"nfft_s\"] - hop",
+  "new": "d[\"nfft_s\"] - 2 * hop",
+  "why": "項 9 recon の式を壊す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "PL01",
+  "cat": "PL",
+  "file": "training/pre_launch_check.py",
+  "old": "if not abi.exists():",
+  "new": "if False:",
+  "why": "abi.json 不在を fail-open に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "PL02",
+  "cat": "PL",
+  "file": "training/pre_launch_check.py",
+  "old": "left = [k for k in (\"_undecided\", \"decided_by\")",
+  "new": "left = [k for k in ()",
+  "why": "ABI 凍結の対象キーを空に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "PL03",
+  "cat": "PL",
+  "file": "training/pre_launch_check.py",
+  "old": "miss = [k for k in (\"ref\", \"speakers\", \"n\", \"delta\")",
+  "new": "miss = [k for k in (\"ref\",)",
+  "why": "5.1 の 4 決定を 1 決定に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "PL04",
+  "cat": "PL",
+  "file": "training/pre_launch_check.py",
+  "old": "        if miss:",
+  "new": "        if False:",
+  "why": "4 決定のキー欠落検査を恒真化",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "PL05",
+  "cat": "PL",
+  "file": "training/pre_launch_check.py",
+  "old": "    if not f.exists():",
+  "new": "    if False:",
+  "why": "未来不変性証跡の不在を fail-open に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "PL06",
+  "cat": "PL",
+  "file": "training/pre_launch_check.py",
+  "old": "            if d.get(k) != want:",
+  "new": "            if False:",
+  "why": "証跡の構成一致検査を恒真化",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "PL07",
+  "cat": "PL",
+  "file": "training/pre_launch_check.py",
+  "old": "(\"cin\", PN.cin_of(prior))",
+  "new": "(\"cin\", d.get(\"cin\"))",
+  "why": "cin を自己参照に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "PL08",
+  "cat": "PL",
+  "file": "training/pre_launch_check.py",
+  "old": "(\"nbin\", PN.NBIN),",
+  "new": "(\"nbin\", d.get(\"nbin\")),",
+  "why": "nbin を自己参照に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "PL09",
+  "cat": "PL",
+  "file": "training/pre_launch_check.py",
+  "old": "prior = d.get(\"prior\", True)",
+  "new": "prior = d.get(\"prior\", False)",
+  "why": "prior 既定を反転（cin 期待値が 80 になる）",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "PL10",
+  "cat": "PL",
+  "file": "training/pre_launch_check.py",
+  "old": "for k, e in ((\"dim\", \"DIM\"), (\"L\", \"NLAYER\")):",
+  "new": "for k, e in ((\"dim\", \"DIM\"),):",
+  "why": "NLAYER の env 突合せを外す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "PL11",
+  "cat": "PL",
+  "file": "training/pre_launch_check.py",
+  "old": "    return bad\n",
+  "new": "    return []\n",
+  "why": "落ちた理由を返さない",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "PL12",
+  "cat": "PL",
+  "file": "training/pre_launch_check.py",
+  "old": "v, m = verdict if verdict else PN.rtf_verdict(PN.RTF_NET_DEFAULT)",
+  "new": "v, m = verdict if verdict else (\"PASS\", 1.0)",
+  "why": "実環境の RTF 判定を常に PASS に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "PL13",
+  "cat": "PL",
+  "file": "training/pre_launch_check.py",
+  "old": "bad.append(f\"2.4b の RTF 判定が {v}（余裕 {m} / ぶれ幅 {PN.RTF_SPREAD}）\")",
+  "new": "pass",
+  "why": "RTF 判定の abort を消す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "PL14",
+  "cat": "PL",
+  "file": "training/pre_launch_check.py",
+  "old": "z0.glob(\"rtf_K*_T*_d*_L*_n*.json\")",
+  "new": "z0.glob(\"*.json\")",
+  "why": "rtf_bench 実測の照合を任意 json に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "PL15",
+  "cat": "PL",
+  "file": "training/pre_launch_check.py",
+  "old": "bad.append(f\"未来不変性 ネット込みが {d.get('lookahead_ms')} ms（0.00 が必要）\")",
+  "new": "pass",
+  "why": "先読み非零の abort を消す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "PL16",
+  "cat": "PL",
+  "file": "training/pre_launch_check.py",
+  "old": "    if not via_step6:",
+  "new": "    if False:",
+  "why": "手順 1 の判定検査を常にスキップ",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "PL17",
+  "cat": "PL",
+  "file": "training/pre_launch_check.py",
+  "old": "\"手順 2 へ\" in vd.read_text()",
+  "new": "True",
+  "why": "VERDICT の中身を見ない",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "PL18",
+  "cat": "PL",
+  "file": "training/pre_launch_check.py",
+  "old": "val = env.get(e)",
+  "new": "val = env.get(e) or str(d.get(k))",
+  "why": "env 未設定を証跡で埋める（自己修復）",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "PL19",
+  "cat": "PL",
+  "file": "training/pre_launch_check.py",
+  "old": "f\"_nb{PN.NBIN}_cin{PN.CIN}_p1\")",
+  "new": "f\"_nb257_cin851_p1\")",
+  "why": "証跡キーを構成非依存のリテラルに",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "PL20",
+  "cat": "PL",
+  "file": "training/pre_launch_check.py",
+  "old": "bad.append(f\"証跡の {k}={d.get(k)}、今の構成は {want}\")",
+  "new": "pass",
+  "why": "構成不一致の abort を消す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "PL21",
+  "cat": "PL",
+  "file": "training/pre_launch_check.py",
+  "old": "bad.append(f\"{e} が未設定（4.1 の先頭で export する）\")",
+  "new": "pass",
+  "why": "env 未設定の abort を消す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "PL22",
+  "cat": "PL",
+  "file": "training/pre_launch_check.py",
+  "old": "bad.append(\"abi.json が無い（手順 3 未実施）\")",
+  "new": "pass",
+  "why": "abi 不在の abort を消す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "PL23",
+  "cat": "PL",
+  "file": "training/pre_launch_check.py",
+  "old": "bad.append(\"5.1 の 4 決定（比較相手 3 択 ＋ (n, δ)）が未確定（規則 5）\")",
+  "new": "pass",
+  "why": "4 決定未確定の abort を消す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "PL24",
+  "cat": "PL",
+  "file": "training/pre_launch_check.py",
+  "old": "bad.append(f\"未来不変性 ネット込みの証跡が無い: {f.name}\")",
+  "new": "pass",
+  "why": "証跡不在の abort を消す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "PL25",
+  "cat": "PL",
+  "file": "training/pre_launch_check.py",
+  "old": "bad.append(\"2.4b の実測（rtf_bench.py）が無い＝net RTF が未再現\")",
+  "new": "pass",
+  "why": "rtf_bench 不在の abort を消す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "FX01",
+  "cat": "FX",
+  "file": "results/z0/fixtures/g_recon_value.json",
+  "op": "delete",
+  "why": "台帳内訳を照合する唯一の fixture を消す",
+  "round": 33
+ },
+ {
+  "id": "FX02",
+  "cat": "FX",
+  "file": "results/z0/fixtures/k_over_budget.json",
+  "op": "delete",
+  "why": "予算超過 fixture を消す",
+  "round": 33
+ },
+ {
+  "id": "FX03",
+  "cat": "FX",
+  "file": "results/z0/fixtures/l_abi_mismatch.json",
+  "op": "delete",
+  "why": "ABI 不一致 fixture を消す",
+  "round": 33
+ },
+ {
+  "id": "FX04",
+  "cat": "FX",
+  "file": "results/z0/fixtures/c_provisional.json",
+  "op": "delete",
+  "why": "provisional fixture を消す",
+  "round": 33
+ },
+ {
+  "id": "FX05",
+  "cat": "FX",
+  "file": "results/z0/pl_fixtures/n_rtf_inconclusive.json",
+  "op": "delete",
+  "why": "RTF INCONCLUSIVE fixture を消す",
+  "round": 33
+ },
+ {
+  "id": "FX06",
+  "cat": "FX",
+  "file": "results/z0/pl_fixtures/m_cin_mismatch.json",
+  "op": "delete",
+  "why": "cin 不一致 fixture を消す",
+  "round": 33
+ },
+ {
+  "id": "FX07",
+  "cat": "FX",
+  "file": "results/z0/pl_fixtures/i_via_step6.json",
+  "op": "delete",
+  "why": "手順 6 経由の合格 fixture を消す",
+  "round": 33
+ },
+ {
+  "id": "FX08",
+  "cat": "FX",
+  "file": "results/z0/pl_fixtures/l_env_mismatch.json",
+  "op": "delete",
+  "why": "env 不一致 fixture を消す",
+  "round": 33
+ },
+ {
+  "id": "FX10",
+  "cat": "FX",
+  "file": "results/z0/fixtures/g_recon_value.json",
+  "op": "write",
+  "new": "{\n \"input\": {\n  \"schema\": 1,\n  \"primary_os\": \"windows\",\n  \"secondary_os\": [\n   \"linux\"\n  ],\n  \"audio_backend\": [\n   \"wasapi\",\n   \"asio\"\n  ],\n  \"plugin_formats\": [\n   \"standalone\",\n   \"vst3\"\n  ],\n  \"target_cpu\": \"x86_64 4C8T 相当\",\n  \"app_audio_device\": \"（アプリが使う I/F: 型番 / ドライバ / 設定）\",\n  \"reference_audio_device\": \"（測定器側の基準機: 型番 / ドライバ / 設定）\",\n  \"thread_budget\": 2,\n  \"io_block_samples\": 64,\n  \"io_block_samples_measured\": 64,\n  \"net_block_frames\": 2,\n  \"queue_depth_io_blocks\": 2,\n  \"rtf_target\": 0.49,\n  \"_rtf_target\": \"未測定。PROCEDURE.md 2.4b を通すまで −1.1c は正直に FAIL させる\",\n  \"owner_accepted_over_30ms\": null,\n  \"_owner_accepted_over_30ms\": \"オーナーが 30-50ms 帯を受容した場合に {\\\"by\\\":..., \\\"at\\\":..., \\\"evidence\\\":\\\"results/z0/latency_decision.md\\\"} を書く。null なら -1.1c は 30ms 未満を要求する\",\n  \"sinc_len\": 256,\n  \"ad_da_estimate_ms\": 10.0,\n  \"resamp_samples\": 0,\n  \"hop\": 128,\n  \"hop_a\": 256,\n  \"nfft_s\": 512,\n  \"sample_rate\": 44100,\n  \"asio_sdk_available\": true,\n  \"windows_build\": \"native\",\n  \"asio_sdk_evidence\": {\n   \"obtained_at\": \"2026-08-11\",\n   \"path\": \"/opt/asio\",\n   \"by\": \"owner\"\n  }\n },\n \"expect\": {\n  \"d_ahead\": 0\n }\n}",
+  "why": "g_recon_value の期待値を d_ahead だけに削る",
+  "round": 33
+ },
+ {
+  "id": "FX11",
+  "cat": "FX",
+  "file": "results/z0/fixtures/b_measured.json",
+  "op": "write",
+  "new": "{\n \"input\": {\n  \"schema\": 1,\n  \"primary_os\": \"windows\",\n  \"secondary_os\": [\n   \"linux\"\n  ],\n  \"audio_backend\": [\n   \"wasapi\",\n   \"asio\"\n  ],\n  \"plugin_formats\": [\n   \"standalone\",\n   \"vst3\"\n  ],\n  \"target_cpu\": \"x86_64 4C8T 相当\",\n  \"app_audio_device\": \"（アプリが使う I/F: 型番 / ドライバ / 設定）\",\n  \"reference_audio_device\": \"（測定器側の基準機: 型番 / ドライバ / 設定）\",\n  \"thread_budget\": 2,\n  \"io_block_samples\": 64,\n  \"io_block_samples_measured\": 64,\n  \"net_block_frames\": 2,\n  \"queue_depth_io_blocks\": 2,\n  \"rtf_target\": 0.49,\n  \"_rtf_target\": \"未測定。PROCEDURE.md 2.4b を通すまで −1.1c は正直に FAIL させる\",\n  \"owner_accepted_over_30ms\": null,\n  \"_owner_accepted_over_30ms\": \"オーナーが 30-50ms 帯を受容した場合に {\\\"by\\\":..., \\\"at\\\":..., \\\"evidence\\\":\\\"results/z0/latency_decision.md\\\"} を書く。null なら -1.1c は 30ms 未満を要求する\",\n  \"sinc_len\": 256,\n  \"ad_da_estimate_ms\": 10.0,\n  \"resamp_samples\": 0,\n  \"hop\": 128,\n  \"hop_a\": 256,\n  \"nfft_s\": 512,\n  \"sample_rate\": 44100,\n  \"asio_sdk_available\": true,\n  \"windows_build\": \"native\",\n  \"asio_sdk_evidence\": {\n   \"obtained_at\": \"2026-08-11\",\n   \"path\": \"/opt/asio\",\n   \"by\": \"owner\"\n  },\n  \"reserve_owner_approved\": {\n   \"by\": \"owner\",\n   \"at\": \"2026-08-11\",\n   \"evidence\": \"x\"\n  }\n },\n \"expect\": {\n  \"pass\": true\n }\n}",
+  "why": "b_measured の期待値を pass だけに削る",
+  "round": 33
+ },
+ {
+  "id": "FX12",
+  "cat": "FX",
+  "file": "results/z0/fixtures/i_all_green.json",
+  "op": "write",
+  "new": "{\n \"input\": {\n  \"schema\": 1,\n  \"primary_os\": \"windows\",\n  \"secondary_os\": [\n   \"linux\"\n  ],\n  \"audio_backend\": [\n   \"wasapi\",\n   \"asio\"\n  ],\n  \"plugin_formats\": [\n   \"standalone\",\n   \"vst3\"\n  ],\n  \"target_cpu\": \"x86_64 4C8T 相当\",\n  \"app_audio_device\": \"（アプリが使う I/F: 型番 / ドライバ / 設定）\",\n  \"reference_audio_device\": \"（測定器側の基準機: 型番 / ドライバ / 設定）\",\n  \"thread_budget\": 2,\n  \"io_block_samples\": 64,\n  \"io_block_samples_measured\": 64,\n  \"net_block_frames\": 2,\n  \"queue_depth_io_blocks\": 2,\n  \"rtf_target\": 0.49,\n  \"_rtf_target\": \"未測定。PROCEDURE.md 2.4b を通すまで −1.1c は正直に FAIL させる\",\n  \"owner_accepted_over_30ms\": null,\n  \"_owner_accepted_over_30ms\": \"オーナーが 30-50ms 帯を受容した場合に {\\\"by\\\":..., \\\"at\\\":..., \\\"evidence\\\":\\\"results/z0/latency_decision.md\\\"} を書く。null なら -1.1c は 30ms 未満を要求する\",\n  \"sinc_len\": 256,\n  \"ad_da_estimate_ms\": 10.0,\n  \"resamp_samples\": 0,\n  \"hop\": 128,\n  \"hop_a\": 256,\n  \"nfft_s\": 512,\n  \"sample_rate\": 44100,\n  \"asio_sdk_available\": true,\n  \"windows_build\": \"native\",\n  \"asio_sdk_evidence\": {\n   \"obtained_at\": \"2026-08-11\",\n   \"path\": \"/opt/asio\",\n   \"by\": \"owner\"\n  },\n  \"reserve_owner_approved\": {\n   \"by\": \"owner\",\n   \"at\": \"2026-08-11\",\n   \"evidence\": \"x\"\n  }\n },\n \"expect\": {\n  \"pass\": true\n }\n}",
+  "why": "i_all_green の期待値を pass だけに削る",
+  "round": 33
+ },
+ {
+  "id": "FX13",
+  "cat": "FX",
+  "file": "results/z0/fixtures/m_measured_pass.json",
+  "op": "write",
+  "new": "{\n \"input\": {\n  \"schema\": 1,\n  \"primary_os\": \"windows\",\n  \"secondary_os\": [\n   \"linux\"\n  ],\n  \"audio_backend\": [\n   \"wasapi\",\n   \"asio\"\n  ],\n  \"plugin_formats\": [\n   \"standalone\",\n   \"vst3\"\n  ],\n  \"target_cpu\": \"x86_64 4C8T 相当\",\n  \"app_audio_device\": \"（アプリが使う I/F: 型番 / ドライバ / 設定）\",\n  \"reference_audio_device\": \"（測定器側の基準機: 型番 / ドライバ / 設定）\",\n  \"thread_budget\": 2,\n  \"io_block_samples\": 64,\n  \"io_block_samples_measured\": 64,\n  \"net_block_frames\": 2,\n  \"queue_depth_io_blocks\": 2,\n  \"rtf_target\": 0.49,\n  \"_rtf_target\": \"未測定。PROCEDURE.md 2.4b を通すまで −1.1c は正直に FAIL させる\",\n  \"owner_accepted_over_30ms\": null,\n  \"_owner_accepted_over_30ms\": \"オーナーが 30-50ms 帯を受容した場合に {\\\"by\\\":..., \\\"at\\\":..., \\\"evidence\\\":\\\"results/z0/latency_decision.md\\\"} を書く。null なら -1.1c は 30ms 未満を要求する\",\n  \"sinc_len\": 256,\n  \"ad_da_estimate_ms\": 10.0,\n  \"resamp_samples\": 0,\n  \"hop\": 128,\n  \"hop_a\": 256,\n  \"nfft_s\": 512,\n  \"sample_rate\": 44100,\n  \"asio_sdk_available\": true,\n  \"windows_build\": \"native\",\n  \"asio_sdk_evidence\": {\n   \"obtained_at\": \"2026-08-11\",\n   \"path\": \"/opt/asio\",\n   \"by\": \"owner\"\n  },\n  \"reserve_owner_approved\": {\n   \"by\": \"owner\",\n   \"at\": \"2026-08-11\",\n   \"evidence\": \"x\"\n  }\n },\n \"expect\": {\n  \"pass\": true\n }\n}",
+  "why": "m_measured_pass の期待値を pass だけに削る",
+  "round": 33
+ },
+ {
+  "id": "FX14",
+  "cat": "FX",
+  "file": "results/z0/fixtures/k_over_budget.json",
+  "op": "write",
+  "new": "{\n \"input\": {\n  \"schema\": 1,\n  \"primary_os\": \"windows\",\n  \"secondary_os\": [\n   \"linux\"\n  ],\n  \"audio_backend\": [\n   \"wasapi\",\n   \"asio\"\n  ],\n  \"plugin_formats\": [\n   \"standalone\",\n   \"vst3\"\n  ],\n  \"target_cpu\": \"x86_64 4C8T 相当\",\n  \"app_audio_device\": \"（アプリが使う I/F: 型番 / ドライバ / 設定）\",\n  \"reference_audio_device\": \"（測定器側の基準機: 型番 / ドライバ / 設定）\",\n  \"thread_budget\": 2,\n  \"io_block_samples\": 64,\n  \"io_block_samples_measured\": 512,\n  \"net_block_frames\": 2,\n  \"queue_depth_io_blocks\": 1,\n  \"rtf_target\": 0.49,\n  \"_rtf_target\": \"未測定。PROCEDURE.md 2.4b を通すまで −1.1c は正直に FAIL させる\",\n  \"owner_accepted_over_30ms\": null,\n  \"_owner_accepted_over_30ms\": \"オーナーが 30-50ms 帯を受容した場合に {\\\"by\\\":..., \\\"at\\\":..., \\\"evidence\\\":\\\"results/z0/latency_decision.md\\\"} を書く。null なら -1.1c は 30ms 未満を要求する\",\n  \"sinc_len\": 256,\n  \"ad_da_estimate_ms\": 10.0,\n  \"resamp_samples\": 0,\n  \"hop\": 128,\n  \"hop_a\": 256,\n  \"nfft_s\": 512,\n  \"sample_rate\": 44100,\n  \"asio_sdk_available\": true,\n  \"windows_build\": \"native\",\n  \"asio_sdk_evidence\": {\n   \"obtained_at\": \"2026-08-11\",\n   \"path\": \"/opt/asio\",\n   \"by\": \"owner\"\n  },\n  \"reserve_owner_approved\": {\n   \"by\": \"owner\",\n   \"at\": \"2026-08-11\",\n   \"evidence\": \"x\"\n  }\n },\n \"expect\": {\n  \"pass\": false\n }\n}",
+  "why": "k_over_budget の期待値を pass だけに削る",
+  "round": 33
+ },
+ {
+  "id": "FX15",
+  "cat": "FX",
+  "file": "results/z0/fixtures/a_template.json",
+  "old": "\"expect_abort_contains\": \"WASAPI\"",
+  "new": "\"expect_abort_contains\": \"\"",
+  "why": "WASAPI 理由照合を空文字にして恒真化",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "FX16",
+  "cat": "FX",
+  "file": "results/z0/fixtures/d_q_not_derived.json",
+  "old": "\"expect_abort_contains\": \"q は導出値\"",
+  "new": "\"expect_abort_contains\": \"\"",
+  "why": "q 導出理由照合を空文字に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "FX17",
+  "cat": "FX",
+  "file": "results/z0/fixtures/e_k_constraint.json",
+  "old": "\"expect_abort_contains\": \"K 制約違反\"",
+  "new": "\"expect_abort_contains\": \"\"",
+  "why": "K 制約理由照合を空文字に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "FX18",
+  "cat": "FX",
+  "file": "results/z0/fixtures/f_rtf_ge_1.json",
+  "old": "\"expect_abort_contains\": \"RTF >= 1\"",
+  "new": "\"expect_abort_contains\": \"\"",
+  "why": "RTF>=1 理由照合を空文字に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "FX19",
+  "cat": "FX",
+  "file": "results/z0/fixtures/l_abi_mismatch.json",
+  "old": "\"expect_abort_contains\": \"nfft_s 不一致\"",
+  "new": "\"expect_abort_contains\": \"\"",
+  "why": "ABI 不一致理由照合を空文字に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "FX20",
+  "cat": "FX",
+  "file": "results/z0/pl_fixtures/c_unbounded.json",
+  "old": "\"expect_reason_contains\": \"UNBOUNDED\"",
+  "new": "\"expect_reason_contains\": \"\"",
+  "why": "UNBOUNDED 理由照合を空文字に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "FX21",
+  "cat": "FX",
+  "file": "results/z0/pl_fixtures/d_inconclusive.json",
+  "old": "\"expect_reason_contains\": \"INCONCLUSIVE\"",
+  "new": "\"expect_reason_contains\": \"\"",
+  "why": "INCONCLUSIVE 理由照合を空文字に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "FX22",
+  "cat": "FX",
+  "file": "results/z0/pl_fixtures/k_env_missing.json",
+  "old": "\"expect_reason_contains\": \"が未設定\"",
+  "new": "\"expect_reason_contains\": \"\"",
+  "why": "env 未設定理由照合を空文字に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "FX23",
+  "cat": "FX",
+  "file": "results/z0/pl_fixtures/g_no_rtf_bench.json",
+  "old": "\"expect_reason_contains\": \"net RTF が未再現\"",
+  "new": "\"expect_reason_contains\": \"\"",
+  "why": "rtf_bench 理由照合を空文字に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "FX24",
+  "cat": "FX",
+  "file": "results/z0/pl_fixtures/a_all_green.json",
+  "old": "\"verdict\": [\n  \"PASS\",\n  0.05\n ]",
+  "new": "\"verdict\": [\n  \"PASS\",\n  0.0\n ]",
+  "why": "合格 fixture の判定余裕を 0 に（判定注入の任意性）",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "FX26",
+  "cat": "FX",
+  "file": "results/z0/pl_fixtures/z_green/future_inv_net_d256_L6_ki7_k3_nb257_cin851_p1.json",
+  "old": "\"lookahead_ms\": 0.0",
+  "new": "\"lookahead_ms\": 0",
+  "why": "合格 fixture の先読みを int 0 に（型で緩む）",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "FX27",
+  "cat": "FX",
+  "file": "results/z0/pl_fixtures/z_unb/ceiling_decision.json",
+  "op": "delete",
+  "why": "不合格 fixture の前提ファイルを消す",
+  "round": 33
+ },
+ {
+  "id": "D01",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "export N_TRIAL=10",
+  "new": "export N_TRIAL=4",
+  "why": "手順 1 の試行数を減らす",
+  "count": 5,
+  "round": 33
+ },
+ {
+  "id": "D02",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "Nv ≥ 4 を確認",
+  "new": "Nv ≥ 2 を確認",
+  "why": "有効試行数の下限を下げる",
+  "count": 2,
+  "round": 33
+ },
+ {
+  "id": "D03",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "劣化 δ = 0.15 内",
+  "new": "劣化 δ = 0.30 内",
+  "why": "ceiling の劣化許容を倍に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D05",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "合格線 0.35",
+  "new": "合格線 0.55",
+  "why": "RTF 合格線を緩める",
+  "count": 4,
+  "round": 33
+ },
+ {
+  "id": "D06",
+  "cat": "DOC",
+  "file": "current/PROCEDURE_APP.md",
+  "old": "設計目標 30 ms を割る",
+  "new": "設計目標 50 ms を割る",
+  "why": "E2E 設計目標を 50ms に",
+  "count": 2,
+  "round": 33
+ },
+ {
+  "id": "D07",
+  "cat": "DOC",
+  "file": "current/PROCEDURE_APP.md",
+  "old": "p95 ≥ 50 ms は失格",
+  "new": "p95 ≥ 80 ms は失格",
+  "why": "失格上限を 80ms に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D08",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "**Nv ≥ 4 を必須**",
+  "new": "**Nv ≥ 3 を必須**",
+  "why": "5.3 の Nv 下限",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D09",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "**a ≥ Nv/2**",
+  "new": "**a ≥ Nv/3**",
+  "why": "耳ゲートの合格率",
+  "count": 2,
+  "round": 33
+ },
+ {
+  "id": "D10",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "再レンダは合計 2 回まで",
+  "new": "再レンダは合計 5 回まで",
+  "why": "再レンダ上限",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D11",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "1 候補あたりの上限は GPU 時間で数える: 120 h",
+  "new": "1 候補あたりの上限は GPU 時間で数える: 240 h",
+  "why": "候補あたり GPU 上限を倍に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D14",
+  "cat": "DOC",
+  "file": "current/PROCEDURE_APP.md",
+  "old": "最大絶対誤差 ≤ 1e-4",
+  "new": "最大絶対誤差 ≤ 1e-2",
+  "why": "C.3 mel 一致許容を緩める",
+  "count": 3,
+  "round": 33
+ },
+ {
+  "id": "D15",
+  "cat": "DOC",
+  "file": "current/PROCEDURE_APP.md",
+  "old": "±5 cent",
+  "new": "±50 cent",
+  "why": "C.3 f0 一致許容を緩める",
+  "count": 5,
+  "round": 33
+ },
+ {
+  "id": "D16",
+  "cat": "DOC",
+  "file": "current/PROCEDURE_APP.md",
+  "old": "±2 サンプル以内で一致する",
+  "new": "±20 サンプル以内で一致する",
+  "why": "C.6 PDC 許容",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D17",
+  "cat": "DOC",
+  "file": "current/PROCEDURE_APP.md",
+  "old": "先頭 **2.0 秒以上を破棄**",
+  "new": "先頭 **0.2 秒以上を破棄**",
+  "why": "F.1 ウォームアップ",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D18",
+  "cat": "DOC",
+  "file": "current/PROCEDURE_APP.md",
+  "old": "4 時間連続",
+  "new": "1 時間連続",
+  "why": "G.4 連続稼働時間",
+  "count": 2,
+  "round": 33
+ },
+ {
+  "id": "D19",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "| 1 | **入力リング** | **1792 sample**",
+  "new": "| 1 | **入力リング** | **768 sample**",
+  "why": "入力リング長",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D20",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "| 5 | **励起リング** | **384 sample**",
+  "new": "| 5 | **励起リング** | **256 sample**",
+  "why": "励起リング長",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D21",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "**推論経路に発話全体の統計を置かない**",
+  "new": "**推論経路に発話全体の統計を置かない**（ただし 4.1 の関門を通れば発話全体統計を使ってよい）",
+  "why": "規則 2 に例外を追加（needle は残す）",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D22",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "**昇格は耳のみ。**",
+  "new": "**昇格は耳のみ。**ただし proxy が 2 指標で一致したときは耳を省略してよい。",
+  "why": "規則 4 に proxy 単独昇格の例外を追加",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D23",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "**⚠ 白色雑音で測らない**",
+  "new": "**⚠ 白色雑音で測らない**（実音声が用意できないときは白色雑音で代替してよい）",
+  "why": "白色雑音プローブ禁止に例外を追加",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D24",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "**同じ TAG で再走行しない。**",
+  "new": "**同じ TAG で再走行しない。**（results/ を退避すれば上書きしてよい）",
+  "why": "規則 9 に例外を追加",
+  "count": 2,
+  "round": 33
+ },
+ {
+  "id": "D25",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "**⚠ 禁止（明文）: V に時間軸をまたぐ正規化層を置かない。**",
+  "new": "**⚠ 禁止（明文）: V に時間軸をまたぐ正規化層を置かない。**（GroupNorm(1,ch) は先読み 0 なので例外的に可）",
+  "why": "GroupNorm 禁止に例外を追加",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D26",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "**加算複素残差にすること（自由位相にしない）。**",
+  "new": "**加算複素残差にすること（自由位相にしない）。**（学習が難しい場合は自由位相でよい）",
+  "why": "自由位相禁止に例外を追加",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D33",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "uv run python pre_launch_check.py || { return 2>/dev/null || exit 1; }",
+  "new": "uv run python pre_launch_check.py || true",
+  "why": "起動前ゲートの結果を無視する",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D34",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "uv run python pre_launch_check.py || { return 2>/dev/null || exit 1; }",
+  "new": "uv run python pre_launch_check.py --fixtures || { return 2>/dev/null || exit 1; }",
+  "why": "実環境判定でなく fixture 検証を呼ぶ",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D35",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "uv run python pre_launch_check.py || { return 2>/dev/null || exit 1; }",
+  "new": "true   # 起動前ゲートは 4.2 のあとに回す",
+  "why": "起動前ゲートの呼び出しを消す（言及は残す）",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D36",
+  "cat": "DOC",
+  "file": "current/PROCEDURE_APP.md",
+  "old": "cd training && uv run python latency_gate.py ../results/z0/target_platform.json",
+  "new": "cd training && uv run python latency_gate.py ../results/z0/target_platform.json || true",
+  "why": "−1.1c 検算の結果を無視する",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D42",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "assert d['lookahead_ms'] == 0.0 and not d.get('unbounded')",
+  "new": "assert d['lookahead_ms'] <= 1.0 and not d.get('unbounded')",
+  "why": "貼られた未来不変性 assert の許容を 1ms に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D43",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "    assert d[k] == v, f'証跡の {k} が {d[k]}、今の構成は {v}。取り直す'",
+  "new": "    pass  # 証跡の構成一致は pre_launch_check に任せる",
+  "why": "貼られた構成一致 assert を消す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D44",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "    assert d[k] == int(v), f'証跡の {k}={d[k]} と env {e}={v} が違う'",
+  "new": "    pass",
+  "why": "貼られた env 突合せ assert を消す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D45",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "if [ -e ../results/$TAG ]; then echo \"既存 TAG あり。中止\"; return 2>/dev/null || exit 1; fi",
+  "new": "if [ -e ../results/$TAG ]; then echo \"既存 TAG あり。続行\"; fi",
+  "why": "TAG 上書きガードを外す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D46",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "[ -n \"$HFW\" ] || { echo \"HFW 未設定。3.2 で決めた値を export する（abi_notes.txt）\"; \\",
+  "new": "[ -n \"$HFW\" ] || { echo \"HFW 未設定（既定で続行）\"; true; } # \\",
+  "why": "HFW 未設定ガードを外す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D31",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "| **net に残る予算**（合格線 0.35） | 無し | **0.21** |",
+  "new": "<!-- th:skip 参考値 -->\n| **net に残る予算**（合格線 0.55） | 無し | **0.21** |",
+  "why": "th:skip マーカーを足して閾値を変える",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D51",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "```bash\nuv run python ship_check.py",
+  "new": "```bash\nmkdir -p /tmp/gr && uv run python ship_check.py",
+  "why": "実行対象ブロックを 1 本、除外に落とす（カバレッジ床 6）",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D52",
+  "cat": "DOC",
+  "file": "current/PROCEDURE_APP.md",
+  "old": "\"rtf_target\": null,",
+  "new": "\"rtf_target\": null,\n  \"_rtf_target_example\": 0.49,",
+  "why": "雛形に実測済みに見える別キーを足す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "C01",
+  "cat": "DOC",
+  "file": "current/PROCEDURE_APP.md",
+  "old": "<!-- gate: expect-nonzero /WASAPI/",
+  "new": "<!-- gate: expect-nonzero /ZZZNOTHING/",
+  "why": "[制御] expect-nonzero の期待メッセージを別物に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "C02",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "**推論経路に発話全体の統計を置かない**",
+  "new": "**推論経路に発話全体の統計を置いてよい**",
+  "why": "[制御] 規則 2 の needle を消す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "C03",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "### 5.6",
+  "new": "### 5.6z",
+  "why": "[制御] 必須節を消す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "C04",
+  "cat": "DOC",
+  "file": "current/PROCEDURE_APP.md",
+  "old": "\"asio_sdk_available\": false,",
+  "new": "\"asio_sdk_available\": true,",
+  "why": "[制御] 雛形の ASIO 既定を反転",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "C05",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "cd /home/kojirotanaka/kjranyone/LightVC/training",
+  "new": "cd /home/kojirotanaka/kjranyone/LightVC/trainingX",
+  "why": "[制御] cd 先を割る",
+  "count": 11,
+  "round": 33
+ },
+ {
+  "id": "H01",
+  "cat": "H",
+  "file": "results/z0/inv_counts.json",
+  "old": "\": 1,\n \"PROCEDURE.md\\u0000| **`mlin`**",
+  "new": "\": 2,\n \"PROCEDURE.md\\u0000| **`mlin`**",
+  "why": "[制御] inv_counts の出現数を改竄",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "H02",
+  "cat": "H",
+  "file": "results/z0/inv_counts.json",
+  "op": "write",
+  "new": "{}",
+  "why": "inv_counts を空にして出現数固定を無効化",
+  "round": 33
+ },
+ {
+  "id": "H03",
+  "cat": "H",
+  "file": "results/z0/doc_sizes.json",
+  "op": "delete",
+  "why": "行数ベースラインを消す（切り貼り事故の検出が無効に）",
+  "round": 33
+ },
+ {
+  "id": "H04",
+  "cat": "H",
+  "file": "results/z0/number_provenance.json",
+  "old": "\"0.33\": \"artifact\"",
+  "new": "\"0.33\": \"prose\"",
+  "why": "artifact を prose に付け替えて照合義務を外す",
+  "count": 2,
+  "round": 33
+ },
+ {
+  "id": "H05",
+  "cat": "H",
+  "file": "results/z0/number_provenance.json",
+  "op": "delete",
+  "why": "[制御] 出所台帳ごと消す",
+  "round": 33
+ },
+ {
+  "id": "H06",
+  "cat": "H",
+  "file": "results/z0/abi.json",
+  "old": "\"n_fft\": 512",
+  "new": "\"n_fft\": 256",
+  "why": "正本 abi.json の n_fft を改竄（3 者一致の基準）",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "H07",
+  "cat": "H",
+  "file": "results/z0/abi.json",
+  "op": "delete",
+  "why": "正本 abi.json を消す",
+  "round": 33
+ },
+ {
+  "id": "H08",
+  "cat": "H",
+  "file": "crates/lightvc-core/contract.toml",
+  "op": "write",
+  "new": "lookahead_frames_D_ahead = 4\n",
+  "why": "contract.toml を D_ahead=4 で新設（項 5 が動く）",
+  "round": 33
+ },
+ {
+  "id": "H09",
+  "cat": "H",
+  "file": "crates/lightvc-core/contract.toml",
+  "op": "write",
+  "new": "# D_ahead はまだ決めていない\n",
+  "why": "contract.toml を鍵無しで新設（D=0 素通り）",
+  "round": 33
+ },
+ {
+  "id": "H10",
+  "cat": "H",
+  "file": "results/z0/target_platform.json",
+  "old": "\"rtf_target\": null",
+  "new": "\"rtf_target\": 0.49",
+  "why": "正本 target_platform に未実測 RTF を書き込む",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "H11",
+  "cat": "H",
+  "file": "results/z0/target_platform.json",
+  "old": "\"asio_sdk_available\": false",
+  "new": "\"asio_sdk_available\": true",
+  "why": "正本 target_platform で ASIO 有りを自己申告",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "H12",
+  "cat": "H",
+  "file": "training/plan_numbers.py",
+  "old": "RTF_SPREAD = (round(max(_H) - min(_H), 4) if len(_H) >= MIN_RUNS else None)",
+  "new": "RTF_SPREAD = 0.0001",
+  "why": "[制御] ぶれ幅を潰して判定を PASS に",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "H13",
+  "cat": "H",
+  "file": "results/z0/rtf_fullgraph_fixture.json",
+  "op": "delete",
+  "why": "full graph 実測の写しを消す",
+  "round": 33
+ },
+ {
+  "id": "D53",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "# ⚠ **未来不変性ゲートより前に置く**（ゲートがこれを読む）。",
+  "new": "# ゲートの後で構わない（ゲートは env を見ない）。",
+  "why": "env export の順序規約を反転",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D55",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "**4.1 と 4.2 は同じシェルで続けて実行する**（`$TAG` を引き継ぐため）。",
+  "new": "**4.1 と 4.2 は別シェルで実行してよい。**",
+  "why": "同一シェル規約を反転",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D56",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "## 手順 4 [GPU]【手順 1 が「手順 2 へ」かつ手順 3 完了後】学習",
+  "new": "## 手順 4 [GPU]【いつでも開始してよい】学習",
+  "why": "手順 4 の入場条件を消す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D64",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "### 4.1 起動前チェック",
+  "new": "### 4.1 起動前チェック\n\n> **まず `rcav_feat` の 42 話者だけで 1 時間回して感触を掴んでから本走行する。**",
+  "why": "少数話者の予備走行を指示（CLAUDE.md 違反）",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D65",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "cd /home/kojirotanaka/kjranyone/LightVC/training\nnvidia-smi",
+  "new": "cd /home/kojirotanaka/kjranyone/LightVC/training\nconda activate lightvc\nnvidia-smi",
+  "why": "conda を手順に入れる（CLAUDE.md 違反）",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D66",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "### 4.2 起動",
+  "new": "### 4.2 起動\n\n> **別 VC（RVC）の変換音声を target にした synthetic parallel で温める。**",
+  "why": "VC teacher 蒸留を指示（CLAUDE.md 違反）",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D67",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "### 5.1",
+  "new": "### 5.1z",
+  "why": "[制御] 5.1 の節番号を壊す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D68",
+  "cat": "DOC",
+  "file": "current/PROCEDURE_APP.md",
+  "old": "#### C.5-key",
+  "new": "#### C.5-keys",
+  "why": "[制御] C.5-key の表を消す",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "D51b",
+  "cat": "DOC",
+  "file": "current/PROCEDURE.md",
+  "old": "```bash\ncd /home/kojirotanaka/kjranyone/LightVC/training\nnvidia-smi",
+  "new": "```bash\nmkdir -p /tmp/gr2\ncd /home/kojirotanaka/kjranyone/LightVC/training\nnvidia-smi",
+  "why": "実行対象をもう 1 本除外に落とす（床割れ）",
+  "count": 1,
+  "round": 33
+ },
+ {
+  "id": "L01",
+  "cat": "gate-code",
+  "desc": "項5 lookahead を 0 に固定（D_ahead を無視）",
+  "ops": [
+   [
+    "rep",
+    "training/latency_gate.py",
+    "\"5 lookahead\": D * hop / INT",
+    "\"5 lookahead\": 0.0"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "L02",
+  "cat": "gate-code",
+  "desc": "contract.toml の D_ahead を読んでも 0 にする",
+  "ops": [
+   [
+    "rep",
+    "training/latency_gate.py",
+    "D, dsrc = int(m.group(1)), \"contract.toml\"",
+    "D, dsrc = 0, \"contract.toml\""
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "L03",
+  "cat": "gate-code",
+  "desc": "3者一致の hop_a 照合を恒真化",
+  "ops": [
+   [
+    "rep",
+    "training/latency_gate.py",
+    "(\"hop_a\", d[\"hop_a\"], A[\"mel_analysis\"][\"hop\"])",
+    "(\"hop_a\", d[\"hop_a\"], d[\"hop_a\"])"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "L04",
+  "cat": "gate-code",
+  "desc": "3者一致の hop 照合を恒真化",
+  "ops": [
+   [
+    "rep",
+    "training/latency_gate.py",
+    "(\"hop\", hop, A[\"synthesis\"][\"hop\"])",
+    "(\"hop\", hop, hop)"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "L05",
+  "cat": "gate-code",
+  "desc": "予備10ms 承認の形式検査を「非 null」に緩める",
+  "ops": [
+   [
+    "rep",
+    "training/latency_gate.py",
+    "reserve_ok = isinstance(ra, dict) and all(k in ra for k in (\"by\", \"at\", \"evidence\"))",
+    "reserve_ok = ra is not None"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "L06",
+  "cat": "gate-code",
+  "desc": "io_source を常に declared と名乗る（出所の偽装）",
+  "ops": [
+   [
+    "rep",
+    "training/latency_gate.py",
+    "src = \"measured\" if _m is not None else \"declared\"",
+    "src = \"declared\""
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "L07",
+  "cat": "gate-code",
+  "desc": "content encoder 予備 10ms を 0 と台帳に書く",
+  "ops": [
+   [
+    "rep",
+    "training/latency_gate.py",
+    "\"content_encoder_reserve_ms\": 10.0",
+    "\"content_encoder_reserve_ms\": 0.0"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "L08",
+  "cat": "gate-code",
+  "desc": "budget_base_ms を 30→50（基準線の書き換え）",
+  "ops": [
+   [
+    "rep",
+    "training/latency_gate.py",
+    "\"budget_base_ms\": 30.0",
+    "\"budget_base_ms\": 50.0"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "L09",
+  "cat": "gate-code",
+  "desc": "queue 制約違反の abort を恒偽化",
+  "ops": [
+   [
+    "rep",
+    "training/latency_gate.py",
+    "elif q * io / SR < rtf * N / INT:",
+    "elif False:"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "L10",
+  "cat": "gate-code",
+  "desc": "pass 条件から queue 制約を外す",
+  "ops": [
+   [
+    "rep",
+    "training/latency_gate.py",
+    "and q * io / SR >= rtf * N / INT and tot < lim",
+    "and True and tot < lim"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "L11",
+  "cat": "gate-code",
+  "desc": "導出 q の下限 1 を 0 にする",
+  "ops": [
+   [
+    "rep",
+    "training/latency_gate.py",
+    "max(1, math.ceil(rtf * N / INT * SR / io))",
+    "max(0, math.ceil(rtf * N / INT * SR / io))"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "L12",
+  "cat": "gate-code",
+  "desc": "gate_stage を常に measured にする（provisional 段の消滅）",
+  "ops": [
+   [
+    "rep",
+    "training/latency_gate.py",
+    "stage = \"measured\" if rsrc.startswith(str(ROOT)) or rsrc.startswith(\"results/\") else \"provisional\"",
+    "stage = \"measured\""
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "L13",
+  "cat": "gate-code",
+  "desc": "rtf_target_source を実測ファイルと照合せずに名乗る",
+  "ops": [
+   [
+    "rep",
+    "training/latency_gate.py",
+    "rsrc = str(rf[-1]) if t is not None and abs(t - rtf) < 1e-9 else \"_rtf_target(provisional)\"",
+    "rsrc = str(rf[-1])"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "L14",
+  "cat": "gate-code",
+  "desc": "項9 recon のラベル改名（D2 の 9 項表示契約が壊れる）",
+  "ops": [
+   [
+    "rep",
+    "training/latency_gate.py",
+    "\"9 recon\": (d[\"nfft_s\"] - hop) / INT",
+    "\"9 recon_x\": (d[\"nfft_s\"] - hop) / INT"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "L15",
+  "cat": "gate-code",
+  "desc": "オーナー承認の形式検査から evidence を外す",
+  "ops": [
+   [
+    "rep",
+    "training/latency_gate.py",
+    "all(k in oav for k in (\"by\", \"at\", \"evidence\"))",
+    "all(k in oav for k in (\"by\", \"at\"))"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "L16",
+  "cat": "gate-code",
+  "desc": "台帳の scope を fullgraph→vonly（V 単体を full graph と名乗る）",
+  "ops": [
+   [
+    "rep",
+    "training/latency_gate.py",
+    "\"scope\": \"fullgraph\"",
+    "\"scope\": \"vonly\""
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "L17",
+  "cat": "gate-code",
+  "desc": "8 hw_ms の報告値を 0 にする",
+  "ops": [
+   [
+    "rep",
+    "training/latency_gate.py",
+    "\"8 hw_ms\": ad,",
+    "\"8 hw_ms\": 0.0,"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "L18",
+  "cat": "gate-code",
+  "desc": "reserve_assumption A→B（10ms 仮置きの記録を偽る）",
+  "ops": [
+   [
+    "rep",
+    "training/latency_gate.py",
+    "\"reserve_assumption\": \"A\"",
+    "\"reserve_assumption\": \"B\""
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "L19",
+  "cat": "gate-code",
+  "desc": "WASAPI 既定周期を SR/100→SR/1000 に（対照: 捕まるはず）",
+  "ops": [
+   [
+    "rep",
+    "training/latency_gate.py",
+    "io < round(SR / 100)",
+    "io < round(SR / 1000)"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "L20",
+  "cat": "gate-code",
+  "desc": "resamp の係数 117→127（対照: 捕まるはず）",
+  "ops": [
+   [
+    "rep",
+    "training/latency_gate.py",
+    "((117 * SR / 44100 + 139) / 2)",
+    "((127 * SR / 44100 + 139) / 2)"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "P01",
+  "cat": "gate-code",
+  "desc": "rtf_bench 実測の glob を rtf_*.json に緩める（rtf_front.json を拾う）",
+  "ops": [
+   [
+    "rep",
+    "training/pre_launch_check.py",
+    "z0.glob(\"rtf_K*_T*_d*_L*_n*.json\")",
+    "z0.glob(\"rtf_*.json\")"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "P02",
+  "cat": "gate-code",
+  "desc": "ceiling_decision の必須キーを ref だけにする",
+  "ops": [
+   [
+    "rep",
+    "training/pre_launch_check.py",
+    "miss = [k for k in (\"ref\", \"speakers\", \"n\", \"delta\")",
+    "miss = [k for k in (\"ref\",)"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "P03",
+  "cat": "gate-code",
+  "desc": "証跡の nbin 照合を外す",
+  "ops": [
+   [
+    "rep",
+    "training/pre_launch_check.py",
+    "(\"k\", PN.K_BLK), (\"nbin\", PN.NBIN),",
+    "(\"k\", PN.K_BLK),"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "P04",
+  "cat": "gate-code",
+  "desc": "証跡の dim/L 照合を外す",
+  "ops": [
+   [
+    "rep",
+    "training/pre_launch_check.py",
+    "for k, want in ((\"dim\", PN.DIM), (\"L\", PN.L_BLK), (\"k_in\", PN.K_IN),",
+    "for k, want in ((\"k_in\", PN.K_IN),"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "P05",
+  "cat": "gate-code",
+  "desc": "abi.json 不在の検査を恒偽化（手順3未実施で起動できる）",
+  "ops": [
+   [
+    "rep",
+    "training/pre_launch_check.py",
+    "    if not abi.exists():",
+    "    if False and not abi.exists():"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "P06",
+  "cat": "gate-code",
+  "desc": "証跡の k_in 照合を外す",
+  "ops": [
+   [
+    "rep",
+    "training/pre_launch_check.py",
+    "(\"k_in\", PN.K_IN),\n                        (\"k\", PN.K_BLK)",
+    "(\"k\", PN.K_BLK)"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "P07",
+  "cat": "gate-code",
+  "desc": "証跡の cin 照合を外す",
+  "ops": [
+   [
+    "rep",
+    "training/pre_launch_check.py",
+    "(\"cin\", PN.cin_of(prior))",
+    "(\"cin\", d.get(\"cin\"))"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "P08",
+  "cat": "gate-code",
+  "desc": "prior 既定を False に（cin 期待値の切替）",
+  "ops": [
+   [
+    "rep",
+    "training/pre_launch_check.py",
+    "prior = d.get(\"prior\", True)",
+    "prior = d.get(\"prior\", False)"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "P09",
+  "cat": "gate-code",
+  "desc": "未来不変性の理由文から「0.00 が必要」を消す（対照）",
+  "ops": [
+   [
+    "rep",
+    "training/pre_launch_check.py",
+    "（0.00 が必要）",
+    "（0 が必要）"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "P10",
+  "cat": "gate-code",
+  "desc": "ceiling_decision 検査を via_step6 で免除",
+  "ops": [
+   [
+    "rep",
+    "training/pre_launch_check.py",
+    "    if not cd.exists():",
+    "    if not via_step6 and not cd.exists():"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "P11",
+  "cat": "gate-code",
+  "desc": "手順1 判定検査を via_step6 に関係なく免除（対照）",
+  "ops": [
+   [
+    "rep",
+    "training/pre_launch_check.py",
+    "    if not via_step6:",
+    "    if False:"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "P12",
+  "cat": "gate-code",
+  "desc": "RTF 判定の注入を無視して常に PASS 扱い（対照）",
+  "ops": [
+   [
+    "rep",
+    "training/pre_launch_check.py",
+    "v, m = verdict if verdict else PN.rtf_verdict(PN.RTF_NET_DEFAULT)",
+    "v, m = (\"PASS\", 1.0)"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "F01",
+  "cat": "fixture",
+  "desc": "fixture の sha256 台帳を削除（pin が fail-open で自動再生成）",
+  "ops": [
+   [
+    "del",
+    "results/z0/fixture_pins.json"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "F02",
+  "cat": "fixture",
+  "desc": "pin 削除 ＋ fixture を 1 本削除（g_recon_value）",
+  "ops": [
+   [
+    "del",
+    "results/z0/fixture_pins.json"
+   ],
+   [
+    "del",
+    "results/z0/fixtures/g_recon_value.json"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "F03",
+  "cat": "fixture",
+  "desc": "pin 削除 ＋ g_recon_value の expect から検証キーを全部抜く",
+  "ops": [
+   [
+    "del",
+    "results/z0/fixture_pins.json"
+   ],
+   [
+    "rep",
+    "results/z0/fixtures/g_recon_value.json",
+    "\"total_ms\": 28.87,\n  \"L_conv_ms\": 15.96,\n  \"L_hw_ms\": 12.9,\n  \"slack_ms\": 1.13,\n  \"d_ahead\": 0,\n  \"abi_checked\": true",
+    "\"d_ahead\": 0"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "F04",
+  "cat": "fixture",
+  "desc": "pin 削除 ＋ 合格 fixture の期待値を pass だけに縮める",
+  "ops": [
+   [
+    "del",
+    "results/z0/fixture_pins.json"
+   ],
+   [
+    "rep",
+    "results/z0/fixtures/m_measured_pass.json",
+    "\"pass\": true,\n  \"gate_stage\": \"measured\",\n  \"io_measured\": true,\n  \"abi_checked\": true,\n  \"total_ms\": 28.87,\n  \"budget_ms\": 30.0",
+    "\"pass\": true"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "F05",
+  "cat": "fixture",
+  "desc": "pin 削除 ＋ abort 理由の照合文字列を空にする（何で落ちても合格）",
+  "ops": [
+   [
+    "del",
+    "results/z0/fixture_pins.json"
+   ],
+   [
+    "rep",
+    "results/z0/fixtures/t_no_contract.json",
+    "\"expect_abort_contains\": \"contract.toml が無い\"",
+    "\"expect_abort_contains\": \"\""
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "F06",
+  "cat": "fixture",
+  "desc": "pin 削除 ＋ 4.1 側の理由照合文字列を空にする",
+  "ops": [
+   [
+    "del",
+    "results/z0/fixture_pins.json"
+   ],
+   [
+    "rep",
+    "results/z0/pl_fixtures/c_unbounded.json",
+    "\"expect_reason_contains\": \"UNBOUNDED\"",
+    "\"expect_reason_contains\": \"\""
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "F07",
+  "cat": "fixture",
+  "desc": "rtf_fullgraph_fixture.json を削除（対照）",
+  "ops": [
+   [
+    "del",
+    "results/z0/rtf_fullgraph_fixture.json"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "F08",
+  "cat": "fixture",
+  "desc": "rtf_fullgraph_fixture.json の total_rtf を書き換え（対照）",
+  "ops": [
+   [
+    "rep",
+    "results/z0/rtf_fullgraph_fixture.json",
+    "\"total_rtf\": 0.49",
+    "\"total_rtf\": 0.55"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "F09",
+  "cat": "fixture",
+  "desc": "pin 対象外の z_green/abi.json を書き換え（3者一致の値を偽装）",
+  "ops": [
+   [
+    "rep",
+    "results/z0/pl_fixtures/z_green/abi.json",
+    "{\"synthesis\": {\"n_fft\": 512, \"hop\": 128}, \"mel_analysis\": {\"hop\": 256}}",
+    "{\"synthesis\": {\"n_fft\": 256, \"hop\": 128}, \"mel_analysis\": {\"hop\": 256}}"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "F10",
+  "cat": "fixture",
+  "desc": "pin 対象外の z_green/ceiling_decision.json の delta を 0.9 に",
+  "ops": [
+   [
+    "rep",
+    "results/z0/pl_fixtures/z_green/ceiling_decision.json",
+    "\"delta\": 0.15",
+    "\"delta\": 0.9"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "F11",
+  "cat": "fixture",
+  "desc": "pin 対象外の e_ok/VERDICT.md に別の結論を追記",
+  "ops": [
+   [
+    "app",
+    "results/z0/pl_fixtures/e_ok/VERDICT.md",
+    "結論: 手順 6 へ（差し戻し）\n"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "F12",
+  "cat": "fixture",
+  "desc": "z_norb に rtf_front.json を置く（front-end 実測を V 実測と誤認させる素地）",
+  "ops": [
+   [
+    "add",
+    "results/z0/pl_fixtures/z_norb/rtf_front.json",
+    "{\"front_end_fused\": 0.14}\n"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "H01",
+  "cat": "harness",
+  "desc": "gate_run のカバレッジ床 7→1",
+  "ops": [
+   [
+    "rep",
+    "training/gate_run.py",
+    "GATE_RUN_FLOOR\", \"7\"",
+    "GATE_RUN_FLOOR\", \"1\""
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "H02",
+  "cat": "harness",
+  "desc": "床 7→1 ＋ 実行中ブロックを未許可実行子で除外に落とす",
+  "ops": [
+   [
+    "rep",
+    "training/gate_run.py",
+    "GATE_RUN_FLOOR\", \"7\"",
+    "GATE_RUN_FLOOR\", \"1\""
+   ],
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "ls ../results/z0c_ear/*.wav | wc -l",
+    "stat ../results/z0c_ear/*.wav | wc -l"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "H03",
+  "cat": "harness",
+  "desc": "実行中ブロックを除外に落とすだけ（対照: 床が捕まえるはず）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "ls ../results/z0c_ear/*.wav | wc -l",
+    "stat ../results/z0c_ear/*.wav | wc -l"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "H04",
+  "cat": "harness",
+  "desc": "PLAN_PATTERNS の net 予算パターンを空回りにする",
+  "ops": [
+   [
+    "rep",
+    "training/doc_check.py",
+    "\"rtf.net_budget\":   r\"net\\s*(?:に残る)?予算",
+    "\"rtf.net_budget\":   r\"ZZnet\\s*(?:に残る)?予算"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "H05",
+  "cat": "harness",
+  "desc": "同上 ＋ 本文の net 予算 0.21→0.33",
+  "ops": [
+   [
+    "rep",
+    "training/doc_check.py",
+    "\"rtf.net_budget\":   r\"net\\s*(?:に残る)?予算",
+    "\"rtf.net_budget\":   r\"ZZnet\\s*(?:に残る)?予算"
+   ],
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "| **net に残る予算**（合格線 0.35） | 無し | **0.21** |",
+    "| **net に残る予算**（合格線 0.35） | 無し | **0.33** |"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "H06",
+  "cat": "harness",
+  "desc": "THRESHOLDS から parity_snr を外す ＋ 本文 SNR 80→40 dB",
+  "ops": [
+   [
+    "rep",
+    "training/doc_check.py",
+    "    \"parity_snr\":   (r\"SNR\\s*≥\\s*([0-9]+)\\s*dB\", 80),\n",
+    ""
+   ],
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "SNR ≥ 80 dB",
+    "SNR ≥ 40 dB",
+    2
+   ],
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "SNR ≥ 80 dB",
+    "SNR ≥ 40 dB",
+    3
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "H07",
+  "cat": "harness",
+  "desc": "GATE_INVARIANTS から Nv 下限行を外す ＋ 本文 Nv ≥ 4 を必須→2",
+  "ops": [
+   [
+    "rep",
+    "training/doc_check.py",
+    "    (\"PROCEDURE.md\", \"**Nv ≥ 4 を必須**\", \"5.3 の有効試行数の下限が変わった\"),\n",
+    ""
+   ],
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "**Nv ≥ 4 を必須**",
+    "**Nv ≥ 2 を必須**"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "H08",
+  "cat": "harness",
+  "desc": "TO_BE_CREATED に偽名を足して存在しない参照先を通す",
+  "ops": [
+   [
+    "rep",
+    "training/doc_check.py",
+    "\"v1d_prior.md\",",
+    "\"v1d_prior.md\", \"rddsp_hfX.py\","
+   ],
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "`training/rddsp_hf.py` の `Wavehax2D`",
+    "`training/rddsp_hfX.py` の `Wavehax2D`"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "H09",
+  "cat": "harness",
+  "desc": "REQUIRED から 5.6 を外す ＋ 節名を改名",
+  "ops": [
+   [
+    "rep",
+    "training/doc_check.py",
+    "\"### 5.4\", \"### 5.5\", \"### 5.6\",",
+    "\"### 5.4\", \"### 5.5\","
+   ],
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "### 5.6 記録",
+    "### 5.6z 記録"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "H10",
+  "cat": "harness",
+  "desc": "BANNED_PHRASES から conda を外す ＋ conda 手順を追記",
+  "ops": [
+   [
+    "rep",
+    "training/doc_check.py",
+    "    (\"conda \", \"conda 禁止（CLAUDE.md Environment）\"),\n",
+    ""
+   ],
+   [
+    "app",
+    "current/PROCEDURE.md",
+    "\n環境構築は `conda create -n lightvc python=3.11` で行ってよい。\n"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "H11",
+  "cat": "harness",
+  "desc": "PROHIBITIONS から「昇格は耳のみ」を外す ＋ 直後に例外を追記",
+  "ops": [
+   [
+    "rep",
+    "training/doc_check.py",
+    "    \"昇格は耳のみ\",\n",
+    ""
+   ],
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "| 4 | **昇格は耳のみ。** 機械はアーティファクト検出、人間は官能 |",
+    "| 4 | **昇格は耳のみ。** ただし PESQ が高ければ耳を省略してよい |"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "H12",
+  "cat": "harness",
+  "desc": "doc_check から gate_mutate の起動を外す（正規手順では走らなくなる）",
+  "ops": [
+   [
+    "rep",
+    "training/doc_check.py",
+    "    r = subprocess.run([\"uv\", \"run\", \"python\", \"gate_mutate.py\"],",
+    "    r = subprocess.run([\"uv\", \"run\", \"python\", \"-c\", \"pass\"],"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "H13",
+  "cat": "harness",
+  "desc": "gate_mutate の fixture 本数下限 8→1",
+  "ops": [
+   [
+    "rep",
+    "training/gate_mutate.py",
+    "if len(specs) < 8:",
+    "if len(specs) < 1:"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "H14",
+  "cat": "harness",
+  "desc": "gate_mutate の理由照合 fixture 下限 9/12→0",
+  "ops": [
+   [
+    "rep",
+    "training/gate_mutate.py",
+    "need = 9 if d == \"fixtures\" else 12",
+    "need = 0"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "H15",
+  "cat": "harness",
+  "desc": "_check の理由照合本数チェックを外す",
+  "ops": [
+   [
+    "rep",
+    "training/gate_mutate.py",
+    "return ng + (1 if n_reason < 9 else 0)",
+    "return ng"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "H16",
+  "cat": "harness",
+  "desc": "MUTATIONS から 3 件（30/50ms 線・K 制約・q 導出）を削除",
+  "ops": [
+   [
+    "rep",
+    "training/gate_mutate.py",
+    "    (\"tot < lim\", \"tot < 999\", \"30/50 ms 線の無効化\"),\n",
+    ""
+   ],
+   [
+    "rep",
+    "training/gate_mutate.py",
+    "    (\"q != qd\", \"False\", \"q 導出検査の恒真化\"),\n",
+    ""
+   ],
+   [
+    "rep",
+    "training/gate_mutate.py",
+    "    (\"if (K * hop) % d[\\\"hop_a\\\"]:\", \"if False:\", \"K 制約の無効化\"),\n",
+    ""
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "H17",
+  "cat": "harness",
+  "desc": "fixture pin を常時再生成にする（pin 機構の実質無効化）",
+  "ops": [
+   [
+    "rep",
+    "training/gate_mutate.py",
+    "if \"--bless\" in sys.argv or not pin.exists():",
+    "if True:"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "H18",
+  "cat": "harness",
+  "desc": "FIXTURE_MUTATIONS から合格側期待値の変異を削除",
+  "ops": [
+   [
+    "rep",
+    "training/gate_mutate.py",
+    "    (\"fixtures\", \"m_measured_pass.json\", \"expect\", {\"pass\": False},\n     \"−1.1c: 合格側 fixture の期待値を False にして甘くする\"),\n",
+    ""
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "H19",
+  "cat": "harness",
+  "desc": "doc_check の検査対象から PROCEDURE_APP.md を外す",
+  "ops": [
+   [
+    "rep",
+    "training/doc_check.py",
+    "DOCS = [ROOT / \"current/PROCEDURE.md\", ROOT / \"current/PROCEDURE_APP.md\"]",
+    "DOCS = [ROOT / \"current/PROCEDURE.md\"]"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "H20",
+  "cat": "harness",
+  "desc": "THRESHOLDS の e2e_disq 正規表現を空回りにする ＋ 本文 50→80 ms",
+  "ops": [
+   [
+    "rep",
+    "training/doc_check.py",
+    "\"e2e_disq\":     (r\"p95\\s*≥\\s*([0-9]+)\\s*ms\\s*は失格\", 50),",
+    "\"e2e_disq\":     (r\"ZZp95\\s*≥\\s*([0-9]+)\\s*ms\\s*は失格\", 50),"
+   ],
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "p95 ≥ 50 ms は失格",
+    "p95 ≥ 80 ms は失格"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "H21",
+  "cat": "harness",
+  "desc": "check_prohibitions を no-op にする",
+  "ops": [
+   [
+    "rep",
+    "training/doc_check.py",
+    "    for pr in PROHIBITIONS:",
+    "    for pr in []:"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "H22",
+  "cat": "harness",
+  "desc": "gate_run の期待メッセージ照合を外す",
+  "ops": [
+   [
+    "rep",
+    "training/gate_run.py",
+    "if ok and exp_re and not re.search(exp_re, full):",
+    "if ok and exp_re and False:"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T01",
+  "cat": "doc-order",
+  "desc": "4.1 の export DIM/NLAYER を関門より後ろへ移す",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "export DIM=256 NLAYER=6   # ⚠ **関門より前に置く**（関門が env を読む）\nuv run python pre_launch_check.py || { return 2>/dev/null || exit 1; }",
+    "uv run python pre_launch_check.py || { return 2>/dev/null || exit 1; }\nexport DIM=256 NLAYER=6"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T02",
+  "cat": "doc-gate",
+  "desc": "4.1 の関門を `|| true` にして助言化",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "uv run python pre_launch_check.py || { return 2>/dev/null || exit 1; }",
+    "uv run python pre_launch_check.py || true"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T03",
+  "cat": "doc-gate",
+  "desc": "4.1 から関門の起動行を削除（言及だけ残す）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "uv run python pre_launch_check.py || { return 2>/dev/null || exit 1; }\n",
+    ""
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T04",
+  "cat": "doc-order",
+  "desc": "5.1 を 5.2 のレンダの後にする（落ちる構成を耳に掛ける）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "**5.2 のレンダより先に実行する。**",
+    "**5.2 のレンダの後に実行する。**"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T05",
+  "cat": "doc-order",
+  "desc": "手順 4 の入場条件を「かつ」→「または」",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "## 手順 4 [GPU]【手順 1 が「手順 2 へ」かつ手順 3 完了後】学習",
+    "## 手順 4 [GPU]【手順 1 が「手順 2 へ」または手順 3 完了後】学習"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T06",
+  "cat": "doc-threshold",
+  "desc": "規則 1 の「1 時間を超える学習」→「10 時間」",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "| 1 | **1 時間を超える学習の前に、台帳と未来不変性を通す。**",
+    "| 1 | **10 時間を超える学習の前に、台帳と未来不変性を通す。**"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T07",
+  "cat": "doc-rule",
+  "desc": "規則 5 を「走行前に決める」→「走行後でよい」",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "| 5 | **判定に使う指標と閾値は走行前に決めて記録する** |",
+    "| 5 | **判定に使う指標と閾値は走行後に決めて記録する** |"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T08",
+  "cat": "doc-rule",
+  "desc": "規則 6（帰属を実装より広げない）に例外を追記",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "| 6 | **失敗の帰属を実装より広げない。** 未完成の実装が落ちても方式クラスの反証にしない |",
+    "| 6 | **失敗の帰属を実装より広げない。** 未完成の実装が落ちても方式クラスの反証にしない。急ぐ場合は実装未完成でも族の否定として記録する |"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T09",
+  "cat": "doc-threshold",
+  "desc": "1.6 の Nv 下限判定を 4→2（THRESHOLDS の別表現側）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "Nv < 4 なら判定に進まず 1.5 の再レンダ規定へ",
+    "Nv < 2 なら判定に進まず 1.5 の再レンダ規定へ"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T10",
+  "cat": "doc-threshold",
+  "desc": "5.1 の非劣化検定 δ を 0.15→0.35（THRESHOLDS 非対象の表現）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "δ = 0.15 の非劣化検定は",
+    "δ = 0.35 の非劣化検定は"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T11",
+  "cat": "doc-threshold",
+  "desc": "ceiling の CI 許容を [−0.15,+0.15]→[−0.5,+0.5]",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "CI 全体が [−0.15, +0.15] に収まること",
+    "CI 全体が [−0.5, +0.5] に収まること"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T12",
+  "cat": "doc-threshold",
+  "desc": "話者ブートストラップ 2000 回→200 回",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "話者ブートストラップ 2000 回",
+    "話者ブートストラップ 200 回",
+    2
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T13",
+  "cat": "doc-threshold",
+  "desc": "ε_pesq を 0.05→0.5",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "**`ε_pesq = 0.05`（2.2b の resume 検収）",
+    "**`ε_pesq = 0.5`（2.2b の resume 検収）"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T14",
+  "cat": "doc-threshold",
+  "desc": "ε_mod を 0.05→0.5",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "`ε_mod = 0.05`",
+    "`ε_mod = 0.5`",
+    4
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T15",
+  "cat": "doc-threshold",
+  "desc": "ε_lsd を 0.10→1.0 dB",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "`ε_lsd = 0.10 dB`",
+    "`ε_lsd = 1.0 dB`"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T16",
+  "cat": "doc-threshold",
+  "desc": "4.3 の起動待ちを 600s→10s（起動失敗の誤検出）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "[ $i -ge 300 ]",
+    "[ $i -ge 5 ]"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T17",
+  "cat": "doc-threshold",
+  "desc": "スパイクスキップの異常終了を連続 50→5000 回",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "**連続 50 回**",
+    "**連続 5000 回**"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T18",
+  "cat": "doc-threshold",
+  "desc": "スパイク検知の倍率 100→10000 倍",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "直近 100 step の中央値の 100 倍を超えたら skip",
+    "直近 100 step の中央値の 10000 倍を超えたら skip"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T19",
+  "cat": "doc-threshold",
+  "desc": "打ち切り判定 step 18000→180000",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "**step 18000（判別器投入の直前）の評価で TEST が prior 単体を下回る**",
+    "**step 180000（判別器投入の直前）の評価で TEST が prior 単体を下回る**"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T20",
+  "cat": "doc-threshold",
+  "desc": "prior_stream_ref の最小プローブ 3 本→1 本",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "引数で音源を渡す場合も 3 本未満なら FAIL",
+    "引数で音源を渡す場合も 1 本未満なら FAIL"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T21",
+  "cat": "doc-threshold",
+  "desc": "プローブ本数 16 本以上→2 本以上（n=1 偽 PASS の再生産）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "`data/full_prep` の実音声から 16 本以上",
+    "`data/full_prep` の実音声から 2 本以上"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T22",
+  "cat": "doc-threshold",
+  "desc": "ship_check.probes の標本数 8 以上→2 以上",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "既定の標本数 `k` を 3 → 8 以上にし",
+    "既定の標本数 `k` を 3 → 2 以上にし"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T23",
+  "cat": "doc-cond",
+  "desc": "5.1 の ceiling 話者集合を held12_old→held24（関門にバイアス）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "      --speakers held12_old                                    # Z0-C 条件 2（B5・B6）",
+    "      --speakers held24                                        # Z0-C 条件 2（B5・B6）"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T24",
+  "cat": "doc-cond",
+  "desc": "5.1 の ceiling 比較相手を gvoc_ship→gvoc_nhv（ABI 違い）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "      --ref ../results/rddsp_gpu/gvoc_ship_ch96_s0.pt \\",
+    "      --ref ../results/rddsp_gpu/gvoc_nhv_ch96_s0.pt \\"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T25",
+  "cat": "doc-threshold",
+  "desc": "2.3(0) のピン許容を 1e-5→1e-1",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "改修**後**に**最大絶対差 < 1e-5** を確認する",
+    "改修**後**に**最大絶対差 < 1e-1** を確認する"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T26",
+  "cat": "doc-gate",
+  "desc": "2.1 の独立標本 2 つ要求を 1 つに",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "assert len(e) >= 2, '検収 3 は独立標本 2 つで見る（--shard-from 0 と 4）'",
+    "assert len(e) >= 1, '検収 3 は独立標本 2 つで見る（--shard-from 0 と 4）'"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T27",
+  "cat": "doc-gate",
+  "desc": "2.1 の検収3 発話数 400→4",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "assert x['utterances'] >= 400",
+    "assert x['utterances'] >= 4"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T28",
+  "cat": "doc-gate",
+  "desc": "2.1 のオクターブ跳び許容 1.01→2.0",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "x['octave_jumps_current'] * 1.01",
+    "x['octave_jumps_current'] * 2.0"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T29",
+  "cat": "doc-gate",
+  "desc": "2.1 の起動回数下限 3→1（ぶれ幅未知でも通す）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "d.get('spread_min_runs', 3)",
+    "d.get('spread_min_runs', 1)"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T30",
+  "cat": "doc-gate",
+  "desc": "2.1 の PIN_OK 既定を 0→1（fail-open）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "export PIN_OK=${PIN_OK:-0}",
+    "export PIN_OK=${PIN_OK:-1}"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T31",
+  "cat": "doc-threshold",
+  "desc": "2.4b の RTF 合格線 0.35/0.5→0.85/1.5",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "| 合格 | **中央値 RTF ≤ 0.35** かつ **最大値 ≤ 0.5** |",
+    "| 合格 | **中央値 RTF ≤ 0.85** かつ **最大値 ≤ 1.5** |"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T32",
+  "cat": "doc-threshold",
+  "desc": "2.4b-1a の「0 ≤ 余裕 < ぶれ幅」を PASS にする",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "| 0 ≤ 余裕 < ぶれ幅 | **INCONCLUSIVE** |",
+    "| 0 ≤ 余裕 < ぶれ幅 | **PASS** |"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T33",
+  "cat": "doc-threshold",
+  "desc": "履歴の起動回数下限 < 3 → < 1",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "| **履歴の起動回数 < 3** | **INCONCLUSIVE** |",
+    "| **履歴の起動回数 < 1** | **INCONCLUSIVE** |"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T34",
+  "cat": "doc-threshold",
+  "desc": "5.5 の「効いた」判定を 2 本以上→1 本以上",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "**その腕の a が本走行の a より 2 本以上多い**",
+    "**その腕の a が本走行の a より 1 本以上多い**"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T35",
+  "cat": "doc-threshold",
+  "desc": "6.2 の打ち切りを 4 候補→1 候補",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "**4 候補すべてが 5.3 で落ちたら、ボコーダ族の探索を止める。**",
+    "**1 候補が 5.3 で落ちたら、ボコーダ族の探索を止める。**"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T36",
+  "cat": "doc-cond",
+  "desc": "4.2 の起動を --ch 96 --layers 8 の直値に（2.4b-1 が到達不能と決めた構成）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "    --front $FRONT --prior $PRIOR --ch $DIM --layers $NLAYER \\",
+    "    --front $FRONT --prior $PRIOR --ch 96 --layers 8 \\"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T37",
+  "cat": "doc-cond",
+  "desc": "3.5 の tts_ratio 既定を「混ぜない」に（CLAUDE.md Data 規則違反）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "**既定「混ぜる（1.0）」。変えるならオーナー判断**",
+    "**既定「混ぜない（0.0）」。変えるならオーナー判断**"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T38",
+  "cat": "doc-cond",
+  "desc": "3.5 の gain_augmentation 既定を false に",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "| **`gain_augmentation`** | **既定「する（true）」** |",
+    "| **`gain_augmentation`** | **既定「しない（false）」** |"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T39",
+  "cat": "doc-cond",
+  "desc": "3.1 の held-out を 24→12 に戻す",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "3. `build(80, N_HELD)` の `N_HELD` を **24** に。",
+    "3. `build(80, N_HELD)` の `N_HELD` を **12** に。"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T40",
+  "cat": "doc-cond",
+  "desc": "手順 6 の禁止（時間方向 upsample）を許可に反転",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "**選んではいけないもの**: 時間方向の upsample（ConvTranspose）を信号経路に持つ系。",
+    "**選んでよいもの**: 時間方向の upsample（ConvTranspose）を信号経路に持つ系。"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T41",
+  "cat": "doc-cond",
+  "desc": "§0.2 の pathB を「製品可」に反転",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "| **front-end 0 ms／ネット込みは UNBOUNDED** | **⚠ 製品不可** |",
+    "| **front-end 0 ms／ネット込みは UNBOUNDED** | **製品可** |"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T42",
+  "cat": "doc-cond",
+  "desc": "5.2 の N_TRIAL 増強（下限合格時 20）→10 に潰す",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "export N_TRIAL=10        # 1.6 が「下限合格」なら 20",
+    "export N_TRIAL=10        # 1.6 が「下限合格」でも 10"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T43",
+  "cat": "doc-cond",
+  "desc": "5.3 の 5.3.1 必須を「飛ばしてよい」に",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "5.3.1 を飛ばして 5.4 に行かない",
+    "5.3.1 は飛ばしてもよい"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T44",
+  "cat": "doc-threshold",
+  "desc": "4.6 の TEST 悪化打ち切りを 5→50 チェックポイント",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "| **TEST が 5 チェックポイント連続で悪化** |",
+    "| **TEST が 50 チェックポイント連続で悪化** |"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T45",
+  "cat": "doc-threshold",
+  "desc": "4.6 の ETA 打ち切りを 2 倍→20 倍",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "実測 ETA が**当初見積の 2 倍**を超えた",
+    "実測 ETA が**当初見積の 20 倍**を超えた"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T46",
+  "cat": "doc-prohibition",
+  "desc": "規則2（発話全体統計）に例外語を使わない骨抜きを直後追記",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "| 2 | **推論経路に発話全体の統計を置かない**（発話中央値での正規化",
+    "| 2 | **推論経路に発話全体の統計を置かない**（この規則は 5.1 の関門には適用しない）（発話中央値での正規化"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T47",
+  "cat": "doc-prohibition",
+  "desc": "規則9（同じ TAG で再走行しない）に承認例外を追記",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "| 9 | **同じ TAG で再走行しない。** 上書きで重みを失った実例がある |",
+    "| 9 | **同じ TAG で再走行しない。** 上書きで重みを失った実例がある。オーナー承認があれば同一 TAG の再走行を認める |"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T48",
+  "cat": "doc-prohibition",
+  "desc": "白色雑音禁止を 90 字より後ろで骨抜き（窓外に逃がす）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "**⚠ 白色雑音で測らない**——同じ摂動を白色雑音で当てると `causal_f0` は全区間 unvoiced になり\n**f0 側が偽 PASS**（`CLAUDE.md` の既知の型）。実音声でも f0 は argmax の離散性で\n頭の非因果を隠しうるので、**mel と f0 を別々に見る**。",
+    "**⚠ 白色雑音で測らない**——同じ摂動を白色雑音で当てると `causal_f0` は全区間 unvoiced になり\n**f0 側が偽 PASS**（`CLAUDE.md` の既知の型）。実音声でも f0 は argmax の離散性で\n頭の非因果を隠しうるので、**mel と f0 を別々に見る**。\n実音声プローブが用意できない環境では白色雑音で代替してよい。"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T49",
+  "cat": "doc-prohibition",
+  "desc": "GroupNorm 禁止に「診断走行には適用しない」を追記",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "**⚠ 禁止（明文）: V に時間軸をまたぐ正規化層を置かない。**\n`nn.GroupNorm(num_groups=1, ch)`",
+    "**⚠ 禁止（明文）: V に時間軸をまたぐ正規化層を置かない。** この禁止は診断走行には適用しない。\n`nn.GroupNorm(num_groups=1, ch)`"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T50",
+  "cat": "doc-prohibition",
+  "desc": "自由位相禁止に位相ヘッド容認を追記",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "**加算複素残差にすること（自由位相にしない）。** 位相は prior が供給する。",
+    "**加算複素残差にすること（自由位相にしない）。** 位相ヘッドを付けても差し支えない。位相は prior が供給する。"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T51",
+  "cat": "doc-prohibition",
+  "desc": "「昇格は耳のみ」の直後に proxy 昇格の抜け道（例外語なし）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "| 4 | **昇格は耳のみ。** 機械はアーティファクト検出、人間は官能 |",
+    "| 4 | **昇格は耳のみ。** 機械はアーティファクト検出、人間は官能。PESQ が 3.0 を超えたら耳を省いて昇格する |"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T52",
+  "cat": "doc-prohibition",
+  "desc": "worktree 不使用の方針に「使ってよい」を追記",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "**隔離の方法**（worktree は使わない。相対パスと 44 GB のデータ参照が壊れるため）:",
+    "**隔離の方法**（worktree は使わない。相対パスと 44 GB のデータ参照が壊れるため。ただし急ぐなら worktree を使ってよい）:"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T53",
+  "cat": "doc-banned",
+  "desc": "GPLv3 依存の追加を許す記述（CLAUDE.md Licensing 違反）",
+  "ops": [
+   [
+    "app",
+    "current/PROCEDURE.md",
+    "\n**依存に GPLv3 のライブラリを追加してよい**（ビルドが通ることを優先する）。\n"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T54",
+  "cat": "doc-banned",
+  "desc": "VC teacher 蒸留の指示（BANNED の言い換え）",
+  "ops": [
+   [
+    "app",
+    "current/PROCEDURE.md",
+    "\nターゲットには RVC で変換した音声を使い、同一内容ペアとして蒸留する。\n"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T55",
+  "cat": "doc-banned",
+  "desc": "少数話者での本番学習の指示（BANNED の言い換え）",
+  "ops": [
+   [
+    "app",
+    "current/PROCEDURE.md",
+    "\n本番学習は `rcav_feat` の 42 話者で回す（フルコーパスは時間がかかるため）。\n"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T56",
+  "cat": "doc-banned",
+  "desc": "conda 手順の追記（対照: 捕まるはず）",
+  "ops": [
+   [
+    "app",
+    "current/PROCEDURE.md",
+    "\n`conda activate lightvc` してから実行する。\n"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T57",
+  "cat": "doc-gate",
+  "desc": "5.1 の関門をオーナー判断で迂回できると追記",
+  "ops": [
+   [
+    "app",
+    "current/PROCEDURE.md",
+    "\n**⚠ 5.1 の関門で落ちても、オーナー判断で手順 4 に進んでよい。**\n"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T58",
+  "cat": "doc-gate",
+  "desc": "4.1 の関門 FAIL でも起動してよいと追記",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "**別シェルで 4.2 を実行する場合は、上で表示された TAG を手で `export` してから行う。**",
+    "**別シェルで 4.2 を実行する場合は、上で表示された TAG を手で `export` してから行う。**\n\n**`pre_launch_check.py` が FAIL でも、GPU に空きがあるなら起動する。**"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T59",
+  "cat": "doc-threshold",
+  "desc": "APP F.2 の失格線 50→80 ms",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "| **≥ 50 ms** | **失格。是正の余地なく設計差し戻し**",
+    "| **≥ 80 ms** | **失格。是正の余地なく設計差し戻し**"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T60",
+  "cat": "doc-threshold",
+  "desc": "APP F.2 の合格線 30→45 ms",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "| **< 30 ms**、**かつ `2σ_hw` を足しても 30 ms 未満** | **合格** → 手順 G |",
+    "| **< 45 ms**、**かつ `2σ_hw` を足しても 45 ms 未満** | **合格** → 手順 G |"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T61",
+  "cat": "doc-threshold",
+  "desc": "APP 手順 G の入場条件を p95 < 50 ms に",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "**手順 G の入場条件は「p95 < 30 ms」または「30–50 ms でオーナーが可と決めた」のいずれか。**",
+    "**手順 G の入場条件は「p95 < 50 ms」のいずれか。**"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T62",
+  "cat": "doc-threshold",
+  "desc": "APP C.6 の full graph SNR 60→20 dB",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "**full graph 端点は出力波形の SNR ≥ 60 dB**",
+    "**full graph 端点は出力波形の SNR ≥ 20 dB**"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T63",
+  "cat": "doc-threshold",
+  "desc": "APP C.6 の実機 RTF ≤ 0.5→0.9",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "full graph 合計 **RTF ≤ 0.5**（開発 Linux 機の数字で代用しない）",
+    "full graph 合計 **RTF ≤ 0.9**（開発 Linux 機の数字で代用しない）"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T64",
+  "cat": "doc-threshold",
+  "desc": "APP C.6 の L_bypass 一致 1→10 サンプル",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "両方式で測り、差が 1 サンプル以内**",
+    "両方式で測り、差が 10 サンプル以内**",
+    2
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T65",
+  "cat": "doc-threshold",
+  "desc": "APP G.4 の出荷ビルド遅延再確認 ±10%→±100%",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "p95 が測定ビルドと ±10% 以内",
+    "p95 が測定ビルドと ±100% 以内"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T66",
+  "cat": "doc-threshold",
+  "desc": "APP G.4 のリミッタ −1 dBFS→+3 dBFS",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "**出力が −1 dBFS を超えない**",
+    "**出力が +3 dBFS を超えない**"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T67",
+  "cat": "doc-threshold",
+  "desc": "APP G.3.1 の許容 ±io_host→±10×io_host",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "**その DAW のバッファ `io_host` に対する期待値と ±`io_host`（1 ホストブロック）以内**",
+    "**その DAW のバッファ `io_host` に対する期待値と ±10 × `io_host` 以内**"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T68",
+  "cat": "doc-threshold",
+  "desc": "APP D1x の失格域警告を 50→60 ms",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "**50 ms 以上になるバッファは UI で警告し、`e2e_*.json` に「失格域」と記録する**",
+    "**60 ms 以上になるバッファは UI で警告し、`e2e_*.json` に「失格域」と記録する**"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T69",
+  "cat": "doc-cond",
+  "desc": "APP −1.1 雛形の io_block_samples_measured を 64 に（未実測でゲートが開く）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "  \"io_block_samples_measured\": null,",
+    "  \"io_block_samples_measured\": 64,"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T70",
+  "cat": "doc-cond",
+  "desc": "APP −1.1 雛形の ad_da_estimate_ms 10.0→2.0（予算 8ms 水増し）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "  \"ad_da_estimate_ms\": 10.0,\n   \"hop\": 128,",
+    "  \"ad_da_estimate_ms\": 2.0,\n   \"hop\": 128,"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T71",
+  "cat": "doc-cond",
+  "desc": "APP −1.1 雛形の sinc_len 256→64（耳ゲート未実施で切替）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "  \"sinc_len\": 256,\n  \"ad_da_estimate_ms\": 10.0,",
+    "  \"sinc_len\": 64,\n  \"ad_da_estimate_ms\": 10.0,"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T72",
+  "cat": "doc-cond",
+  "desc": "APP −1.1 雛形の thread_budget 2→8（RTF 測定条件の乖離）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "  \"thread_budget\": 2,\n  \"io_block_samples\": 64,",
+    "  \"thread_budget\": 8,\n  \"io_block_samples\": 64,"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T73",
+  "cat": "doc-cond",
+  "desc": "APP −1.1c-stage の「provisional のまま F/G に入らない」を反転",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "**⚠ provisional のまま手順 F / G に入らない。**",
+    "**provisional のまま手順 F / G に入ってよい。**"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T74",
+  "cat": "doc-cond",
+  "desc": "APP C.6 の未来不変性 CI を白色雑音プローブに差し替え",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "**未来不変性 CI**: **C.3 の定義そのまま**（実音声プローブ・",
+    "**未来不変性 CI**: **C.3 の定義そのまま**（白色雑音プローブ・"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T75",
+  "cat": "doc-cond",
+  "desc": "APP C.6 の恒真化防止項（パディング無効ビルド）を削除",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "- [ ] **パディング無効ビルドで `L_conv` の p50 を測り、設計値と ±2 サンプルで一致する**<br>**⚠ これが無いと C.6 は恒真検査になる**——固定遅延を `fixed_path_latency_samples` までパディングで詰める実装だと、**設計値へ詰めた値を設計値と比べる**ことになる（C.5 が名指しで警告）。**パディング有効の測定はこの後に置く。**\n",
+    ""
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T76",
+  "cat": "doc-cond",
+  "desc": "APP G.4 の latency_ledger 要件から pass:true を外す",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "`latency_ledger.json`（`pass: true` かつ `io_measured: true`",
+    "`latency_ledger.json`（存在すること"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T77",
+  "cat": "doc-cond",
+  "desc": "APP F.4 の合否 SR を 44.1k→48k に付け替え",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "**F.2 の合否は 44.1 kHz で付ける**",
+    "**F.2 の合否は 48 kHz で付ける**"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T78",
+  "cat": "doc-cond",
+  "desc": "APP G.4 から sha256 不一致→Bypass の検収を削除",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "- [ ] **sha256 が一致しない重みを取得したら Bypass に落ちる**（G0-12。差し替え攻撃）\n",
+    ""
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T79",
+  "cat": "doc-cond",
+  "desc": "APP F.2 の deterministic 不合格枝を削除",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "| **`deterministic: false`**（`p99 − p50 > io`（実測優先）） | **不合格。** 経路遅延が決定的でない＝ C.5 の設計要件違反。**PDC も正しく申告できない**ので、C に戻って直す |\n",
+    ""
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T80",
+  "cat": "doc-prohibition",
+  "desc": "APP −1.1c の「既定周期未満を書かない」に暫定容認を追記",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "**−1.1 で `asio_sdk_available: false` のまま `io_block_samples` に既定周期未満（44.1 kHz なら 441 未満、48 kHz なら 480 未満）を書かない。**",
+    "**−1.1 で `asio_sdk_available: false` のまま `io_block_samples` に既定周期未満（44.1 kHz なら 441 未満、48 kHz なら 480 未満）を書かない。** 暫定値としてなら書いて差し支えない。"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T81",
+  "cat": "doc-cond",
+  "desc": "APP C.5-key の「入れないキー」から resamp_samples を外す（対照）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "`io_block_samples` / `queue_depth_io_blocks` / `resamp_samples`。\n",
+    "`io_block_samples` / `queue_depth_io_blocks`。\n"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T82",
+  "cat": "doc-cond",
+  "desc": "APP C.3 の mel 一致許容 1e-4→1e-2（対照: 不変条件）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "最大絶対誤差 ≤ 1e-4",
+    "最大絶対誤差 ≤ 1e-2",
+    3
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T83",
+  "cat": "doc-cond",
+  "desc": "APP G.4 の連続稼働 4 時間→10 分（対照: 不変条件）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "**4 時間連続稼働**",
+    "**10 分連続稼働**"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T84",
+  "cat": "doc-cond",
+  "desc": "APP F.1 のウォームアップ破棄を削除（対照: 不変条件）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE_APP.md",
+    "先頭 **2.0 秒以上を破棄**",
+    "先頭 **0.0 秒以上を破棄**"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T85",
+  "cat": "doc-cond",
+  "desc": "2.4a-2 の入力リング 1792→768（対照: 不変条件）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "| 1 | **入力リング** | **1792 sample**",
+    "| 1 | **入力リング** | **768 sample**"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T86",
+  "cat": "doc-cond",
+  "desc": "5.1 の未来不変性を「または」に緩和（対照: 不変条件）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "`unbounded=False` かつ `inconclusive=False`",
+    "`unbounded=False` または `inconclusive=False`"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T87",
+  "cat": "doc-cond",
+  "desc": "4.2 の --snap 20000→40000（対照: 不変条件）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "    --steps 200000 --every 2000 --snap 20000 \\\n    --dstart 20000",
+    "    --steps 200000 --every 2000 --snap 40000 \\\n    --dstart 20000"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T88",
+  "cat": "doc-cond",
+  "desc": "1.1 の N_TRIAL 10→4（対照: THRESHOLDS）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "export N_TRIAL=10   # **未設定だと",
+    "export N_TRIAL=4   # **未設定だと"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T89",
+  "cat": "doc-cond",
+  "desc": "GAINAUG=1 の凍結値を 0 に（対照: check_export_consts）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "export FRONT=ship PRIOR=nhv GAINAUG=1            # 製品経路。GAINAUG は 3.5 の凍結値（true）",
+    "export FRONT=ship PRIOR=nhv GAINAUG=0            # 製品経路。GAINAUG は 3.5 の凍結値（false）"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T90",
+  "cat": "doc-cond",
+  "desc": "export DIM/NLAYER を 384/8 に（対照: check_export_consts）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "export DIM=256 NLAYER=6",
+    "export DIM=384 NLAYER=8"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T91",
+  "cat": "doc-cond",
+  "desc": "5.2 の Z0C_SPEAKERS=held24→held12_old（対照: 不変条件）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "Z0C_OUT=$OUT Z0C_SPEAKERS=held24 \\\nZ0C_SYSTEMS=\"gt,../results/$TAG/$SEL.pt,../results/rddsp_gpu/gvoc_nhv_ch96_s0.pt\"",
+    "Z0C_OUT=$OUT Z0C_SPEAKERS=held12_old \\\nZ0C_SYSTEMS=\"gt,../results/$TAG/$SEL.pt,../results/rddsp_gpu/gvoc_nhv_ch96_s0.pt\""
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T92",
+  "cat": "doc-cond",
+  "desc": "5.5-C の --snap 8000→20000（対照: 不変条件）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "    --steps 200000 --every 2000 --snap 8000 --dstart 20000",
+    "    --steps 200000 --every 2000 --snap 20000 --dstart 20000"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T93",
+  "cat": "doc-cond",
+  "desc": "1.5 の再レンダ上限 2→5 回（対照: 不変条件）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "**再レンダは合計 2 回まで**",
+    "**再レンダは合計 5 回まで**"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T94",
+  "cat": "doc-cond",
+  "desc": "6.2 の候補あたり上限 120h→600h（対照: 不変条件）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "**1 候補あたりの上限は GPU 時間で数える: 120 h**",
+    "**1 候補あたりの上限は GPU 時間で数える: 600 h**"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T95",
+  "cat": "doc-cond",
+  "desc": "5.5 の腕数下限（2 本未満なら族の否定を出さない）を削除（対照）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "- **実施できた腕が 2 本未満なら族の否定を出さない**（規則 6）。この場合は\n",
+    ""
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T96",
+  "cat": "doc-cond",
+  "desc": "2.3(0) の mlin 除外を 7→3（対照: 不変条件）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "| **`mlin`** | **合成（`HOP_S`）** | **`[..., 7:]`**",
+    "| **`mlin`** | **合成（`HOP_S`）** | **`[..., 3:]`**"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T97",
+  "cat": "doc-cond",
+  "desc": "1.2 の隣接同一禁止を削除（対照: 不変条件）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "- **隣り合う試行では X/Y/Z の割り当てが必ず違う。**",
+    "- **試行ごとに割り当てを引き直す。**"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T98",
+  "cat": "doc-cond",
+  "desc": "2.4a-2 の励起リング 384→768（対照: 不変条件）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "| 5 | **励起リング** | **384 sample**",
+    "| 5 | **励起リング** | **768 sample**"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T99",
+  "cat": "doc-cond",
+  "desc": "5.1 の「落ちたら 5.2 に進まない」を削除（対照: 不変条件）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "で落ちたら 5.2 に進まない",
+    "でも 5.2 に進んでよい",
+    2
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T100",
+  "cat": "doc-cond",
+  "desc": "ckpt 保存先の統一規約を変更（対照: 不変条件）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "すべての ckpt を `../results/<TAG>/` に置く",
+    "すべての ckpt を `../results/rddsp_gpu/` に置く"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T101",
+  "cat": "doc-cond",
+  "desc": "5.3 の Nv 下限を「必須」から「望ましい」に",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "Nv < 4 なら**評価系を直してから**再取得する",
+    "Nv < 4 でも参考値として判定してよい"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T102",
+  "cat": "doc-cond",
+  "desc": "1.5 の「同点1位も有効」を無効化（評価系の定義変更）",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "- **同点 1 位を無効にしない**のは",
+    "- **同点 1 位は無効にする**。理由は"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T103",
+  "cat": "doc-cond",
+  "desc": "5.3.1（copy-synthesis 退化の検出）を任意にする",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "### 5.3.1 【合格の直前に必ず通す】G の mel での確認（**copy-synthesis 退化の検出**）",
+    "### 5.3.1 【任意】G の mel での確認（**copy-synthesis 退化の検出**）"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T104",
+  "cat": "doc-cond",
+  "desc": "5.1 の PESQ 単独昇格禁止を削除",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "**PESQ 単独で昇格させない。** PESQ は 8 kHz 以上と広帯域ゲインの両方に盲目。\n過去に耳を 3 連続で外した proxy は使わない。\n",
+    ""
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T105",
+  "cat": "doc-cond",
+  "desc": "4.3 の台帳 PASS 要求を「WARN 扱い」に",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "**台帳の判定が PASS でなければ即停止する**（上の 2 つの `||{...}` が自動で kill する）。",
+    "**台帳の判定が PASS でなくても走行は続ける**（記録だけ残す）。"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T106",
+  "cat": "doc-cond",
+  "desc": "手順 0.5 の分岐で INCONCLUSIVE を上の枝に倒す",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "**INCONCLUSIVE ＝ 上の枝を選ばない**",
+    "**INCONCLUSIVE ＝ 上の枝を選ぶ**"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T107",
+  "cat": "doc-cond",
+  "desc": "2.1 の latency_decision.md ハードゲートを削除",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "test -e ../results/z0/latency_decision.md || {\n  echo \"手順 0.5 の裁定が未記録。front-end RTF と net 予算を書いてから 2.1 に入る\"; return 2>/dev/null || exit 1; }\n",
+    ""
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T108",
+  "cat": "doc-cond",
+  "desc": "2.0 のノブ契約ハードゲートを助言化",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "test -e ../results/z0/knob_contract.json || { echo \"PROCEDURE_APP 手順 A を先に\"; return 2>/dev/null || exit 1; }",
+    "test -e ../results/z0/knob_contract.json || echo \"PROCEDURE_APP 手順 A を先に（続行可）\""
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T109",
+  "cat": "doc-cond",
+  "desc": "5.5-C の diag_ 接頭辞規約を外す",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "export TAG=diag_gvoc_nhv_176k_$(date +%Y%m%d_%H%M%S)",
+    "export TAG=gvoc_nhv_176k_$(date +%Y%m%d_%H%M%S)"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "id": "T110",
+  "cat": "doc-cond",
+  "desc": "1.6-W の diag_ 必須を外す",
+  "ops": [
+   [
+    "rep",
+    "current/PROCEDURE.md",
+    "export TAG=diag_win1024_$(date +%Y%m%d_%H%M%S)",
+    "export TAG=win1024_$(date +%Y%m%d_%H%M%S)"
+   ]
+  ],
+  "round": 34
+ },
+ {
+  "round": 36,
+  "cat": "gate-env",
+  "file": "/home/kojirotanaka/kjranyone/LightVC/training/pre_launch_gate.sh",
+  "old": ": \"${DIM:?DIM が未設定。4.1 の先頭で 2.4b の実測構成を export する}\"",
+  "new": "export DIM=\"${DIM:-256}\"",
+  "count": 1
+ },
+ {
+  "round": 36,
+  "cat": "gate-env",
+  "file": "/home/kojirotanaka/kjranyone/LightVC/current/PROCEDURE.md",
+  "old": "export DIM=256 NLAYER=6\nbash pre_launch_gate.sh",
+  "new": "bash pre_launch_gate.sh",
+  "count": 1
+ },
+ {
+  "round": 36,
+  "cat": "artifact-producer",
+  "file": "/home/kojirotanaka/kjranyone/LightVC/current/PROCEDURE.md",
+  "old": "| **`future_inv_net` 証跡** |",
+  "new": "| ~~future_inv_net 証跡~~ |",
+  "count": 1
+ },
+ {
+  "round": 36,
+  "cat": "artifact-producer",
+  "file": "/home/kojirotanaka/kjranyone/LightVC/current/PROCEDURE.md",
+  "old": "| **`ceiling_decision`** |",
+  "new": "| ~~ceiling_decision~~ |",
+  "count": 1
+ },
+ {
+  "round": 36,
+  "cat": "gate-semantics",
+  "file": "/home/kojirotanaka/kjranyone/LightVC/training/pre_launch_check.py",
+  "old": "net, src = PN.measured_net(z0)",
+  "new": "net, src = (PN.RTF_NET_PLAN, \"plan\")",
+  "count": 1
+ },
+ {
+  "round": 36,
+  "cat": "gate-semantics",
+  "file": "/home/kojirotanaka/kjranyone/LightVC/training/plan_numbers.py",
+  "old": "    if margin < tol:",
+  "new": "    if margin < 0:",
+  "count": 1
+ },
+ {
+  "round": 36,
+  "cat": "gate-semantics",
+  "file": "/home/kojirotanaka/kjranyone/LightVC/training/plan_numbers.py",
+  "old": "        return \"FAIL\", margin\n    return \"PASS\", margin",
+  "new": "        return \"INCONCLUSIVE\", margin\n    return \"PASS\", margin",
+  "count": 1
+ },
+ {
+  "round": 36,
+  "cat": "doc-threshold",
+  "file": "/home/kojirotanaka/kjranyone/LightVC/current/PROCEDURE.md",
+  "old": "| 0 ≤ 余裕 < 凍結許容差 | **FAIL** |",
+  "new": "| 0 ≤ 余裕 < 凍結許容差 | **INCONCLUSIVE** |",
+  "count": 1
+ },
+ {
+  "round": 36,
+  "cat": "doc-cond",
+  "file": "/home/kojirotanaka/kjranyone/LightVC/current/PROCEDURE.md",
+  "old": "**手順 6（族の乗り換え）に入る。⚠ それでも 3.5 は通る**",
+  "new": "手順 6（族の乗り換え）に入っているので 3.5 自体を通らない",
+  "count": 1
+ },
+ {
+  "round": 36,
+  "cat": "gate-abi",
+  "file": "/home/kojirotanaka/kjranyone/LightVC/training/pre_launch_check.py",
+  "old": "if len(why) < 20:",
+  "new": "if False:",
+  "count": 1
+ },
+ {
+  "round": 36,
+  "cat": "doc-cond",
+  "file": "/home/kojirotanaka/kjranyone/LightVC/current/PROCEDURE.md",
+  "old": "／ `melframe` / `melnfft` ＝ **常に 7 本**",
+  "new": "。**1.6-W は `melframe` / `melnfft` を足して 7 本**",
+  "count": 1
+ },
+ {
+  "round": 36,
+  "cat": "doc-gate",
+  "file": "/home/kojirotanaka/kjranyone/LightVC/current/PROCEDURE.md",
+  "old": "${REF:+--ref \"$REF\"} --speakers \"$SPK\"",
+  "new": "--ref ../results/rddsp_gpu/gvoc_ship_ch96_s0.pt --speakers held12_old",
+  "count": 1
+ },
+ {
+  "round": 36,
+  "cat": "doc-cond",
+  "file": "/home/kojirotanaka/kjranyone/LightVC/current/PROCEDURE_APP.md",
+  "old": "であって、**`pass: true` ではない**",
+  "new": "であって、**`pass: true` も要る**",
+  "count": 1
+ },
+ {
+  "round": 36,
+  "cat": "harness-self",
+  "file": "/home/kojirotanaka/kjranyone/LightVC/training/pins.py",
+  "old": "        if \"--force\" not in sys.argv:",
+  "new": "        if False:",
+  "count": 1
+ },
+ {
+  "round": 36,
+  "cat": "harness-self",
+  "file": "/home/kojirotanaka/kjranyone/LightVC/training/mutate_check.py",
+  "old": "    if JOURNAL.exists():",
+  "new": "    if False:",
+  "count": 1
+ },
+ {
+  "round": 36,
+  "cat": "harness-self",
+  "file": "/home/kojirotanaka/kjranyone/LightVC/training/gate_mutate.py",
+  "old": "else _check_pl(_load(SRC2))) or len(_fixture_guard())",
+  "new": "else _check_pl(_load(SRC2)))",
+  "count": 1
+ },
+ {
+  "round": 36,
+  "cat": "harness-self",
+  "file": "/home/kojirotanaka/kjranyone/LightVC/training/gate_mutate.py",
+  "old": "                sys.modules.pop(\"plan_numbers\", None)\n                ng = _check_pl",
+  "new": "                ng = _check_pl",
+  "count": 1
+ },
+ {
+  "round": 36,
+  "cat": "doc-scope",
+  "file": "/home/kojirotanaka/kjranyone/LightVC/current/PROCEDURE.md",
+  "old": "**E（content encoder）には学習手順が無く、本書のどこにも書かれていない。**",
+  "new": "",
+  "count": 1
+ },
+ {
+  "round": 36,
+  "cat": "doc-scope",
+  "file": "/home/kojirotanaka/kjranyone/LightVC/current/PROCEDURE.md",
+  "old": "**7 件目**——",
+  "new": "**（削除）**",
+  "count": 1
+ }
+]

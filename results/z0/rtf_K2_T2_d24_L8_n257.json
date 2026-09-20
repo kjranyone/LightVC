@@ -1,0 +1,13 @@
+{
+ "net_rtf": 0.2699,
+ "basis": "rust_candle_measured",
+ "K": 2,
+ "T": 2,
+ "dim": 24,
+ "L": 8,
+ "k": 3,
+ "k_in": 7,
+ "nbin": 257,
+ "impl": "simd v2f（自前 AVX2・2 スレッド）",
+ "note": "5 起動の最悪値。判定は full graph（rtf_fullgraph_K2.json）が優先"
+}

@@ -1,0 +1,15 @@
+{
+ "z0": "z_basis_mismatch",
+ "ear": "e_ok",
+ "env": {
+  "DIM": "24",
+  "NLAYER": "8"
+ },
+ "expect_ok": false,
+ "via_step6": false,
+ "verdict": [
+  "PASS",
+  0.05
+ ],
+ "expect_reason_contains": "が宣言"
+}

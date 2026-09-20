@@ -1,0 +1,40 @@
+{
+ "schema": 1,
+ "primary_os": "windows",
+ "secondary_os": [
+  "linux"
+ ],
+ "audio_backend": [
+  "wasapi",
+  "asio"
+ ],
+ "plugin_formats": [
+  "standalone",
+  "vst3"
+ ],
+ "target_cpu": "x86_64 4C8T 相当",
+ "app_audio_device": "（アプリが使う I/F: 型番 / ドライバ / 設定）",
+ "reference_audio_device": "（測定器側の基準機: 型番 / ドライバ / 設定）",
+ "thread_budget": 2,
+ "io_block_samples": 64,
+ "io_block_samples_measured": null,
+ "net_block_frames": 2,
+ "queue_depth_io_blocks": 1,
+ "rtf_target": 0.1933,
+ "_rtf_target": 0.1933,
+ "owner_accepted_over_30ms": null,
+ "_owner_accepted_over_30ms": "オーナーが 30-50ms 帯を受容した場合に {\"by\":..., \"at\":..., \"evidence\":\"results/z0/latency_decision.md\"} を書く。null なら -1.1c は 30ms 未満を要求する",
+ "sinc_len": 256,
+ "ad_da_estimate_ms": 10.0,
+ "resamp_samples": 0,
+ "hop": 128,
+ "hop_a": 256,
+ "nfft_s": 512,
+ "sample_rate": 44100,
+ "asio_sdk_available": false,
+ "windows_build": "native",
+ "asio_sdk_evidence": null,
+ "_rtf_target_note": "C.4 の Rust 実測（candle-cpu release / full graph / K=2）。4 起動の p95 最悪値。**PyTorch 代理指標ではない**——代理は dim256 を通しており実測が覆した。",
+ "rtf_target_source": "results/z0/rtf_fullgraph_K2.json（C.4 の Rust 実測）",
+ "_q_note": "導出値 ceil(rtf×N/44100×SR/io)。rtf_target=0.1933 で 1。凍結値を書かない（latency_gate が検査する）"
+}

@@ -1,0 +1,13 @@
+{
+ "owner_approved": true,
+ "policy": "ear_gate_prohibited",
+ "waives": [
+  "step1_ear",
+  "nfft_a_rationale"
+ ],
+ "at": "2026-08-12 / オーナー指示「耳ゲート禁止」",
+ "reason": "オーナーが耳ゲート（盲検聴取）を禁止した。手順 1 の 1.6、5.2、5.3 の耳判定は実施しない。判定は**走行前に登録した proxy**（results/z0/proxy_gate.json）で行う。**VERDICT.md を捏造して通すことは行わない**——耳判定は『無い』のであって『合格した』のではない。",
+ "conflict": "⚠ `CLAUDE.md` は『昇格は耳のみ（proxy 単独昇格禁止）』と書いており、本方針と正面から衝突する。オーナーの直近の指示を優先するが、**`CLAUDE.md` の当該行は未更新のまま**なので、リポジトリには矛盾が残っている。オーナーが解消する。",
+ "risk": "① 本プロジェクトには proxy が耳と食い違った実測が複数ある: PESQ +0.49 の改善を盲検の耳が拒否（memory/pesq-gain-ear-rejects）、帯域 MAE proxy は不動なのに耳は大改善（memory/freeuniv-universal-vocoder）。∴ proxy 合格は『耳で良い』を意味しない。**ADOPTED の意味が変わる**——『耳で勝った』ではなく『登録した proxy を満たした』になる。② 手順 1 の a / Nv が無いので、§0.2 の逸脱 5 件目の根拠が無い。Z0-C 条件 1 の充足としては引用できない。③ NFFT_A=1024 の凍結根拠（TRAINING_PLAN §4 条件 b）が空欄。§11 は『§4 の a–e 未達での R1 起動』をスコープ外と宣言している。",
+ "obligation": "proxy の閾値は**走行前に**凍結する（規則 5）。走行後に緩めない。proxy_gate.json を後から書き換えて通すことは、36 巡目に事故った『変異を正本に焼き込む』と同じ形なので、pins が sha で凍結する。"
+}

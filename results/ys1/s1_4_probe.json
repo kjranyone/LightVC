@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "cpu_name": "",
+  "thread_count": 1,
+  "runs": 10000,
+  "warmup_steps": 2000,
+  "p50_ms": 2.8613,
+  "p95_ms": 3.0879,
+  "p99_ms": 3.2854,
+  "max_ms": 4.9083,
+  "mean_ms": 2.8706,
+  "mean_rtf": 0.2871,
+  "weight_bytes": 9320772,
+  "state_bytes": 0,
+  "hop": 480,
+  "sample_rate": 48000
+}

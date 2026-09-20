@@ -1,0 +1,14 @@
+{
+ "z0": "z_cfg_mismatch",
+ "ear": "e_ok",
+ "env": {
+  "DIM": "24",
+  "NLAYER": "8"
+ },
+ "expect_ok": false,
+ "verdict": [
+  "PASS",
+  0.05
+ ],
+ "expect_reason_contains": "証跡の nbin"
+}

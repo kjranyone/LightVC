@@ -1,0 +1,34 @@
+{
+ "basis": "rust_candle_measured",
+ "owner_approved": true,
+ "decided_at": "36 巡目（学習起動前）。規則 5: 走行前に宣言する",
+ "rationale": "C.4 の Rust 実測（candle-cpu / release / K=2 / p95）を判定の基準にする。推論は全て Rust (Candle) なので、これが製品そのもの。代理指標（PyTorch e2e / blas_floor）は記録するが判定には使わない。**スレッド数は効かない**（1/4/8 スレッドで p50 0.3475/0.3598/0.3549＝小行列で単スレ律速）ので thread_budget では救えない。",
+ "known_optimism": "blas_floor は LayerNorm / GELU / complex / cat を含まない。実装では上振れする。∴ これを合格の最終根拠にしない——**最終判定は PROCEDURE_APP.md C.4 の Rust 実測（gate_stage: measured）**であり、本基準は学習起動の可否だけに使う。",
+ "rejected": {
+  "marginal": "大 emit の傾きからの外挿。K=2 の小行列効率を反映せず楽すぎる（0.0109）",
+  "pytorch_e2e": "Rust に存在しないインタプリタ費を含む（0.1956）"
+ },
+ "measurements": {
+  "pytorch_e2e_worst_of_3_procs": 0.248,
+  "blas_floor": 0.0724,
+  "fixed_ms_per_call": 1.072,
+  "marginal_ms_per_frame": 0.0316,
+  "rust_candle_p95_K2": {
+   "d256_L6": 0.4302,
+   "d224_L6": 0.3566,
+   "d192_L6": 0.2891,
+   "d160_L6": 0.2274,
+   "d144_L6": 0.1814,
+   "d128_L6": 0.0878,
+   "d128_L8": 0.1167,
+   "d128_L10": 0.1319
+  }
+ },
+ "superseded": {
+  "old_basis": "blas_floor",
+  "verdict": "**反証された**。C.4 の Rust 実測（candle-cpu, release, K=2）は dim256/L6 で p50 0.3576 / p95 0.4302。blas_floor が予測した 0.0978 の 4 倍。",
+  "why_wrong": "blas_floor は『GEMM 以外は無視できる』を仮定したが、candle CPU では cat / narrow / contiguous / transpose の確保とコピー、および LayerNorm・GELU の 要素演算が GEMM と同程度に効く。K=2 の小行列では GEMM 自体も BLAS 効率が出ない。",
+  "lesson": "**測っていない層を『無視できる』と仮定した下限を、判定の基準にしてはいけない。** 本ファイル自身が『最終判定は C.4 の Rust 実測』と書いていたので実測で覆せたが、書いていなければ 4.6 時間の学習が出荷不能の設計点で完走していた。"
+ },
+ "measurement_caveat": "上記は学習と同時実行中の測定で、負荷ぶん悲観側に振れている可能性がある。**負荷下の観測を外れ値として捨てない**（製品は負荷下でも回る）ので、この値で判定する。"
+}

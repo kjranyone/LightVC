@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "sample_rate": 48000,
+  "hop_length": 480,
+  "latent_dim": 32,
+  "frames_per_run": 8,
+  "threads": 1,
+  "host": "ch160",
+  "processor": "x86_64",
+  "torch": "2.10.0+cu128",
+  "encoder_parameters": 2264624,
+  "decoder_parameters": 2330193,
+  "total_parameters": 4594817,
+  "decoder_macs_per_second": 1831014400,
+  "full_step_max_abs": 2.682209014892578e-07,
+  "step_ms_p50": 2.333311625989154,
+  "step_ms_p95": 2.5106243847403675,
+  "step_ms_p99": 2.639696132973768,
+  "step_ms_max": 2.639696132973768,
+  "rtf_mean": 0.2346397796063684
+}

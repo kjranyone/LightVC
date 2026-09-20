@@ -1,0 +1,12 @@
+{
+ "lookahead_ms": 0.0,
+ "unbounded": false,
+ "inconclusive": true,
+ "dim": 24,
+ "L": 8,
+ "k_in": 7,
+ "k": 3,
+ "nbin": 257,
+ "cin": 4,
+ "prior": true
+}

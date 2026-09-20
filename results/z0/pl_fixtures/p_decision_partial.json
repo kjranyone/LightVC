@@ -1,0 +1,14 @@
+{
+ "z0": "z_dec_partial",
+ "ear": "e_ok",
+ "env": {
+  "DIM": "24",
+  "NLAYER": "8"
+ },
+ "expect_ok": false,
+ "verdict": [
+  "PASS",
+  0.05
+ ],
+ "expect_reason_contains": "ceiling_decision.json に"
+}

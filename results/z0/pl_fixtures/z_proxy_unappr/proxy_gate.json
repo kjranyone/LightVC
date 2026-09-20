@@ -1,0 +1,39 @@
+{
+ "policy": "ear_gate_prohibited の代替判定。**走行前に凍結**（規則 5）",
+ "frozen_at": "2026-08-12 / dim128 走行の起動直後（step 28000 時点。閾値は結果を見ずに決めた）",
+ "owner_approved": false,
+ "primary": {
+  "metric": "PESQ-vs-gt（quality_gate.py）",
+  "why": "本リポジトリで耳と一致した実績がある唯一の指標（memory/quality-gate-pesq: ceiling 3.5 ≫ self 1.1 を再現・アライメント頑健）。mel-L1 / SQUIM-MOS / STOI は同 memory で失格。",
+  "known_failure": "⚠ PESQ +0.49 の改善を盲検の耳が拒否した実測がある（memory/pesq-gain-ear-rejects）。∴ PESQ 合格は『耳で良い』を意味しない。",
+  "align": "score_one は RMS 整合する＝広帯域ゲインに盲目（memory/pesq-blind-band-level）。系ごとのレベル差を別に記録し、0.5 dB を超えたら結果を無効にする。"
+ },
+ "thresholds": {
+  "step1_substitute": {
+   "rule": "PESQ(pathB) >= PESQ(pathA) - 0.30",
+   "value": 0.3,
+   "basis": "実測: 同一 10 クリップで gt 4.6439 / pathA 2.8693 / pathB 2.4706。現状の差は 0.3987 で**この閾値を満たさない**——つまり閾値は『いま通る値』に合わせていない（合わせたら検査にならない）。0.30 は pathA-pathB 差を 25% 縮めることを要求する。",
+   "current": {
+    "pathA": 2.8693,
+    "pathB": 2.4706,
+    "gap": 0.3987,
+    "passes_now": false
+   }
+  },
+  "promote_5_4": {
+   "rule": "PESQ(新V) >= PESQ(pathA) かつ 二値検査が全て PASS",
+   "binary": [
+    "parity SNR >= 80 dB",
+    "未来不変性 0.00 ms / not unbounded / not inconclusive",
+    "因果性 CI 完全一致",
+    "C.4 Rust RTF p95: front+net < 0.35"
+   ],
+   "basis": "pathA は 5.2 の係留（品質の上限側の実在音）。それに並べば商品として出せる、を proxy 上の定義とする"
+  },
+  "ceiling_5_1": {
+   "rule": "ceiling_decision.json の (ref, n=24, delta=0.15) をそのまま使う",
+   "note": "耳ではなく ceiling_check.py の数値判定なので、耳ゲート禁止の影響を受けない"
+  }
+ },
+ "invalidation": "① 系ごとの RMS 差 > 0.5 dB が出たら、その比較は無効（memory/blind-test-level-leak: 盲検が音量で解けていた）。② copy-synthesis で高スコアが出たら退化を疑う（memory/benchmark-degeneracy-gate）。③ **閾値を走行後に緩めない。** pins が sha で凍結する。"
+}
