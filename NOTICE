@@ -1,0 +1,13 @@
+LightVC — real-time voice conversion (MIT License)
+
+Bundled model weights (models/v2f.bin) were trained on:
+  - female-dataset (2775 real speakers)
+  - irodori-tts corpus (669 speakers)
+
+Third-party licenses:
+  - CLAP plugin ABI: MIT
+  - VST3 support via clap-wrapper: MIT
+  - ASIO SDK is NOT included (proprietary; users must obtain it from Steinberg
+    to build ASIO support themselves).
+
+This distribution contains no GPLv3 dependencies.
