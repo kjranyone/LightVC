@@ -76,3 +76,15 @@ kansei/renders/
 
 # ===== Doc harness lock (tooling) =====
 .doc_harness.lock
+
+# ===== Run annotations & data provenance (学習途中のアノテーション・食わせたデータ情報, local-only evidence) =====
+results/**
+!results/DELETED*.txt
+!results/z0/
+!results/z0/**
+!results/ys1/
+!results/ys1/**
+prereg.yaml
+*_manifest.json
+results/z0/**/*.pt
+results/z0/**/*.safetensors

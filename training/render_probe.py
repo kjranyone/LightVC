@@ -46,6 +46,8 @@ def main() -> int:
     ap.add_argument("--cfm", default=str(ROOT / "results/s7_cfm_itp/s7_cfm_itp_best.pt"))
     ap.add_argument("--out", required=True)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--cfg-w", type=float, default=1.0,
+                    help="speaker CFG外挿幅(1.0=無効。cond/uncondを同seedでSamplingし外挿)")
     a = ap.parse_args()
     dev = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -117,13 +119,20 @@ def main() -> int:
     cond = torch.cat(parts, 0)[None]
 
     s_ = spk_emb[a.target][None].to(dev)
-    g = torch.Generator(device=dev).manual_seed(a.seed)
-    with torch.no_grad():
-        zh = ar_noise(T100, a.rho, g, dev, 1)
-        for k in range(a.K):
-            t = torch.full((1,), k / a.K, device=dev)
-            zh = zh + cfm(zh, cond, t, s_) / a.K
-        zh = zh.clamp(-8, 8)
+
+    def sample(s_vec):
+        g = torch.Generator(device=dev).manual_seed(a.seed)
+        with torch.no_grad():
+            zh = ar_noise(T100, a.rho, g, dev, 1)
+            for k in range(a.K):
+                t = torch.full((1,), k / a.K, device=dev)
+                zh = zh + cfm(zh, cond, t, s_vec) / a.K
+        return zh.clamp(-8, 8)
+
+    zh = sample(s_)
+    if a.cfg_w != 1.0:
+        zh_u = sample(torch.zeros_like(s_))
+        zh = (zh_u + a.cfg_w * (zh - zh_u)).clamp(-8, 8)
         z = zh * sd[:, None] + mu[:, None]
         stream = codec.decoder.stream()
         y = torch.cat([stream.decode_step(z[:, :, i:i + 1])

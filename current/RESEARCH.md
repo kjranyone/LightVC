@@ -41,13 +41,25 @@ S1-3/4/5の履歴は [整理前RESEARCH](../.archive/docs_2026-09-08/current/RES
 
 **F0権威の5負例で統一法則を確定**（s10補助損失・s12 WORLD増強・s13倍音除去mel・s1_f0h concat・s1_f0h2 FiLMキャリア）: pitchを既に含む特徴を持つ系（z・trunk features・ContentVec+mel）では、学習時に一貫する追加入力は常に冗長で、模型は特徴側からpitchを再構成して追加入力を中和する（FiLMはゲートで励起を完全遮断、出力はf0にビット不変）。ただし**両ヘッドの再構成はS1-3基準を上回る**（concat 0.4377・FiLM 0.4358 vs 0.4418・trunk凍結・30k steps）——ヘッド品質は問題ではない。
 
-1. **信号路NSF化フルdecoder再設計（完了・v1/v2ともF0権威負例）**: v1(s2_nsf・学習マスク): 乗算マスクでも**周波数変換チート**を学習(23k: st0真値375Hz精確再現・掃引+0.1/+0.25st——位相含有マスク×キャリアの積でz側pitchを合成)。v2(s2b_nsf_blm・マスク帯域≲50Hzでチート原理封じ): チートは封じたが**品質停滞(最終best held-mel 0.6586・G1不可)**しF0掃引も不成立(60k最終: +0.14/+0.23・−0.54/+0.09st、有声率0.15–0.38)——proj線形混合が調和チャネルを減衰させpitch薄い局所解に落ちる（[s2b_g2_mid.json](../results/diag_cfm_audit/s2b_g2_mid.json)・[s2b_gates_final.json](../results/diag_cfm_audit/s2b_gates_final.json)・`results/s2_nsf_train.log`・`results/s2b_nsf_blm_train.log`）。**結論: pitch-richなzを条件とする限り、信号路NSF化でもF0権威は成立しない。次設計は符号器側でzをpitch-blind化(f0無関係化)してからNSF decoderを組む**——codec契約変更の本命。**s3_codec_f0実行中**: 符号器スクラッチ+NSF decoder(容量増強)+不変性損失‖E(x)−E(shift_k(x))‖₁(WORLDペア3,996件)。スモーク時点でライブゲートsweep=+7.00/+11.40st(構造的権威即時発現)——品質収束後も維持されるかが勝負。ゲート走行前固定: G1 held-mel≤0.50・G2掃引±0.5半音・G3 シフト包絡mel-L1≤2.0・G4 交差decode(z_A, f0_B)のpitch=f0_B。
+1. **信号路NSF化フルdecoder再設計（完了・v1/v2ともF0権威負例）**: v1(s2_nsf・学習マスク): 乗算マスクでも**周波数変換チート**を学習(23k: st0真値375Hz精確再現・掃引+0.1/+0.25st——位相含有マスク×キャリアの積でz側pitchを合成)。v2(s2b_nsf_blm・マスク帯域≲50Hzでチート原理封じ): チートは封じたが**品質停滞(最終best held-mel 0.6586・G1不可)**しF0掃引も不成立(60k最終: +0.14/+0.23・−0.54/+0.09st、有声率0.15–0.38)——proj線形混合が調和チャネルを減衰させpitch薄い局所解に落ちる（[s2b_g2_mid.json](../results/diag_cfm_audit/s2b_g2_mid.json)・[s2b_gates_final.json](../results/diag_cfm_audit/s2b_gates_final.json)・`results/s2_nsf_train.log`・`results/s2b_nsf_blm_train.log`）。**結論: pitch-richなzを条件とする限り、信号路NSF化でもF0権威は成立しない。次設計は符号器側でzをpitch-blind化(f0無関係化)してからNSF decoderを組む**——codec契約変更の本命。**s3_codec_f0実行中(診断位置づけ・台帳はresults/s3_codec_f0/_ledger.md)**: 符号器スクラッチ+NSF decoder+不変性損失(片側stop-grad — 対称化が原理に忠実、契約逸脱[CTX48・gain aug/quiet欠落]は台帳に記録)。RTFプローブ: **NSF decoder 14.29ms/frame=予算4倍→出荷不可、出荷NSFは別設計**。c32出荷decoder 0.68ms/frame、**CFMYS K=8は1.90ms/frame=6ms枠内**。s3の結果はcodec契約変更要否の判定材料。
+
+**s14_cfm_perturb(完了・F0/話者FAIL・包絡PASS)**: 入力側一括摂動(実効矛盾率=プール被覆2割×p0.5=**1割に低下**)のため失敗——F0掃引−0.14/−0.47st・cos_vs_target 0.23(CFG w=2でも0.233=条件が実質不使用)・包絡3.46 PASS・eval-L1 0.2553([s14_gates.json](../results/diag_cfm_audit/s14_gates.json))。**s15_cfm_perturb100(完了・FAIL)**: 矛盾率100%(プール3,996件のみ・p1.0)でもF0掃引+0.23/−0.03st・包絡4.63・cos 0.226([s15_gates.json](../results/diag_cfm_audit/s15_gates.json))。**出力pitchは真値に張り付きlf0を無視——WORLDアーチファクトから摂動量rを検出して元に戻す「摂動の可逆性」が失敗原因と判定**(理論の反証ではなくexecution)。**s16_cfm_pvshift(完了・F0 FAIL・話者軸初の改善)**: 位相ボコーダ摂動(フォルマント同時移動)でもF0掃引+0.37/+0.60st・包絡5.18——だが**cos_vs_target 0.226→0.307に改善**(フォルマント摂動が話者条件の使用を初めて生成)([s16_gates.json](../results/diag_cfm_audit/s16_gates.json))。**3連否決で根因確定: 潜在L1目的はpitchに不感**(R²=0.088と整合)——話者中央値+摂動下でも残るprosody輪郭で±3stは許容され、lf0を使う動機が損失に存在しない。**s17_cfm_pv_aux(完了・F0 FAIL・摂動系4連続非達成で系列打ち切り)**: aux decode-mel損失(0.3)併用でもF0掃引−0.41/−0.77st・cos 0.297維持・包絡4.99([s17_gates.json](../results/diag_cfm_audit/s17_gates.json))。**最終帰結: 潜在L1も80-mel L1も絶対pitchに鈍感(±3stは許容)で、話者中央値(speaker条件=真)+摂動下でも残るprosody輪郭(content)だけで損失を満たせる——lf0を使う動機は条件設計でも損失設計でも生えない。** 次の選択: (a) pitch鋭敏な補助損失(デコード音声の微分可能F0/調和ピーク損失——重い) (b) s3系(pitch-blind z+NSF・構造的権威。診断では陽性:+7.9/+10.45st)の本格化——出荷サイズNSFの再設計を含む (c) 現行資産(s11+f0h)で耳ゲート・話者軸(s16のformant摂動知見: cos 0.307)を先に。
+
+**s14系列(統一処方)**: 15負例の統一原理「漏洩しうる条件は摂動で嘘にし、権威を持たせたい条件だけ真実にする」を1腕で実装——**入力側一括摂動**(content=シフト音声ContentVec・mel=シフト音声mel[既存f0shift_wav/contentキャッシュ3,996件]、lf0/energy/speaker/target=元音声)+ **CFG**(speaker条件ドロップ0.2、推論時はcond/uncond外挿)。ベースはs11レシピ(mel_in・interp・40k)。**成功条件走行前固定: F0掃引±0.5半音(中域3seed)・女声source cos_vs_target≥0.40(CFG)・包絡mel-L1≤4.0・男声source CER記録**。同腕でF0権威・content leak遮断・包絡維持を同時検証。
 2. **高品質シフタによる一貫増強**(s12のexecution改善)は代替のまま。
 3. **s11+F0HでF0制御を保留し前進**（content leak・男声被覆・一軸(息)）も並行可能。
 
-成功条件・計算時間枠・評価splitは走行前に固定する。
+成功条件・計算時間枠・評価splitは走行前に固定する。**2026-09-20制定: 以降の全腕は [design_laws.md](design_laws.md) の検査L/I/C記入（`results/<tag>/prereg.yaml`）を起動条件に追加**。
 
-## 4. 進行状態の扱い
+## 4. 制度(2026-09-20外部評価により追加)
+
+- **feat生成検証ゲート恒久化**: `encode_feat.py --verify <dir>`(f0輪郭相関≥0.9・energy≥0.99)。実証: female_tts_feat PASS(1.000)・female_real_feat FAIL(−0.031)=過去の破損を正しく検出。新規feat生成後に必須。
+- **固定耳バッテリー**: `results/earbattery/manifest.json`(会話2・喘ぎ1・囁き3)。腕ごとに1回、最初の耳判定に使う。
+- **文献1チェック**: 腕起動前に「この失敗様式は既知か」を1回調べる。
+- **f0破損の生成元**: git履歴に書き込みスクリプトなし(encode_feat自体は後追い整備・docstring「format verified 2026-07-20」)。未追跡スクリプトと推定・復元不能。検証ゲートが再発対策。
+- **台帳規則の運用**: >1h学習は台帳を先に書く(s3は違反して後追い・s14は起動直後)。
+
+## 5. 進行状態の扱い
 
 旧文書の「学習中」「全停止」は時点の記録であり、現在のプロセス状態ではない。2026-09-19第7次時点で実行中のジョブなし（f0fix・s6〜s11学習・監査・レンダすべて完了）。学習再開時はプロセス、checkpoint、データ、出力先を読み取りで確認する。
 

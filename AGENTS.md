@@ -14,11 +14,42 @@
 
 ## Current Direction
 
-- 目標は ASMR・官能バ美肉向けリアルタイムVC、E2E 50ms未満、Human-in-the-Loop Kansei評価。
+- 目標は ASMR・官能バ美肉向けリアルタイムVC、Human-in-the-Loop Kansei評価。
+- **E2E レイテンシ（`current/README.md` が正本）: 設計目標 p95 &lt; 30ms / 理想 20ms級 / p95 ≥ 50ms は失格上限**。50ms は合格ラインではない。「50ms未満ならよい」と読まない。
 - 現行設計は `B4 Dual-Path Kansei VC`。
 - DAC latentからspeaker-free contentを学習するStage1依存設計は不採用。
 - contentはSSL/ASR系、prosodyは明示特徴、target voice/style/textureは別経路で扱う。
 - GANは最後のtexture fine-tuneのみ。失敗したcontent表現をGANで救済しない。
+
+## Shipping Gate (出荷前提) — 長時間学習を起動する前に必ず通す
+
+**このゲートが無かったため、ストリーミングできない front-end の上で 55 時間（gvoc f0版 27.5h ＋ NHV版 27.5h）を消費した。** 二度とやらない。
+
+- **1時間を超える学習を起動する前に `uv run python ship_check.py` 相当の台帳を出し、PASS を確認してからにする。** FAIL のまま起動しない。ログの先頭に台帳を残す。
+- **合否は 2 条件**:
+  1. **未来不変性** — 入力の t 以降を書き換えたとき、t 以前を担当する出力フレームが変化しないこと。**実音声プローブで測る**（白色雑音は argmax/閾値の離散性で偽 PASS を出す。実測済み: `harmonic_sum_f0` が雑音 1.81ms / 実音声 1882ms）。編集が出力を動かさない場合は INCONCLUSIVE ＝ PASS にしない。
+  2. **静的遅延台帳** — framing 先読みの合計 ＋ content encoder 予備 10ms &lt; 30ms。
+- **推論経路に発話全体の統計を置かない**（禁止例: 発話中央値による正規化、`amax()` による包絡正規化、発話 RMS によるレベル決定、発話中央値 f0 から倍音数を決める）。因果な走行推定か固定定数にする。これらは **front-end を直すとネットの入力分布が変わるので、重みの流用ができず学習し直しになる**。
+- **centered framing は診断専用**（`ROADMAP.md` path A）。製品経路は左寄せ（`causal_mel.py`）。**左寄せ窓は n_fft をいくつにしても先読み 0** — 窓長は遅延ではなく過渡のにじみのツマミ（実測確認済み）。
+- **ゲートを通らない構成で学習してよいのは、tag に `diag_` を付けて診断と明示した場合のみ。** その結果を製品判断・昇格の根拠に引用しない。
+- **「あとで front-end だけ差し替える」は不可**と前提する。差し替えられるのは、ネットが見る値が変わらないと示せた場合だけ。
+
+## Design Laws (設計三層則) — 学習腕の起動前必須
+
+**配線は「何が表現可能か」を決めるだけ。学習の収束先は、損失の解析的最適解と学習データ分布上の識別可能性が決める。設計意図は回路図ではなく損失とデータ分布に書く。**（F0権威7負例・s8/s9容量無効・CFM平均退化の実測から制定）
+
+- 全ての学習腕は起動前に `current/design_laws.md` の検査 **L**（損失最適解の書き下ろし）・**I**（識別可能性監査）・**C**（チート列挙と最ラク性）を記入し、`results/<tag>/prereg.yaml` に保存、学習ログ先頭にパスを残す。**記入できない・FAILが埋まらない場合は起動せず停止報告**（「走らせて様子を見る」禁止）。
+- 権威を持たせたい条件と同じ情報を他入力が運ぶ場合、遮断は**分布レベル**（入力摂動・ペア構成・条件ドロップ・不変性正則化）で行う。配線レベルの遮断だけでは停滞する（NSF v2実測）。
+- 検査IのFAILに容量・幅・条件concat・loss重み調整を対処として使わない（s8/s9/f0h実測で無効）。
+- 摂動・シフト等の人工データをtarget側に置かない。教師は実音声を維持する（s12負例）。
+- fork（PASS→次の行動/FAIL→次の行動）が同一になる腕は情報価値ゼロなので起動しない。
+- 本ゲートは Shipping Gate（未来不変性・遅延台帳・RTF）への**追加**であり代替ではない。
+
+## Data (学習データ) — 必ずフルデータでフル学習
+
+- **本番学習は必ずフルコーパスを使う**。`female-dataset`（実女性2775話者＝`data/female_real_feat`）と irodori-tts コーパス（`data/female_tts_corpus` 669話者、full encode すること）を**全量**利用する。男性ソースは `data/male_feat`。
+- **少数話者・部分集合での学習は誤り**（例: `rcav_feat` の42話者だけ、極小overfit setだけ）。切り分け用の overfit gate を除き、**本番・比較・昇格の学習は full data 前提**。
+- 新コーパスは学習前に content/f0/energy へ full encode し、`*_feat` を揃える。「まず小さく回す」で結論を出さない。
 
 ## Environment
 
@@ -59,6 +90,14 @@ cargo build --release --features asio -p lightvc-app
 - **Rust**: コメントは最小限
 - **Python**: コメントなし、型ヒント推奨
 - **コミットメッセージ**: 英語、`feat:` / `fix:` / `docs:` / `refactor:` プレフィックス
+
+## Results Directory Convention
+
+- **命名**: `diag_`=診断専用（部分集合・ゲート外構成。製品判定に引用しない）／`cart_`=cartridge FT／`v2X_`=V2 ラダー腕／無印=本命走行。`*_smoke` は動作確認のみ。
+- **寿命**: smoke は当日中に削除。負け腕は判定記録後に best（+last）のみ残し中間 snap は削除。勝ち腕も採用確定後に snap を削除。
+- **削除台帳**: 削除前に `results/DELETED_<date>.txt` に一覧を追記する（不可逆のため）。
+- **走行中の run が参照するパス（ckpt・キャッシュ・データ）を消さない**。整理前に `pgrep -f train` で走行中ジョブを確認する。
+- **例外**: RESEARCH.md が数値・パスで参照する証拠（耳軸測定・帰属 arm の wav/json）は削除しない。
 
 ## Known Issues
 

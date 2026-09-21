@@ -42,14 +42,20 @@ def energy_of(w44, n):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--corpus", required=True)
-    ap.add_argument("--out", required=True)
+    ap.add_argument("--corpus", default=None)
+    ap.add_argument("--out", default=None)
     ap.add_argument("--glob", default="*.wav")
     ap.add_argument("--min-sec", type=float, default=1.0)
     ap.add_argument("--limit-per-spk", type=int, default=0)
     ap.add_argument("--shard", default="0/1")
     ap.add_argument("--overwrite", action="store_true")
+    ap.add_argument("--verify", default=None,
+                    help="既存featキャッシュの検証のみ実行(生成はしない)")
     args = ap.parse_args()
+    if args.verify:
+        raise SystemExit(verify_cache(args.verify))
+    if not args.corpus or not args.out:
+        raise SystemExit("--corpus/--out required (or use --verify)")
     si, sn = (int(x) for x in args.shard.split("/"))
     spks = sorted(d for d in Path(args.corpus).iterdir() if d.is_dir())
     spks = [s for k, s in enumerate(spks) if k % sn == si]
@@ -89,6 +95,52 @@ def main():
                 print(f"  skip {w.name}: {str(e)[:50]}", flush=True)
         print(f"[shard {si}/{sn}] {sd.name}: {total} enc / {skip} skip", flush=True)
     print(f"[shard {si}/{sn}] done: {total} encoded, {skip} skipped -> {out_root}", flush=True)
+
+
+
+
+def verify_cache(out_dir: str, n: int = 40, seed: int = 0) -> int:
+    """保存featと元音声のサンプル相関プローブ(f0破損85%事故の恒久対策)。
+
+    新規feat生成後に必ず実行する:
+      uv run python encode_feat.py --verify ../data/<new_feat>
+    f0輪郭相関の中央値<0.9 または energy相関<0.99 なら非ゼロexit。
+    """
+    import sys as _sys
+    import random as _r
+    import pyworld as _pw
+    root = Path(out_dir)
+    rng = _r.Random(seed)
+    fs = [q for q in root.rglob("*.pt")]
+    rng.shuffle(fs)
+    fs = fs[:n]
+    cs, es = [], []
+    for f in fs:
+        try:
+            d = torch.load(f, map_location="cpu", weights_only=False)
+            w44, _ = librosa.load(d["path"], sr=44100, mono=True)
+            w64 = w44.astype("float64")
+            f0, t = _pw.harvest(w64, 44100, f0_floor=65, f0_ceil=1000,
+                                frame_period=512 / 44100 * 1000)
+            fr = _pw.stonemask(w64, f0, t, 44100)
+            m = len(w44) // 512
+            e = np.sqrt((w44[: m * 512].reshape(m, 512) ** 2).mean(-1))
+            st_f, st_e = d["f0"].numpy(), d["energy"].numpy()
+            nf = min(len(fr), len(st_f))
+            mf = (fr[:nf] > 60) & (st_f[:nf] > 60)
+            if mf.sum() >= 30:
+                cs.append(float(np.corrcoef(fr[:nf][mf], st_f[:nf][mf])[0, 1]))
+            ne = min(len(e), len(st_e))
+            if ne >= 30:
+                es.append(float(np.corrcoef(e[:ne], st_e[:ne])[0, 1]))
+        except Exception:
+            continue
+    cm = float(np.median(cs)) if cs else 0.0
+    em = float(np.median(es)) if es else 0.0
+    ok = cm >= 0.9 and em >= 0.99
+    print(f"verify {root}: n={len(cs)} f0-corr median {cm:.3f} "
+          f"energy-corr median {em:.3f} -> {'PASS' if ok else 'FAIL'}")
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

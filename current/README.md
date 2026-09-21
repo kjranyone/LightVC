@@ -37,6 +37,7 @@ target参照 → voice / style / texture ──┤
 | [causal_codec.md](causal_codec.md) | Y-S1の詳細設計・ABI・codecゲート（PROPOSED） |
 | [cfm_ys1.md](cfm_ys1.md) | 現CFM実装と設計意図の差、接続契約（PROPOSED） |
 | [kansei_control.md](kansei_control.md) | 官能評価、萌えのパラメタ化、再生側UX（PROPOSED） |
+| [design_laws.md](design_laws.md) | 設計三層則と起動前検査L/I/C（規範・全学習腕必須） |
 | [FAILURE_NOTES.md](FAILURE_NOTES.md) | 再試行前に確認する失敗・撤回・帰属の限界 |
 | [EVALUATION.md](EVALUATION.md) | 評価記録とレイテンシ計測の共通契約 |
 
@@ -60,7 +61,7 @@ target参照 → voice / style / texture ──┤
 
 人間の選択が最終的な判断材料になる。話者類似度・loss・音響proxyだけで昇格しない。診断の責任は研究側が持ち、評価者へ欠点の言語化を必須にしない。
 
-実験前に仮説、対照、データ、ABI、判断条件、次の分岐を固定する。長時間学習の前に因果性と静的遅延台帳を確認する。失敗や保留をPASSへ読み替えない。既存の閾値変更は過去の明示承認と区別して記録する。
+実験前に仮説、対照、データ、ABI、判断条件、次の分岐を固定し、[design_laws.md](design_laws.md) の検査L/I/C（損失最適解・識別可能性・最ラク性）を記入する — 記入できない腕は起動しない。長時間学習の前に因果性と静的遅延台帳を確認する。失敗や保留をPASSへ読み替えない。既存の閾値変更は過去の明示承認と区別して記録する。
 
 昇格は「RESEARCHの仮説 → PROPOSED設計 → overfit・耳・必要な実装ゲート → ADOPTED設計 → 本書の採用索引」。資料整理だけで採用状態を変えない。
 

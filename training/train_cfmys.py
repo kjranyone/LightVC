@@ -29,6 +29,10 @@ from train_vc_g import CausalBlock
 ROOT = Path(__file__).resolve().parent.parent
 LAT = ROOT / "data/ys1_latent"
 F0FIX = ROOT / "data/female_real_f0fix"
+PSHIFT_C = ROOT / "data/f0shift_content"
+PSHIFT_W = ROOT / "data/f0shift_wav"
+PV_C = ROOT / "data/pvshift_content"
+PV_W = ROOT / "data/pvshift_wav"
 COND_FPS = 50.0
 LAT_FPS = 100.0
 F0_FPS = 44100 / 512
@@ -117,6 +121,15 @@ def main() -> int:
     ap.add_argument("--aug-p", type=float, default=0.0,
                     help="f0shift_latent増強を引く確率(mel/content=元・lf0/target=シフト後)")
     ap.add_argument("--aug-dir", default=str(ROOT / "data/f0shift_latent"))
+    ap.add_argument("--perturb-p", type=float, default=0.0,
+                    help="入力側一括摂動: content/melをシフト音声由来にする確率"
+                         "(lf0/energy/speaker/targetは元のまま=権威条件のみ真実)")
+    ap.add_argument("--perturb-pool-only", action="store_true",
+                    help="学習を摂動プール発話のみに限定(矛盾率100%)")
+    ap.add_argument("--perturb-src", choices=["world", "pv"], default="world",
+                    help="摂動プール種別(world=f0shift_*/pv=pvshift_*)")
+    ap.add_argument("--cfg-p", type=float, default=0.0,
+                    help="speaker条件の学習時ドロップ率(CFG用)")
     ap.add_argument("--sample-k", type=int, default=8,
                     help="interp時の評価サンプリングEulerステップ数")
     ap.add_argument("--f0fix", action="store_true",
@@ -148,6 +161,11 @@ def main() -> int:
         if p.name != "abi.pt":
             lats[p.stem] = p
     pairs = [f for f in feats if f.stem in lats and "female_real" in str(lats[f.stem])]
+    if a.perturb_pool_only:
+        cdir = PV_C if a.perturb_src == "pv" else PSHIFT_C
+        pairs = [f for f in pairs
+                 if (cdir / f.parent.name / (f.stem + ".pt")).exists()]
+        print(f"  perturb-pool-only: {len(pairs)} pairs", flush=True)
     if a.f0fix:
         missing = [f for f in pairs
                    if not (F0FIX / f.parent.name / f.name).exists()]
@@ -214,6 +232,17 @@ def main() -> int:
                                           sr=44100)[0].half()
                 zd_ = torch.load(lats[f.stem], map_location="cpu",
                                  weights_only=False)
+                perb = None
+                if a.perturb_p > 0:
+                    pc = (PV_C if a.perturb_src == "pv" else PSHIFT_C) / f.parent.name / (f.stem + ".pt")
+                    pw = (PV_W if a.perturb_src == "pv" else PSHIFT_W) / f.parent.name / (f.stem + ".wav")
+                    if pc.exists() and pw.exists():
+                        wv2, _ = librosa.load(str(pw), sr=44100, mono=True)
+                        mel2 = causal_mel(torch.from_numpy(wv2) * 32768.0,
+                                          n_fft=1024, hop=256, num_mels=80,
+                                          sr=44100)[0].half()
+                        perb = (torch.load(pc, map_location="cpu",
+                                           weights_only=False), mel2)
                 aug = None
                 if a.aug_p > 0:
                     ap_ = Path(a.aug_dir) / f.parent.name / (f.stem + ".pt")
@@ -221,7 +250,7 @@ def main() -> int:
                         ad = torch.load(ap_, map_location="cpu",
                                         weights_only=False)
                         aug = (ad["z"].float(), float(ad["st"]))
-                cache[f] = (d, zd_["z"].float(), mel_full, aug)
+                cache[f] = (d, zd_["z"].float(), mel_full, aug, perb)
             except Exception:
                 cache[f] = None
         return cache[f]
@@ -264,7 +293,7 @@ def main() -> int:
                 it = get(f)
                 if it is None:
                     continue
-                d, z, mel_full, _aug = it
+                d, z, mel_full, _aug, _perb = it
                 T = z.shape[0]
                 if T <= 300:
                     continue
@@ -294,18 +323,25 @@ def main() -> int:
             it = get(f)
             if it is None:
                 continue
-            d, z, mel_full, aug = it
+            d, z, mel_full, aug, perb = it
             st = 0.0
             if aug is not None and rng.random() < a.aug_p:
                 z, st = aug
+            mel_use, d_use = mel_full, d
+            if perb is not None and rng.random() < a.perturb_p:
+                d_use = {**d, "content": perb[0]}
+                mel_use = perb[1]
             T = z.shape[0]
             if T <= a.crop + net.ctx + 4:
                 continue
             s0 = rng.randrange(net.ctx, T - a.crop)
             zn = ((z - mu.cpu()) / sd.cpu())
             zs.append(zn[s0: s0 + a.crop].transpose(0, 1))     # [32, crop]
-            conds.append(cond_of(d, T, mel_full, st)[:, s0: s0 + a.crop])
-            spks.append(spk_emb.get(d.get("speaker"), torch.zeros(192)))
+            conds.append(cond_of(d_use, T, mel_use, st)[:, s0: s0 + a.crop])
+            s_ = spk_emb.get(d.get("speaker"), torch.zeros(192))
+            if a.cfg_p > 0 and rng.random() < a.cfg_p:
+                s_ = torch.zeros(192)
+            spks.append(s_)
         step += 1
         z1b = torch.stack(zs).to(dev)
         cb = torch.stack(conds).to(dev)
