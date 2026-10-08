@@ -1,0 +1,3 @@
+results/a2vc_smoke/  (smoke: train_a2vc.py --smoke 動作確認のみ・train.jsonl/snap/last.pt)
+results/a2vc_smoke/  (smoke 2 回目: ACF 周期損失の動作確認のみ)
+results/a2vc_smoke/  (smoke 3 回目: 櫛形 c_in の動作確認のみ)

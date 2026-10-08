@@ -1,0 +1,1 @@
+results/diag_zsvc_smoke/ (smoke・00:55 削除)

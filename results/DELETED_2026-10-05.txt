@@ -1,0 +1,9 @@
+# 2026-10-05 prep_f0hi のスモーク(--limit 300・動作確認のみ・当日削除。npy は全量走行で同じパスに再生成される)
+data/rvoc_f0hi/manifest_limit.json
+# 2026-10-05 prep_f0hi の v1 出力(レビュー前の教師 f0hi v1 で作った途中の npy・約 6,000 / 62,542 ファイル・manifest 無し・v2 で作り直すため削除)
+data/rvoc_f0hi/real_female/ data/rvoc_f0hi/tts_base/ data/rvoc_f0hi/tts_emotional_live/ (合計 1.9MB)
+# 2026-10-05 train_c3 / conv_p0 のスモーク(動作確認のみ・当日削除)
+results/c3_smoke/ (last.pt・train.jsonl・prereg 無し)
+# 2026-10-05 C3 の出荷ゲート確認(--tag c3_gt・40 step・動作確認のみ・当日削除)
+results/c3_gt/ (last.pt・train.jsonl・prereg 複製)
+# 2026-10-05 c3_smoke2(動作確認のみ・当日削除) results/c3_smoke2/

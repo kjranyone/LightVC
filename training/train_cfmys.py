@@ -38,6 +38,7 @@ LAT_FPS = 100.0
 F0_FPS = 44100 / 512
 MEL_FPS = 44100 / 256.0
 MEL_SCALE = 8.0
+LF0_ROW = 768
 
 
 class CFMYS(nn.Module):
@@ -112,6 +113,8 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--interp", action="store_true",
                     help="直線補間z_t入力の本来のCFM学習(z0入力の平均回帰退化を避ける)")
+    ap.add_argument("--no-spk", action="store_true",
+                    help="speaker FiLMを使わない(学習・評価ともs=None・D1同条件対照用)")
     ap.add_argument("--spk-in", action="store_true",
                     help="speaker embeddingを入力concatへ追加(cross-speaker話者条件強化)")
     ap.add_argument("--mel-in", action="store_true",
@@ -134,6 +137,8 @@ def main() -> int:
                     help="interp時の評価サンプリングEulerステップ数")
     ap.add_argument("--f0fix", action="store_true",
                     help="female_real_featの破損f0を data/female_real_f0fix で置換")
+    ap.add_argument("--harm-w", type=float, default=0.0,
+                    help="ACF調和対比損失の重さ(検査L通過v2・pitch鋭敏)")
     ap.add_argument("--aux-w", type=float, default=0.0,
                     help="decode領域mel補助損失の重さ(0=無効)")
     ap.add_argument("--aux-every", type=int, default=1)
@@ -183,7 +188,7 @@ def main() -> int:
                 spk_in=a.spk_in).to(dev)
 
     codec = fb = win = None
-    if a.aux_w > 0:
+    if a.aux_w > 0 or a.harm_w > 0:
         from causal_codec import CausalCodec
         ckc = torch.load(ROOT / "results/s1_3_c32/s1_3_c32_last.pt", map_location=dev)
         codec = CausalCodec(latent_dim=32, channels=(32, 64, 128, 256, 512)).to(dev)
@@ -298,7 +303,7 @@ def main() -> int:
                 if T <= 300:
                     continue
                 cond = cond_of(d, T, mel_full).to(dev)[None]
-                s_ = spk_emb.get(d.get("speaker"))
+                s_ = None if a.no_spk else spk_emb.get(d.get("speaker"))
                 s_ = s_[None].to(dev) if s_ is not None else None
                 if a.interp:
                     zh = sample_k(net, T, a.rho, ge, dev, cond, s_, a.sample_k)
@@ -345,7 +350,7 @@ def main() -> int:
         step += 1
         z1b = torch.stack(zs).to(dev)
         cb = torch.stack(conds).to(dev)
-        sb = torch.stack(spks).to(dev)
+        sb = None if a.no_spk else torch.stack(spks).to(dev)
         z0 = ar_noise(a.crop, a.rho, gen, dev, len(zs))
         tt = torch.rand(len(zs), device=dev)
         z_in = (1 - tt[:, None, None]) * z0 + tt[:, None, None] * z1b \
@@ -362,12 +367,19 @@ def main() -> int:
             zr = z0[:ib]
             for t in (0.0, 0.5):
                 zr = zr + net(zr, cb[:ib],
-                              torch.full((ib,), t, device=dev), sb[:ib]) * 0.5
+                              torch.full((ib,), t, device=dev),
+                              None if sb is None else sb[:ib]) * 0.5
             z_pd = (zr.clamp(-8, 8) * sd[:, None] + mu[:, None])[:, :, s0f:s0f + a.aux_crop]
             w_pd = codec.decode(z_pd).squeeze(1)
             n = min(w_pd.shape[-1], w_gt.shape[-1])
-            aux = F.l1_loss(logmel(w_pd[..., :n]), logmel(w_gt[..., :n]))
-            loss = loss + a.aux_w * aux
+            if a.aux_w > 0:
+                aux = F.l1_loss(logmel(w_pd[..., :n]), logmel(w_gt[..., :n]))
+                loss = loss + a.aux_w * aux
+            if a.harm_w > 0:
+                from harm_loss import acf_contrast
+                lf0_ch = cb[:ib, LF0_ROW, s0f:s0f + a.aux_crop]
+                harm = acf_contrast(w_pd[:, :n], 200.0 * torch.exp(lf0_ch))
+                loss = loss + a.harm_w * harm
         opt.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)

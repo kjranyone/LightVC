@@ -1,0 +1,4 @@
+# 2026-10-04 rvoc2 起動前のスモーク(動作確認のみ・当日削除)
+results/rvoc2_smoke/ (last.pt 549MB・train.jsonl・train.log・snap/ema_120k.pt 相当・prereg 無し)
+# 2026-10-04 rvoc2am 起動前のスモーク(動作確認のみ・当日削除)
+results/rvoc2am_smoke/ (last.pt 549MB・train.jsonl・train.log・snap/・prereg 無し)

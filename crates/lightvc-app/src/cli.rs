@@ -38,6 +38,8 @@ pub enum Command {
     V2f(V2fCmd),
     /// バ美声変換 (front→E→G→V ストリーム): WAV → WAV。
     Vc(VcCmd),
+    /// DDSP-VC のリアルタイム変換 (マイク → 48 kHz・240 サンプル単位 → スピーカー・ゼロショット参照)。
+    RealtimeDdsp(RealtimeDdspCmd),
     /// Launch desktop GUI (3 tabs: offline/realtime/catalog).
     Gui(GuiCmd),
 }
@@ -481,6 +483,135 @@ pub fn run_vc(cmd: VcCmd) -> Result<()> {
              el / (n as f64 / 44_100.0));
     save_wav_mono_f32(&cmd.output, &y, 44_100)?;
     println!("  Saved: {}", cmd.output.display());
+    Ok(())
+}
+
+#[derive(Parser)]
+pub struct RealtimeDdspCmd {
+    /// DDSP-VC の書き出し (training/export_ddsp_vc.py の出力ディレクトリ)
+    #[arg(long, default_value = "results/ddsp_vc/export")]
+    pub model: std::path::PathBuf,
+    /// 目標話者の参照音声 (48 kHz・3 秒程度)
+    #[arg(long)]
+    pub reference: std::path::PathBuf,
+    /// 利用者の登録音声 (48 kHz・f0 レジスタ推定用。省略時は男声の既定値 120 Hz)
+    #[arg(long)]
+    pub enroll: Option<std::path::PathBuf>,
+    /// 実行秒数 (0 = 停止まで)
+    #[arg(long, default_value_t = 0)]
+    pub seconds: u64,
+    /// cpal のバッファ (フレーム数・0 = 既定)
+    #[arg(long, default_value_t = 240)]
+    pub buffer: u32,
+}
+
+pub fn run_realtime_ddsp(cmd: RealtimeDdspCmd) -> Result<()> {
+    use cpal::traits::DeviceTrait;
+    use lightvc_core::ddsp_vc::{map_register, register_from_pcm, CausalYin, DdspVc, DELAY, HOP, SR};
+    // デバイスは 48 kHz で開く。開けなければ既定レートで開き、48 kHz との間を RateConv で変換する。
+    let (rf, rsr) = load_wav_mono(&cmd.reference)?;
+    anyhow::ensure!(rsr as usize == SR, "参照音声は 48 kHz が必要 (got {rsr})");
+    let (mu_t, sd_t) = register_from_pcm(&rf);
+    let (mu_s, sd_s) = match &cmd.enroll {
+        Some(e) => {
+            let (x, sr) = load_wav_mono(e)?;
+            anyhow::ensure!(sr as usize == SR, "登録音声は 48 kHz が必要 (got {sr})");
+            register_from_pcm(&x)
+        }
+        None => ((120f32).ln(), 0.15),
+    };
+    let mut vc = DdspVc::load(&cmd.model)?;
+    vc.set_target_ref(&rf[..rf.len().min(3 * SR)]);
+    let input = lightvc_audio::engine::default_input()?;
+    let output = lightvc_audio::engine::default_output()?;
+    let in_cfg = input.default_input_config()?;
+    let out_cfg = output.default_output_config()?;
+    let buf = if cmd.buffer == 0 { cpal::BufferSize::Default } else { cpal::BufferSize::Fixed(cmd.buffer) };
+    let (engine, mut io, dev_sr) = match lightvc_audio::AudioEngine::start_with(
+        &input, &output, SR as u32, SR as u32, in_cfg.channels(), out_cfg.channels(), buf) {
+        Ok((e, io)) => (e, io, SR),
+        Err(e48) => {
+            let (isr, osr) = (in_cfg.sample_rate(), out_cfg.sample_rate());
+            anyhow::ensure!(isr == osr, "48 kHz で開けず({e48})、入出力の既定レートも不一致 ({isr} / {osr})");
+            let (e, io) = lightvc_audio::AudioEngine::start_with(&input, &output, isr, osr, in_cfg.channels(), out_cfg.channels(), buf)?;
+            (e, io, isr as usize)
+        }
+    };
+    let conv = dev_sr != SR;
+    let mut up = if conv { Some(lightvc_audio::RateConv::new(dev_sr, SR, HOP)?) } else { None };
+    let mut down = if conv { Some(lightvc_audio::RateConv::new(SR, dev_sr, HOP)?) } else { None };
+    println!("DDSP-VC realtime | device {} Hz{} | f0 register {:.0} Hz → {:.0} Hz | algorithmic latency {} ms + resampler + device buffers",
+             dev_sr, if conv { " (48 kHz へ変換)" } else { "" }, mu_s.exp(), mu_t.exp(), 1000 * DELAY / SR);
+    for _ in 0..HOP {
+        let _ = io.playback.push(0.0);
+    }
+    let mut yin = CausalYin::new(0.45);
+    let mut cap: Vec<f32> = Vec::new();
+    let mut in48: Vec<f32> = Vec::new();
+    let mut out48: Vec<f32> = Vec::new();
+    let mut out = vec![0f32; HOP];
+    let mut times: Vec<f64> = Vec::new();
+    let t_start = std::time::Instant::now();
+    let mut last_report = std::time::Instant::now();
+    loop {
+        if engine.is_disconnected() {
+            anyhow::bail!("オーディオデバイスが切断された");
+        }
+        if cmd.seconds > 0 && t_start.elapsed().as_secs() >= cmd.seconds {
+            break;
+        }
+        let n = io.capture.slots();
+        if n == 0 {
+            std::thread::sleep(std::time::Duration::from_micros(500));
+            continue;
+        }
+        for _ in 0..n {
+            cap.push(io.capture.pop().unwrap_or(0.0));
+        }
+        match up.as_mut() {
+            Some(u) => {
+                while cap.len() >= u.input_frames_next() {
+                    let k = u.input_frames_next();
+                    in48.extend_from_slice(u.process(&cap[..k])?);
+                    cap.drain(..k);
+                }
+            }
+            None => in48.append(&mut cap),
+        }
+        while in48.len() >= HOP {
+            let t0 = std::time::Instant::now();
+            let f0 = map_register(yin.push(&in48[..HOP]), mu_s, sd_s, mu_t, sd_t);
+            vc.process_block(&in48[..HOP], f0, &mut out);
+            times.push(t0.elapsed().as_secs_f64() * 1000.0);
+            in48.drain(..HOP);
+            out48.extend(out.iter().map(|v| v.clamp(-1.0, 1.0)));
+        }
+        match down.as_mut() {
+            Some(d) => {
+                while out48.len() >= d.input_frames_next() {
+                    let k = d.input_frames_next();
+                    for v in d.process(&out48[..k])? {
+                        let _ = io.playback.push(*v);
+                    }
+                    out48.drain(..k);
+                }
+            }
+            None => {
+                for v in out48.drain(..) {
+                    let _ = io.playback.push(v);
+                }
+            }
+        }
+        if last_report.elapsed().as_secs() >= 5 && !times.is_empty() {
+            let mut t = times.clone();
+            t.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let q = |p: f64| t[((t.len() as f64 - 1.0) * p) as usize];
+            println!("  blocks {} | compute ms p50 {:.2} p95 {:.2} p99 {:.2} (予算 5.0) | overrun {} underrun {}",
+                     t.len(), q(0.5), q(0.95), q(0.99), engine.overrun_count(), engine.underrun_count());
+            times.clear();
+            last_report = std::time::Instant::now();
+        }
+    }
     Ok(())
 }
 

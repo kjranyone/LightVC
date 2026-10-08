@@ -1,0 +1,38 @@
+results/artic_inv_smoke/  (smoke: train_artic_inv.py --smoke の動作確認のみ)
+results/rvoc_smoke/  (smoke: train_rvoc.py --smoke の動作確認のみ)
+# 2026-10-02 05:11:07 rvoc smoke(train_rvoc.py --smoke の動作確認・当日削除)
+results/rvoc_smoke_dct24/train.jsonl
+results/rvoc_smoke_dct24/last.pt
+results/rvoc_smoke_dct24/snap/ema_0k.pt
+results/rvoc_smoke_mel/train.jsonl
+results/rvoc_smoke_mel/last.pt
+results/rvoc_smoke_mel/snap/ema_0k.pt
+# 2026-10-02 07:55:29 rvoc smoke(pae 界面の動作確認・当日削除)
+results/rvoc_smoke_pae/train.jsonl
+results/rvoc_smoke_pae/last.pt
+results/rvoc_smoke_pae/snap/ema_0k.pt
+results/rvoc_smoke_mel/train.jsonl
+results/rvoc_smoke_mel/last.pt
+results/rvoc_smoke_mel/snap/ema_0k.pt
+# 2026-10-02 12:28:42 R1 判定済みの腕 A(diag_rvoc_r)・C(diag_rvoc_m)の中間 snapshot(20k と last は証拠として残す・renderer.md R1)
+results/diag_rvoc_r/snap/ema_5k.pt
+results/diag_rvoc_r/snap/ema_10k.pt
+results/diag_rvoc_r/snap/ema_15k.pt
+results/diag_rvoc_m/snap/ema_5k.pt
+results/diag_rvoc_m/snap/ema_10k.pt
+results/diag_rvoc_m/snap/ema_15k.pt
+# 2026-10-02 12:48:08 data/f0est の男声 f0(f0_floor 50 で作った分・女声の教師 60 と食い違うため 60 で作り直す・F1 起動前レビュー重大 2)
+data/f0est/vctk_m/ data/f0est/tts_m/ (7087 files)
+# 2026-10-02 14:26:06 f0est smoke(動作確認・当日削除)
+results/f0est_smoke/train.jsonl
+results/f0est_smoke/eval_speakers.json
+results/f0est_smoke/last.pt
+# 2026-10-02 15:27:38 c1 smoke(動作確認・当日削除)
+results/c1_smoke/codebook.pt
+results/c1_smoke/train.jsonl
+results/c1_smoke/last.pt
+# 2026-10-02 15:44:03 c1 smoke(レビュー後の動作確認・当日削除)
+results/c1_smoke/codebook.pt
+results/c1_smoke/train.jsonl
+results/c1_smoke/last.pt
+# 2026-10-02 16:23:58 f0est smoke(long_rf の動作確認・当日削除) results/f0est_smoke/

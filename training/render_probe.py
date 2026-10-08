@@ -45,7 +45,11 @@ def main() -> int:
     ap.add_argument("--rho", type=float, default=0.9)
     ap.add_argument("--cfm", default=str(ROOT / "results/s7_cfm_itp/s7_cfm_itp_best.pt"))
     ap.add_argument("--out", required=True)
+    ap.add_argument("--save-z", default=None,
+                    help="生成潜在z[32,T]を.ptに保存(診断用)")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--f0-src", choices=["causal", "world"], default="causal",
+                    help="lf0条件源(causal=SF.causal_f0 / world=pyworld+f0fix規約)")
     ap.add_argument("--cfg-w", type=float, default=1.0,
                     help="speaker CFG外挿幅(1.0=無効。cond/uncondを同seedでSamplingし外挿)")
     a = ap.parse_args()
@@ -90,14 +94,30 @@ def main() -> int:
                  * CV_FPS / 100.0 - 1.0).floor().clamp(0, cv.shape[-1] - 1).long()
         c = cv[:, idx_c.to(dev)]
 
-    f0, _ = SF.causal_f0(x)
+    if a.f0_src == "world":
+        import pyworld as _pw
+        w44 = (w * 1.0).astype(np.float64)
+        _f0, _t = _pw.harvest(w44, 44100, f0_floor=65, f0_ceil=1000,
+                              frame_period=512 / 44100 * 1000)
+        f0 = torch.from_numpy(_pw.stonemask(w44, _f0, _t, 44100).astype(np.float32))
+        n_f_last = f0.shape[0]
+        _i = ((torch.arange(T100, dtype=torch.float64) + 1.0)
+              * F0_FPS_E / 100.0 - 1.0).floor().clamp(0, n_f_last - 1).long()
+        f0 = f0[_i]
+    else:
+        f0, _ = SF.causal_f0(x)
     ratio = 2.0 ** (a.semitones / 12)
     f0s = torch.where(f0 > 0, f0 * ratio, f0)
+    if f0.shape[0] < T100:
+        f0s = torch.cat([f0s, f0s[-1:].expand(T100 - f0s.shape[0])])
+    f0s = f0s[:T100]
     hop = 512
     rms = torch.sqrt(((x[: len(w) // hop * hop] / 32768.0)
                       .reshape(-1, hop) ** 2).mean(-1) + 1e-12)
     i_f = ((torch.arange(T100, dtype=torch.float64) + 1.0)
            * MEL_FPS / 100.0 - 1.0).floor().clamp(0, f0s.shape[-1] - 1).long()
+    if a.f0_src == "world":
+        i_f = torch.arange(T100).clamp(0, f0s.shape[-1] - 1)
     lf0 = torch.log(f0s[i_f].clamp(min=50.0) / 200.0)
     i_e = ((torch.arange(T100, dtype=torch.float64) + 1.0)
            * F0_FPS_E / 100.0 - 1.0).floor().clamp(0, rms.shape[-1] - 1).long()
@@ -129,11 +149,14 @@ def main() -> int:
                 zh = zh + cfm(zh, cond, t, s_vec) / a.K
         return zh.clamp(-8, 8)
 
-    zh = sample(s_)
-    if a.cfg_w != 1.0:
-        zh_u = sample(torch.zeros_like(s_))
-        zh = (zh_u + a.cfg_w * (zh - zh_u)).clamp(-8, 8)
+    with torch.no_grad():
+        zh = sample(s_)
+        if a.cfg_w != 1.0:
+            zh_u = sample(torch.zeros_like(s_))
+            zh = (zh_u + a.cfg_w * (zh - zh_u)).clamp(-8, 8)
         z = zh * sd[:, None] + mu[:, None]
+        if a.save_z:
+            torch.save({"z": z.cpu(), "zh": zh.cpu(), "cli": vars(a)}, a.save_z)
         stream = codec.decoder.stream()
         y = torch.cat([stream.decode_step(z[:, :, i:i + 1])
                        for i in range(T100)], -1)[0, 0].cpu().numpy()

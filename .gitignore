@@ -88,3 +88,6 @@ prereg.yaml
 *_manifest.json
 results/z0/**/*.pt
 results/z0/**/*.safetensors
+
+# ===== Local model caches (symlinks into the HF cache) =====
+pretrained_models/

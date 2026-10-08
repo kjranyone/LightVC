@@ -1,0 +1,4 @@
+# 2026-10-07 削除
+results/c3_smoke/ (train_c3 --smoke の動作確認・Chain.prep 分割の回帰確認・当日削除)
+results/c4_smoke/ (train_c4 --smoke の動作確認・当日削除)
+results/conv_p0/ja_knn4.log (参照のフレーム検索の診断・構音モデリングの設計から逸脱のため中止・オーナー指摘 2026-10-07)

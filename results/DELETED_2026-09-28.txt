@@ -1,0 +1,5 @@
+results/diag_nvoc_smoke/ (smoke・30 step・00:49 削除)
+results/diag_nvoc_speed/ (速度確認の smoke・04:53 削除)
+results/diag_nvoc_{rc,rnc,r512,rnosrc}/last.pt (診断 4 腕の重み・判定を current/nvoc.md §4 と台帳に記録済み・train.log/jsonl は残す・06:35 削除)
+results/{nvoc1,nvoc2,nvoc3,diag_nvoc_gmel45,diag_nvoc_gnofm,diag_nvoc_ghf}/last.pt (各 604MB・判定を current/nvoc.md §4 と台帳に記録済み・残す重みは nvoc2/snap/ema_40k.pt と nvoc4/last.pt・走行中ジョブなし・22:06 削除)
+results/nvoc4/snap_60k.pt (延長前の一時コピー・同日作成・60k の数値は台帳と current/nvoc.md に記録済み・23:19 削除)

@@ -1,0 +1,5 @@
+2026-09-21 diag_d4v2_smoke/ (CPUスモーク・規約どおり当日削除)
+prereg: results/d4b2_rolldecoy/prereg.yaml
+2026-09-22 diag_d4d_smoke diag_d4c_smoke (CPUスモーク・当日削除)
+2026-09-22 diag_d1_smoke (CPUスモーク・当日削除)
+2026-09-22 d1_g0/d1_g0m80 → *_bug6 に改名(bug6=shift_right恒等関数による無効走行・forensic保管)

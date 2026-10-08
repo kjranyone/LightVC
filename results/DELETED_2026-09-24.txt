@@ -1,0 +1,3 @@
+# 2026-09-24 dec2 smoke(当日削除規則)
+results/dec2_smoke_a2
+results/dec2_smoke_aa

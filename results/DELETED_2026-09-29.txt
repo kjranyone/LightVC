@@ -1,0 +1,2 @@
+results/diag_nvoc_r20nosrc/ear_test/ (make_nvoc_ear.py の試験出力・同日作成・04:30 削除。diag_nvoc_r20nosrc/last.pt と export/ は nvoc5 が参照するため残す)
+results/{diag_nvoc_gfresh,diag_nvoc_g160,nvoc5,nvoc5r}/last.pt (判定を current/nvoc.md §4.5–4.6 と台帳に記録済み・最良 nvoc5r2/last.pt と段 R 末 nvoc5/snap/ema_20k.pt は保持・走行中ジョブなし・11:33 削除)

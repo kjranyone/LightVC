@@ -1,0 +1,110 @@
+[
+ {
+  "utt": "F:0005e65d3f11f99d",
+  "a1_lag0": 0.895,
+  "a1_lag1": 0.899,
+  "a1_lag2": 0.895,
+  "a1_lag3": 0.898,
+  "onset_delay_frames_median": 5.5,
+  "n_onsets": 16
+ },
+ {
+  "utt": "F:02a3cd442e96ac4b",
+  "a1_lag0": 0.938,
+  "a1_lag1": 0.939,
+  "a1_lag2": 0.949,
+  "a1_lag3": 0.953,
+  "onset_delay_frames_median": 5.0,
+  "n_onsets": 21
+ },
+ {
+  "utt": "F:05c0875cfb41a3ae",
+  "a1_lag0": 0.861,
+  "a1_lag1": 0.878,
+  "a1_lag2": 0.876,
+  "a1_lag3": 0.871,
+  "onset_delay_frames_median": 1.0,
+  "n_onsets": 45
+ },
+ {
+  "utt": "F:07f6206b44f32542",
+  "a1_lag0": 0.945,
+  "a1_lag1": 0.956,
+  "a1_lag2": 0.957,
+  "a1_lag3": 0.954,
+  "onset_delay_frames_median": 3.5,
+  "n_onsets": 30
+ },
+ {
+  "utt": "F:0aa9eb931169faac",
+  "a1_lag0": 0.837,
+  "a1_lag1": 0.854,
+  "a1_lag2": 0.861,
+  "a1_lag3": 0.866,
+  "onset_delay_frames_median": 4.0,
+  "n_onsets": 41
+ },
+ {
+  "utt": "F:0cd205f811ec1a62",
+  "a1_lag0": 0.875,
+  "a1_lag1": 0.893,
+  "a1_lag2": 0.905,
+  "a1_lag3": 0.912,
+  "onset_delay_frames_median": 1.0,
+  "n_onsets": 35
+ },
+ {
+  "utt": "M:male_p363",
+  "a1_lag0": 0.82,
+  "a1_lag1": 0.826,
+  "a1_lag2": 0.81,
+  "a1_lag3": 0.802,
+  "onset_delay_frames_median": 6.0,
+  "n_onsets": 15
+ },
+ {
+  "utt": "M:male_p364",
+  "a1_lag0": 0.951,
+  "a1_lag1": 0.948,
+  "a1_lag2": 0.942,
+  "a1_lag3": 0.931,
+  "onset_delay_frames_median": 5.0,
+  "n_onsets": 18
+ },
+ {
+  "utt": "M:male_p374",
+  "a1_lag0": 0.762,
+  "a1_lag1": 0.764,
+  "a1_lag2": 0.769,
+  "a1_lag3": 0.776,
+  "onset_delay_frames_median": 3.0,
+  "n_onsets": 15
+ },
+ {
+  "utt": "V:p226",
+  "a1_lag0": 0.945,
+  "a1_lag1": 0.946,
+  "a1_lag2": 0.917,
+  "a1_lag3": 0.894,
+  "onset_delay_frames_median": 6.0,
+  "n_onsets": 13
+ },
+ {
+  "utt": "V:p259",
+  "a1_lag0": 0.912,
+  "a1_lag1": 0.909,
+  "a1_lag2": 0.899,
+  "a1_lag3": 0.896,
+  "onset_delay_frames_median": 4.0,
+  "n_onsets": 10
+ },
+ {
+  "utt": "V:p287",
+  "a1_lag0": 0.902,
+  "a1_lag1": 0.92,
+  "a1_lag2": 0.924,
+  "a1_lag3": 0.921,
+  "onset_delay_frames_median": 4.5,
+  "n_onsets": 10
+ }
+]

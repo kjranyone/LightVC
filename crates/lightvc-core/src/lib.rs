@@ -3,16 +3,20 @@
 //! Provides the DAC codec wrapper, converter model, streaming pipeline,
 //! and weight loading for real-time voice conversion.
 
+pub mod a2vc;
 pub mod b1_pipeline;
 pub mod codec;
 pub mod converter;
 pub mod dac_model;
+pub mod ddsp_vc;
 pub mod eg;
 pub mod flow_converter;
 pub mod free_resynth;
 pub mod free_vocoder;
 pub mod mel;
+pub mod nvoc;
 pub mod pipeline;
+pub mod rvoc;
 pub mod ship_front;
 pub mod ys1_codec;
 pub mod simd;

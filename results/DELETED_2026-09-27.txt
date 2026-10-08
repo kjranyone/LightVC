@@ -1,0 +1,4 @@
+results/diag_ddsp_smoke/ (smoke・40 step・当日削除)
+results/ddsp_vc/last.pt (warp_mel 不具合版 14k step・無効・02:09 削除。ログは train_INVALID_warpbug.* に保存)
+results/diag_ddsp2_smoke/ (smoke・当日削除)
+results/ddsp_vc2r/last.pt, results/ddsp_vc2s/last.pt (step 15000・eval_15k/ckpt_15k.pt と cmp 一致の重複・発散した負け腕・23:17 削除)
