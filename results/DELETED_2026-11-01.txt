@@ -1,0 +1,30 @@
+# 2026-11-01 smoke 削除(当日中に削除の規則)
+results/diag_snv_a2_smoke/  # train_snv_a2 x 500 step と snv_a2_eval の入口の確認。合否に使っていない
+
+# 2026-11-01T16:56:00Z A3 の煙テスト(train_snv_a3.py 1000 step + snv_a3_eval.py の入口の確認・数値は不使用)
+results/diag_snv_a3_smoke/a3_eval.json
+results/diag_snv_a3_smoke/a3_items.json
+results/diag_snv_a3_smoke/eval.log
+results/diag_snv_a3_smoke/eval_wav/M12_diag_snv_a3_smoke__namikawa_5__pf000.wav
+results/diag_snv_a3_smoke/eval_wav/M12_diag_snv_a3_smoke__namikawa_5__pf001.wav
+results/diag_snv_a3_smoke/eval_wav/M12_diag_snv_a3_smoke__namikawa_5__pf002.wav
+results/diag_snv_a3_smoke/eval_wav/M12_diag_snv_a3_smoke__namikawa_5__pf003.wav
+results/diag_snv_a3_smoke/eval_wav/M12_diag_snv_a3_smoke__uirou_0__pf000.wav
+results/diag_snv_a3_smoke/eval_wav/M12_diag_snv_a3_smoke__uirou_0__pf001.wav
+results/diag_snv_a3_smoke/eval_wav/M12_diag_snv_a3_smoke__uirou_0__pf002.wav
+results/diag_snv_a3_smoke/eval_wav/M12_diag_snv_a3_smoke__uirou_0__pf003.wav
+results/diag_snv_a3_smoke/eval_wav/M_diag_snv_a3_smoke__namikawa_5__pf000.wav
+results/diag_snv_a3_smoke/eval_wav/M_diag_snv_a3_smoke__namikawa_5__pf001.wav
+results/diag_snv_a3_smoke/eval_wav/M_diag_snv_a3_smoke__namikawa_5__pf002.wav
+results/diag_snv_a3_smoke/eval_wav/M_diag_snv_a3_smoke__namikawa_5__pf003.wav
+results/diag_snv_a3_smoke/eval_wav/M_diag_snv_a3_smoke__uirou_0__pf000.wav
+results/diag_snv_a3_smoke/eval_wav/M_diag_snv_a3_smoke__uirou_0__pf001.wav
+results/diag_snv_a3_smoke/eval_wav/M_diag_snv_a3_smoke__uirou_0__pf002.wav
+results/diag_snv_a3_smoke/eval_wav/M_diag_snv_a3_smoke__uirou_0__pf003.wav
+results/diag_snv_a3_smoke/last.pt
+results/diag_snv_a3_smoke/norm.npz
+results/diag_snv_a3_smoke/train_log.json
+2026-11-01T20:04:02Z results/diag_snv_a3b_smoke1/ results/diag_snv_a3b_smoke01/ — A3b の煙テスト(フレームの窓 9 の話者の敵対・λ 1.0 / 0.1・3000 step)。入口と部品の動作確認のみ。読み: 窓の識別器は学習の声で偶然近くまで騙される(CE 6.21 / log K 6.35)が、検証 30 声の QDA は 0.91 / 0.94(未学習 0.99)= 発話で束ねると声が残る → 識別器を発話の統計に替える。数値は判定に使わない。
+2026-11-01T20:21:50Z results/diag_snv_a3b_smoke1/ results/diag_snv_a3b_smoke01/(2 回目)— A3b の煙テスト(発話の統計で束ねる話者の敵対・λ 1.0 / 0.1・3000 step)。読み: λ 1.0 で学習の声の識別器は偶然(CE 6.47 / log K 6.35)まで騙されるが、新しく当てはめた検証 30 声の QDA は 0.85(λ 0.1 は 0.78)= その時点の識別器を騙すだけで声は消えない(敵対の既知の失敗)→ 敵対の腕は起動せず、入力側の話者の統計の差し替え(A3c)へ。数値は判定に使わない。
+2026-11-01T20:43:44Z results/diag_snv_a3c_smoke/ — A3c の煙テスト(話者の統計の差し替え・1500 step の学習 + 評価の入口)。学習の入口・XFER / LEAK の途中の信号・評価の新しい経路(QDA の探り・A3 の n との対の差)まで通った。評価の CER の段は本番の学習と GPU を共有したため OOM(A3 と同じ未変更の経路・本番では学習の後に単独で走る)。数値は判定に使わない。
+2026-11-01T22:55:43Z A3d の事前検査(5k step × 3・結果は results/diag_snv_a3c_w/verdict.yaml の a3d_precheck に写した): results/diag_snv_a3d_pre_g/ results/diag_snv_a3d_pre_s/ results/diag_snv_a3d_pre_sc/(last.pt・swap_stats.pt・norm.npz・train.log・train_log.json・run.log・run.pid・prereg.yaml)・training/run_snv_a3d_pre.sh
