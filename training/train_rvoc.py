@@ -67,6 +67,14 @@ def load_manifest() -> tuple[list, list]:
     return pick("real_female"), pick("tts")
 
 
+def load_manifest_spk() -> tuple[list, list]:
+    """load_manifest と同じ行に話者を足す(表の包絡の学習用)。"""
+    ex, exs = hi_eval_paths(), held_speakers()
+    rows = [r for r in json.loads(MANIFEST.read_text())["rows"] if r["keep"] and not eval_excluded(r, ex, exs)]
+    pick = lambda g: [(r["wav"], str(ROOT / r["f0"]), r["sr"], r["dur"], r["spk"]) for r in rows if r["src"].startswith(g)]
+    return pick("real_female"), pick("tts")
+
+
 def load_hi_rows() -> list:
     """台帳(prep_f0hi が作った manifest)で 1kHz 超のフレームを含む行(hi_frames > 0・評価話者の実音声と評価区間は除く)。"""
     ex, exs = hi_eval_paths(), held_speakers()
@@ -141,13 +149,67 @@ class Front(torch.nn.Module):
         return torch.cat([cc / 10, lf, v, per], 1)
 
 
+def channel_params(rng: random.Random) -> tuple:
+    """入力の側の録音の経路の摂動の値(D400・diag_ppgvoc32): (低域通過の遮断 Hz または 0, 2 kHz の高域の棚の利得 dB)。"""
+    return (rng.uniform(5000.0, 14000.0) if rng.random() < 0.5 else 0.0, rng.uniform(-9.0, 9.0))
+
+
+def channel_apply(x: np.ndarray, prm: tuple) -> np.ndarray:
+    """ゼロ位相(時刻をずらさない・往復で振幅特性は 2 乗 = 棚は設計の半分の dB で作る)の低域通過(8 次 Butterworth)と高域の棚(RBJ・2 kHz・S = 1)。"""
+    from scipy.signal import butter, sosfiltfilt, filtfilt
+    if len(x) < 64:
+        return x
+    y = x.astype(np.float64)
+    fc, gdb = prm
+    if fc > 0:
+        y = sosfiltfilt(butter(8, fc, "low", fs=N.SR, output="sos"), y)
+    if abs(gdb) > 0.25:
+        A_ = 10 ** (gdb / 2 / 40)
+        w0 = 2 * math.pi * 2000.0 / N.SR
+        al = math.sin(w0) / 2 * math.sqrt(2)
+        cw = math.cos(w0)
+        b = [A_ * ((A_ + 1) + (A_ - 1) * cw + 2 * math.sqrt(A_) * al), -2 * A_ * ((A_ - 1) + (A_ + 1) * cw), A_ * ((A_ + 1) + (A_ - 1) * cw - 2 * math.sqrt(A_) * al)]
+        a = [(A_ + 1) - (A_ - 1) * cw + 2 * math.sqrt(A_) * al, 2 * ((A_ - 1) - (A_ + 1) * cw), (A_ + 1) - (A_ - 1) * cw - 2 * math.sqrt(A_) * al]
+        y = filtfilt(np.array(b) / a[0], np.array(a) / a[0], y)
+    return y.astype(np.float32)
+
+
+def sex_params(rng: random.Random) -> tuple:
+    """入力の側の性別の摂動の値(D434・diag_ppgvoc44): (f0 の倍率, 包絡の周波数の倍率)。1/3 は WORLD の再合成だけ(加工の痕跡を摂動の目印にさせない)。"""
+    if rng.random() < 1 / 3:
+        return (1.0, 1.0)
+    return (rng.uniform(0.5, 0.65), 1.0 / rng.uniform(1.08, 1.2))
+
+
+def sex_apply(x: np.ndarray, prm: tuple) -> np.ndarray:
+    """WORLD(dio + stonemask・cheaptrick・d4c)で f0 を kf 倍・包絡と非周期性を周波数軸で ke 倍(ke < 1 = 声道を長く)にして再合成・RMS をそろえる。時刻は保つ。"""
+    import pyworld as pw
+    kf, ke = prm
+    xd = np.ascontiguousarray(x, dtype=np.float64)
+    f0, t = pw.dio(xd, N.SR, f0_floor=60, f0_ceil=1000, frame_period=5.0)
+    f0 = pw.stonemask(xd, f0, t, N.SR)
+    sp = pw.cheaptrick(xd, f0, t, N.SR)
+    ap = pw.d4c(xd, f0, t, N.SR)
+    if ke != 1.0:
+        nb = sp.shape[1]
+        src = np.arange(nb) / ke
+        sp = np.stack([np.interp(src, np.arange(nb), r) for r in sp])
+        ap = np.stack([np.interp(src, np.arange(nb), r) for r in ap])
+    y = pw.synthesize(f0 * kf, sp, ap, N.SR, 5.0)[: len(x)]
+    y = np.pad(y, (0, len(x) - len(y)))
+    return (y * (np.sqrt((xd ** 2).mean()) / (np.sqrt((y ** 2).mean()) + 1e-9))).astype(np.float32)
+
+
 class DS(torch.utils.data.IterableDataset):
     """実音声と TTS を 1:1(判別器の「本物」の分布を実音声に寄せる)。xa = x[s − A, s + SEG + A](分析の余白)・f0 = 前計算のフレーム s/H + t・
     包絡 = CheapTrick(利得をかけた後)。"""
 
-    def __init__(self, real: list, tts: list, seed: int, f0_acc: tuple | None = None, hi_rows: list | None = None, p_hi: float = 0.0):
+    def __init__(self, real: list, tts: list, seed: int, f0_acc: tuple | None = None, hi_rows: list | None = None, p_hi: float = 0.0,
+                 spk_idx: dict | None = None, ctx: int = 0, pert: float = 0.0, pert_c0_only: bool = False, sexpert: float = 0.0):
         self.real, self.tts, self.seed, self.f0_acc = real, tts, seed, f0_acc
+        self.pert, self.pert_c0_only, self.sexpert = pert, pert_c0_only, sexpert
         self.hi_rows, self.p_hi = hi_rows or [], p_hi
+        self.spk_idx, self.ctx = spk_idx, ctx
 
     def __iter__(self):
         wi = torch.utils.data.get_worker_info()
@@ -155,7 +217,8 @@ class DS(torch.utils.data.IterableDataset):
         while True:
             use_hi = bool(self.hi_rows) and rng.random() < self.p_hi
             pool = self.hi_rows if use_hi else (self.real if rng.random() < 0.5 else self.tts)
-            wav, f0p, sr, dur = pool[rng.randrange(len(pool))]
+            row = pool[rng.randrange(len(pool))]
+            wav, f0p, sr, dur = row[:4]
             try:
                 n48 = int(dur * N.SR)
                 if n48 < SEG + 4 * PA.A:
@@ -183,7 +246,32 @@ class DS(torch.utils.data.IterableDataset):
                     continue
                 g = min(2.0 ** rng.uniform(-0.5, 0.5), 0.99 / max(float(np.abs(xa).max()), 1e-6))
                 xa = (xa * g).astype(np.float32)
-                yield torch.from_numpy(xa), torch.from_numpy(f0), torch.from_numpy(PA.envelope(xa, f0))
+                if self.ctx:
+                    a0 = max(0, s - self.ctx)
+                    xl = read_span(wav, sr, a0, s - a0) if s > a0 else np.zeros(0, np.float32)
+                    xl = np.concatenate([np.zeros(self.ctx - len(xl), np.float32), xl]) * g
+                    if self.pert > 0 or self.sexpert > 0:
+                        xp, xlp = xa, xl.astype(np.float32)
+                        kf = 1.0
+                        if self.pert > 0 and rng.random() < self.pert:
+                            prm = channel_params(rng)
+                            xp, xlp = channel_apply(xa, prm), channel_apply(xlp, prm)
+                        if self.sexpert > 0 and rng.random() < self.sexpert:
+                            prm = sex_params(rng)
+                            kf = prm[0]
+                            z_ = sex_apply(np.concatenate([xlp, xp]), prm)
+                            xlp, xp = z_[:len(xlp)], z_[len(xlp):]
+                        e_o = PA.envelope(xa, f0)
+                        e_p = e_o if xp is xa else PA.envelope(xp, f0 * kf)
+                        if self.pert_c0_only:
+                            xp, xlp = xa, xl.astype(np.float32)
+                        yield (torch.from_numpy(xa), torch.from_numpy(f0), torch.from_numpy(e_p),
+                               torch.from_numpy(xlp), torch.tensor(self.spk_idx[row[4]]), torch.from_numpy(xp), torch.from_numpy(e_o))
+                        continue
+                    yield (torch.from_numpy(xa), torch.from_numpy(f0), torch.from_numpy(PA.envelope(xa, f0)),
+                           torch.from_numpy(xl.astype(np.float32)), torch.tensor(self.spk_idx[row[4]]))
+                else:
+                    yield torch.from_numpy(xa), torch.from_numpy(f0), torch.from_numpy(PA.envelope(xa, f0))
             except Exception:
                 continue
 
@@ -271,6 +359,12 @@ def evaluate(gen: R.RVoc, front: Front, items: list, dev: str) -> dict:
     return out
 
 
+def C3causal(x: torch.Tensor, w: int) -> torch.Tensor:
+    """因果の w フレーム平均(train_c3.causal_avg と同じ: 先頭は最初の値で埋める)。x [B, C, T]。"""
+    xp = torch.cat([x[..., :1].expand(-1, -1, w - 1), x], -1)
+    return xp.unfold(-1, w, 1).mean(-1)
+
+
 def ckpt_env_smooth(st: dict, override: float | None) -> float:
     """チェックポイントの env_smooth。無い(旧)ckpt で明示もされなければ止める(平滑ありで学習した重みを平滑なしの条件で測る事故を防ぐ)。"""
     if override is not None:
@@ -286,15 +380,15 @@ def atomic_save(obj: dict, path: Path) -> None:
     os.replace(tmp, path)
 
 
-def tripwire_v2(hist: list) -> str | None:
+def tripwire_v2(hist: list, drop: float = 0.10) -> str | None:
     """rvoc2 以降(renderer.md R4・PESQ の絶対値の線は耳で較正されていないので外す)。hist = [(step, pesq_h, am_db_h, hf_db_h)]。
     PESQ_h が最良値(再開時の評価を含む)より 0.10 以上落ちる・評価値が非有限・変調の線が 2 回連続で 1.5dB 超・hf が 2.5dB 未満(欠落)のとき止める。"""
     step, pq, am, hf = hist[-1]
     if not all(math.isfinite(v) for v in (pq, am, hf)):
         return f"step {step}: 評価値が非有限 (pesq {pq}, am {am}, hf {hf})"
     best = max(h[1] for h in hist)
-    if pq < best - 0.10:
-        return f"step {step}: PESQ_h {pq:.3f} が最良 {best:.3f}(再開時の評価を含む)から 0.10 以上低下"
+    if pq < best - drop:
+        return f"step {step}: PESQ_h {pq:.3f} が最良 {best:.3f}(再開時の評価を含む)から {drop:.2f} 以上低下"
     if len(hist) >= 2 and am > 1.5 and hist[-2][2] > 1.5:
         return f"step {step}: 変調の線が 2 回連続で 1.5dB 超({hist[-2][2]:.2f}・{am:.2f})"
     if hf < -2.5:
@@ -374,8 +468,21 @@ def main() -> int:
     ap.add_argument("--am_margin", type=float, default=0.3, help="バッチ平均の線のパワー(dB)が目標 + margin を超えた分だけ罰する(proxy の単位)")
     ap.add_argument("--am_two_sided", action="store_true", help="線が目標より低く行き過ぎる(谷)のも罰する(rvoc2am の 240k で線 −1.5 まで行き過ぎた)")
     ap.add_argument("--am_margin_bg", type=float, default=0.0, help="近傍の変調パワー(dB)が目標を margin 超えて水増しされた分だけ罰する(片方向)")
-    ap.add_argument("--guard", default="v1", choices=("v1", "v2"), help="v1 = 旧の中止条件(PESQ の絶対値と外挿)・v2 = 最良からの低下・変調の線・hf")
+    ap.add_argument("--guard", default="v1", choices=("v1", "v2", "v3"), help="v1 = 旧の中止条件(PESQ の絶対値と外挿)・v2 = 最良からの低下 0.10・変調の線・hf・v3 = v2 の低下の許容を 0.30(表の条件の追加学習: 本物の条件の held は設計上下がる・diag_rvtab で 5k に −0.18)")
     ap.add_argument("--f0_balance", action="store_true", help="区間の f0 中央値の分布を F0_TARGET に寄せる(棄却サンプリング・f0 を読んだ後・音声を読む前。実:TTS の実効比は 1:1 から実音声寄りに動く)")
+    ap.add_argument("--tab_dir", default="", help="話者ごとの表(build_tables_rvoc.py)。指定時は表のある話者の行だけで学習")
+    ap.add_argument("--tab_per", default="const", choices=("const", "f4"), help="表の条件の周期性: const = 話者の 75 パーセンタイルの定数・f4 = 因果な周期性推定器 F4(製品の経路)")
+    ap.add_argument("--x_p", type=float, default=0.0, help="話者をまたいだ交差の標本の割合(内容と動き = A・表 = 別の話者 B・f0 / 周期性を B の水準へ)。L1 なし・判別器 + 同一性の損失")
+    ap.add_argument("--x_id", type=float, default=0.0, help="交差の標本の同一性の損失(1 − cos(ECAPA(出力), e_B))の重み")
+    ap.add_argument("--x_gamma", default="0,0.5,0.7,1", help="交差の標本で足す A の動き(F3 − 表_A)の量 γ の一覧")
+    ap.add_argument("--spk_emb", default="", help="話者ごとの ECAPA の埋め込み(build_spk_emb.py)")
+    ap.add_argument("--tab_dyn", default="real", choices=("real", "f3"), help="表の条件で γ を掛ける包絡: real = 本物の分析(CheapTrick)・f3 = 製品の因果な包絡推定器 F3(製品の写し合成 / 変換と同じ入力の分布)")
+    ap.add_argument("--tab_gamma", default="0", help="表の条件の包絡 = 表 + γ·(本物の包絡 − 表)。γ はサンプルごとにこの一覧から一様に選ぶ(例 0,0.35,0.7)。0 = 表だけ")
+    ap.add_argument("--tab_p", type=float, default=0.0, help="サンプルごとにこの確率で条件を製品と同じ作り方にする(包絡 = Σp T_話者・c0 = F2 + 因果 3 平均・周期性 = 話者の 75 パーセンタイルの定数・f0 は教師)")
+    ap.add_argument("--slm_w", type=float, default=0.0, help="凍結 SSL の特徴の上の判別器(slm_disc.SLMDisc)の敵対の重み(0 = なし・目標関数 v1 の学習側の近似)")
+    ap.add_argument("--lm_w", type=float, default=45.0, help="多尺度 logmel L1 の重み(既定 45 = 従来)。下げると最適解が条件付き中央値から分布の一致の側へ動く")
+    ap.add_argument("--lr_reset", action="store_true", help="--resume の後に生成器・判別器の学習率を --lr に置き直す(既定 = 復元値から減衰を続ける)")
+    ap.add_argument("--slm_model", default="microsoft/wavlm-base-plus", help="SLM 判別器の凍結 SSL(評価の物差しの WavLM-large とは別にする)")
     ap.add_argument("--env_smooth", type=float, default=0.0, help="教師側の包絡 c0..c24 を中心窓 [w,1-2w,w] でフレーム方向に平滑(0 = なし・0.25 = [.25,.5,.25]・推論の遅延なし・変換器の目標も同じ値)")
     a = ap.parse_args()
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -387,7 +494,42 @@ def main() -> int:
         print(f"results/{a.tag}/prereg.yaml が無い: 起動しない", flush=True)
         return 1
     print(f"prereg: results/{a.tag}/prereg.yaml", flush=True)
-    real, tts = load_manifest()
+    tabs = None
+    if a.tab_dir:
+        tfiles = sorted(Path(a.tab_dir).glob("*.npz"))
+        spk_idx = {f.stem: i for i, f in enumerate(tfiles)}
+        zs = [np.load(f) for f in tfiles]
+        tabs = (torch.from_numpy(np.stack([z["T"] for z in zs])).float().to(dev), torch.from_numpy(np.stack([z["per_p75"] for z in zs])).float().to(dev),
+                torch.from_numpy(np.array([float(z["mu"]) for z in zs])).float().to(dev))
+        real, tts = load_manifest_spk()
+        real, tts = [r for r in real if r[4] in spk_idx], [r for r in tts if r[4] in spk_idx]
+        print("tables", len(tfiles), "speakers", flush=True)
+        import c1_content as CC
+        import lvl as LV
+        import train_c1 as T1
+        st1 = torch.load(ROOT / "results/c1_1/last.pt", map_location="cpu", weights_only=False)
+        c1n = CC.C1(st1["cfg"]["k"], st1["cfg"]["ch"], tuple(st1["cfg"]["dils"])).to(dev); c1n.load_state_dict(st1["net"]); c1n.eval().requires_grad_(False)
+        sf2 = torch.load(ROOT / "results/f2_2/last.pt", map_location="cpu", weights_only=False)
+        f2n = LV.Lvl(sf2["cfg"]["ch"], tuple(sf2["cfg"]["dils"])).to(dev); f2n.load_state_dict(sf2["net"]); f2n.eval().requires_grad_(False)
+        mfc = CC.MelFront().to(dev)
+        f3n = None
+        if a.tab_dyn == "f3":
+            sf3 = torch.load(ROOT / "results/f3_1/last.pt", map_location="cpu", weights_only=False)
+            f3n = LV.EnvEst(sf3["cfg"]["ch"], tuple(sf3["cfg"]["dils"])).to(dev); f3n.load_state_dict(sf3["net"]); f3n.eval().requires_grad_(False)
+        f4n = None
+        if a.tab_per == "f4" or a.x_p > 0:
+            sf4 = torch.load(ROOT / "results/f4_1/last.pt", map_location="cpu", weights_only=False)
+            f4n = LV.PerEst(sf4["cfg"]["ch"], tuple(sf4["cfg"]["dils"])).to(dev); f4n.load_state_dict(sf4["net"]); f4n.eval().requires_grad_(False)
+        ecx, embx = None, None
+        if a.x_p > 0:
+            assert f3n is not None and a.x_id > 0 and a.spk_emb, "交差の標本には --tab_dyn f3・--x_id・--spk_emb が要る"
+            import idloss as ID
+            ecx = ID.Ecapa(dev)
+            ze = np.load(a.spk_emb)
+            embx = torch.from_numpy(np.stack([ze[f.stem] for f in tfiles])).float().to(dev)
+        CTX = T1.PRE
+    else:
+        real, tts = load_manifest()
     print("files real", len(real), f"({sum(r[3] for r in real) / 3600:.1f} h)", "tts", len(tts), f"({sum(r[3] for r in tts) / 3600:.1f} h)", flush=True)
     KK, DD = tuple(int(v) for v in a.kernels.split(",")), tuple(int(v) for v in a.dils.split(","))
     front = Front(a.cond, a.env_smooth).to(dev)
@@ -403,6 +545,12 @@ def main() -> int:
     gamma = 0.5 ** (1.0 / a.lr_half)
     sch_g = torch.optim.lr_scheduler.ExponentialLR(opt_g, gamma)
     sch_d = torch.optim.lr_scheduler.ExponentialLR(opt_d, gamma)
+    slm, opt_s = None, None
+    if a.slm_w > 0:
+        from slm_disc import SLMDisc
+        slm = SLMDisc(a.slm_model).to(dev)
+        opt_s = torch.optim.AdamW(slm.head_params(), lr=a.lr, betas=(0.8, 0.99))
+        print("SLM 判別器", a.slm_model, "head params (M)", round(sum(p.numel() for p in slm.head_params()) / 1e6, 3), flush=True)
     ema = {k: v.detach().clone() for k, v in gen.state_dict().items()}
     step0 = 0
     if a.resume and not (out / "last.pt").exists():
@@ -415,19 +563,32 @@ def main() -> int:
         opt_g.load_state_dict(st["opt_g"]); opt_d.load_state_dict(st["opt_d"])
         ema = {k: v.to(dev) for k, v in st["ema"].items()}
         step0 = st["step"]
+        if slm is not None and "slm" in st:
+            slm.head.load_state_dict(st["slm"]); opt_s.load_state_dict(st["opt_s"])
+        elif slm is not None:
+            print("SLM 判別器は新規(再開元に無い)", flush=True)
         for o_ in (opt_g, opt_d):
             for g_ in o_.param_groups:
                 g_["initial_lr"] = g_["lr"]
         sch_g = torch.optim.lr_scheduler.ExponentialLR(opt_g, gamma)
         sch_d = torch.optim.lr_scheduler.ExponentialLR(opt_d, gamma)
-        print("resume from", step0, "lr(復元値から半減期 lr_half で減衰を続ける・再生しない)", opt_g.param_groups[0]["lr"], flush=True)
+        if a.lr_reset:
+            for o_ in (opt_g, opt_d):
+                for g_ in o_.param_groups:
+                    g_["lr"] = a.lr
+                    g_["initial_lr"] = a.lr
+            sch_g = torch.optim.lr_scheduler.ExponentialLR(opt_g, gamma)
+            sch_d = torch.optim.lr_scheduler.ExponentialLR(opt_d, gamma)
+        print("resume from", step0, "lr(--lr_reset なら --lr・それ以外は復元値から半減期 lr_half で減衰)", opt_g.param_groups[0]["lr"], flush=True)
     evg = R.RVoc(ch=a.ch, kernels=KK, dils=DD, d_cond=dc).to(dev)
     mels = [build_mel(nf, hm, nm).to(dev) for nf, hm, nm in MEL_SPECS]
     items = held(dev, a.held_hi)[:3 if a.smoke else None]
     if not ship_gate(gen, front, items):
         print("出荷ゲート FAIL: 起動しない", flush=True)
         return 1
-    loader = iter(torch.utils.data.DataLoader(DS(real, tts, 7 + step0, f0_acceptance() if a.f0_balance else None, load_hi_rows() if a.p_hi > 0 else None, a.p_hi), batch_size=a.bs, num_workers=a.workers, pin_memory=True,
+    assert not (a.tab_dir and a.p_hi > 0), "表の包絡の学習では --p_hi を使わない(hi 行に話者がない)"
+    loader = iter(torch.utils.data.DataLoader(DS(real, tts, 7 + step0, f0_acceptance() if a.f0_balance else None, load_hi_rows() if a.p_hi > 0 else None, a.p_hi,
+                                                 spk_idx if a.tab_dir else None, CTX if a.tab_dir else 0), batch_size=a.bs, num_workers=a.workers, pin_memory=True,
                                               persistent_workers=True, prefetch_factor=4))
     log = open(out / "train.jsonl", "a")
 
@@ -442,7 +603,7 @@ def main() -> int:
         hist.append((step, r["h"]["pesq"], r["h"]["am_db"], r["h"]["hf_db"]))
         if a.smoke or a.tag.startswith("diag_") or step == 0:
             return None
-        return tripwire_v2(hist) if a.guard == "v2" else tripwire(hist)
+        return tripwire_v2(hist, 0.30 if a.guard == "v3" else 0.10) if a.guard in ("v2", "v3") else tripwire(hist)
 
     why0 = run_eval(step0)
     if why0:
@@ -452,16 +613,61 @@ def main() -> int:
     t0 = time.time()
     total = step0 + 30 if a.smoke else a.steps
     for step in range(step0 + 1, total + 1):
-        xa, f0, env = (t.to(dev, non_blocking=True) for t in next(loader))
+        bt = [t.to(dev, non_blocking=True) for t in next(loader)]
+        xa, f0, env = bt[:3]
         with torch.no_grad():
             cond = front(xa, f0, env)
+            if tabs is not None and a.tab_p > 0:
+                xl, si = bt[3], bt[4]
+                xc = torch.cat([xl, xa[:, PA.A:PA.A + SEG]], 1)
+                mf = mfc(xc)
+                p = c1n(mf)[..., -T:].softmax(1)
+                tab = torch.einsum("bdk,bkt->bdt", tabs[0][si], p)
+                c0n = C3causal(f2n(mf)[:, None], 3)[:, :, -T:]
+                lf = cond[:, 25:26]
+                vv = cond[:, 26:27]
+                envc = tab / 10
+                dsrc = f3n(mf)[:, 1:25, -T:] if f3n is not None else cond[:, 1:25]
+                if a.tab_gamma != "0":
+                    gs = torch.tensor([float(g) for g in a.tab_gamma.split(",")], device=dev)
+                    envc = envc + gs[torch.randint(len(gs), (xa.shape[0],), device=dev)][:, None, None] * (dsrc - envc)
+                p4 = f4n(mf)[..., -T:] if f4n is not None else None
+                per_c = (p4 if a.tab_per == "f4" else tabs[1][si][:, :, None]).clamp(0, 1.5) * vv
+                ct = torch.cat([c0n, envc, lf, vv, per_c], 1)
+                if a.x_p > 0:
+                    nx = max(1, int(round(xa.shape[0] * a.x_p)))
+                    sa, sb = si[:nx], torch.randint(tabs[0].shape[0], (nx,), device=dev)
+                    gx = torch.tensor([float(g) for g in a.x_gamma.split(",")], device=dev)[torch.randint(len(a.x_gamma.split(",")), (nx,), device=dev)][:, None, None]
+                    envx = torch.einsum("bdk,bkt->bdt", tabs[0][sb], p[:nx]) / 10 + gx * (dsrc[:nx] - tab[:nx] / 10)
+                    f0x = f0[:nx] * torch.exp(tabs[2][sb] - tabs[2][sa])[:, None]
+                    lfx = torch.where(f0x > 0, torch.log(f0x.clamp(min=1.0) / 200.0), torch.zeros_like(f0x))[:, None]
+                    perx = (p4[:nx] - tabs[1][sa][:, :, None] + tabs[1][sb][:, :, None]).clamp(0, 1.5) * vv[:nx]
+                    condx = torch.cat([c0n[:nx], envx, lfx, vv[:nx], perx], 1)
+                    excx = excitation(f0x, SEG)
+                m = (torch.rand(xa.shape[0], device=dev) < a.tab_p)[:, None, None]
+                if step == step0 + 1:
+                    q = lambda t: [round(float(v), 3) for v in torch.quantile(t.flatten().float(), torch.tensor([0.05, 0.5, 0.95], device=dev))]
+                    print("cond check: 本物 c0n", q(cond[:, 0]), "c1..24", q(cond[:, 1:25]), "per", q(cond[:, 27:31]), "| 表 c0n", q(ct[:, 0]), "c1..24", q(ct[:, 1:25]), "per", q(ct[:, 27:31]), flush=True)
+                cond = torch.where(m, ct, cond)
             exc = excitation(f0, SEG)
             tgt = xa[:, PA.A - N.DELAY:PA.A - N.DELAY + SEG]
         y = gen(cond, exc)
         yl, tl = y[:, WARM:], tgt[:, WARM:]
         lm = logmel_l1(yl[:, None], tl[:, None], mels)
-        loss = 45 * lm
+        loss = a.lm_w * lm
         rec = {"lm": lm}
+        yxl = None
+        if tabs is not None and a.x_p > 0:
+            yxl = gen(condx, excx)[:, WARM:]
+            lid = (1 - (ecx(yxl) * embx[sb]).sum(-1)).mean()
+            loss = loss + a.x_id * lid
+            rec["x_id"] = lid
+        if tabs is not None and a.tab_p > 0 and step % 20 == 0:
+            with torch.no_grad():
+                mm = m[:, 0, 0]
+                if mm.any() and (~mm).any():
+                    rec["lm_tab"] = logmel_l1(yl[mm][:, None], tl[mm][:, None], mels)
+                    rec["lm_real"] = logmel_l1(yl[~mm][:, None], tl[~mm][:, None], mels)
         if a.am_w > 0:
             pen, ams = am_penalty(yl, tl, a.am_margin, a.am_margin_bg, a.am_two_sided)
             loss = loss + a.am_w * pen
@@ -473,6 +679,11 @@ def main() -> int:
             a1, b1, _, _ = mpd(r_[:, None], f_.detach()[:, None])
             a2, b2, _, _ = mrd(r_, f_.detach())
             dl = sum(((p.float() - 1) ** 2).mean() + (q.float() ** 2).mean() for p, q in zip(a1 + a2, b1 + b2))
+            if yxl is not None:
+                fx_ = yxl[:, off:off + 16384]
+                _, bx1, _, _ = mpd(r_[:fx_.shape[0], None], fx_.detach()[:, None])
+                _, bx2, _, _ = mrd(r_[:fx_.shape[0]], fx_.detach())
+                dl = dl + sum((q.float() ** 2).mean() for q in bx1 + bx2)
             if torch.isfinite(dl):
                 dl.backward()
                 torch.nn.utils.clip_grad_norm_(dparams, 500.0)
@@ -481,8 +692,30 @@ def main() -> int:
                 p_.requires_grad_(False)
             _, b1, f1r, f1g = mpd(r_[:, None], f_[:, None])
             _, b2, f2r, f2g = mrd(r_, f_)
+            if yxl is not None:
+                _, bx1, _, _ = mpd(r_[:fx_.shape[0], None], fx_[:, None])
+                _, bx2, _, _ = mrd(r_[:fx_.shape[0]], fx_)
+                advx = sum(((q.float() - 1) ** 2).mean() for q in bx1 + bx2)
+                loss = loss + advx
+                rec["x_adv"] = advx
             for p_ in dparams:
                 p_.requires_grad_(True)
+            if slm is not None:
+                with torch.no_grad():
+                    hr = slm.feats(tl)
+                opt_s.zero_grad(set_to_none=True)
+                sl = ((slm.head(hr).float() - 1) ** 2).mean() + (slm(yl.detach()).float() ** 2).mean()
+                if torch.isfinite(sl):
+                    sl.backward()
+                    torch.nn.utils.clip_grad_norm_(slm.head_params(), 500.0)
+                    opt_s.step()
+                for p_ in slm.head_params():
+                    p_.requires_grad_(False)
+                sadv = ((slm(yl).float() - 1) ** 2).mean()
+                for p_ in slm.head_params():
+                    p_.requires_grad_(True)
+                loss = loss + a.slm_w * sadv
+                rec.update({"slm_adv": sadv, "slm_dl": sl})
             adv = sum(((q.float() - 1) ** 2).mean() for q in b1 + b2)
             fm = sum(F.l1_loss(u.detach().float(), v.float()) for xr, xg in zip(f1r + f2r, f1g + f2g) for u, v in zip(xr, xg))
             loss = loss + adv + 2 * fm
@@ -514,7 +747,8 @@ def main() -> int:
             (out / "snap").mkdir(exist_ok=True)
             atomic_save({"ema": ema, "step": step, "cfg": gen.cfg, "cond": a.cond, "env_smooth": a.env_smooth}, out / "snap" / f"ema_{step // 1000}k.pt")
             atomic_save({"gen": gen.state_dict(), "ema": ema, "mpd": mpd.state_dict(), "mrd": mrd.state_dict(), "opt_g": opt_g.state_dict(),
-                        "opt_d": opt_d.state_dict(), "step": step, "cfg": gen.cfg, "cond": a.cond, "env_smooth": a.env_smooth}, out / "last.pt")
+                        "opt_d": opt_d.state_dict(), "step": step, "cfg": gen.cfg, "cond": a.cond, "env_smooth": a.env_smooth}
+                        | ({"slm": slm.head.state_dict(), "opt_s": opt_s.state_dict()} if slm is not None else {}), out / "last.pt")
             if why:
                 (out / "STOP.json").write_text(json.dumps({"step": step, "why": why, "hist": hist}, ensure_ascii=False, indent=1))
                 print("中止条件:", why, flush=True)

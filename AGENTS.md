@@ -16,7 +16,8 @@
 
 - 目標は ASMR・官能バ美肉向けリアルタイムVC、Human-in-the-Loop Kansei評価。
 - **E2E レイテンシ（`current/README.md` が正本）: 設計目標 p95 &lt; 30ms / 理想 20ms級 / p95 ≥ 50ms は失格上限**。50ms は合格ラインではない。「50ms未満ならよい」と読まない。
-- 現行設計は `B4 Dual-Path Kansei VC`。
+- **2026-11-01 研究リセット(オーナー判断)**: 本線は `current/synth_nam_vc.md` = 構音の構造のアナログモデリング(話者 = 構音の構造 = 回路、操作者の構音 = 演奏、変換 = 回路の差し替え)。**フロンティア = 低レイテンシで実現可能なモデリング**。学習データは Irodori-TTS v4.1 の生成(入力側も出力側も)・zero-shot を維持・目標の声は VoiceDesign の架空の声と同意済みの実在の声。**リセット前の記録(results・RESEARCH・current の旧資料・memory の測定と結論)は全て撤回、根拠にしない**(規則は規則として残る)。旧構音 VC 系(B4 下の artic_* / paper_mf)の資料も撤回された記録。男声と女声の音響を 1 対 1 に対応させる対は使わない(演技は 1 対多)。
+- 旧現行設計は `B4 Dual-Path Kansei VC`(目的・製品要件は維持)。
 - DAC latentからspeaker-free contentを学習するStage1依存設計は不採用。
 - contentはSSL/ASR系、prosodyは明示特徴、target voice/style/textureは別経路で扱う。
 - GANは最後のtexture fine-tuneのみ。失敗したcontent表現をGANで救済しない。
@@ -41,12 +42,13 @@
 - 全ての学習腕は起動前に `current/design_laws.md` の検査 **L**（損失最適解の書き下ろし）・**I**（識別可能性監査）・**C**（チート列挙と最ラク性）を記入し、`results/<tag>/prereg.yaml` に保存、学習ログ先頭にパスを残す。**記入できない・FAILが埋まらない場合は起動せず停止報告**（「走らせて様子を見る」禁止）。
 - 権威を持たせたい条件と同じ情報を他入力が運ぶ場合、遮断は**分布レベル**（入力摂動・ペア構成・条件ドロップ・不変性正則化）で行う。配線レベルの遮断だけでは停滞する（NSF v2実測）。
 - 検査IのFAILに容量・幅・条件concat・loss重み調整を対処として使わない（s8/s9/f0h実測で無効）。
-- 摂動・シフト等の人工データをtarget側に置かない。教師は実音声を維持する（s12負例）。
+- 摂動・シフト等の人工データをtarget側に置かない。教師は実音声を維持する（s12負例）。**例外(オーナー判断 2026-11-01)**: synth_nam_vc の教師は Irodori-TTS v4.1 の生成音声。その場合も target 側に摂動・シフト・時間伸縮を置かない（加工は入力側だけ）。
 - fork（PASS→次の行動/FAIL→次の行動）が同一になる腕は情報価値ゼロなので起動しない。
 - 本ゲートは Shipping Gate（未来不変性・遅延台帳・RTF）への**追加**であり代替ではない。
 
 ## Data (学習データ) — 必ずフルデータでフル学習
 
+- synth_nam_vc(2026-11-01〜)の学習データは Irodori-TTS v4.1 が生成した多数の声の音声をフルの規模で。評価は常に本物の男声の入力（外郎売・namikawa・VCTK の男声）。以下の実コーパスの規則は旧経路のもの。
 - **本番学習は必ずフルコーパスを使う**。`female-dataset`（実女性2775話者＝`data/female_real_feat`）と irodori-tts コーパス（`data/female_tts_corpus` 669話者、full encode すること）を**全量**利用する。男性ソースは `data/male_feat`。
 - **少数話者・部分集合での学習は誤り**（例: `rcav_feat` の42話者だけ、極小overfit setだけ）。切り分け用の overfit gate を除き、**本番・比較・昇格の学習は full data 前提**。
 - 新コーパスは学習前に content/f0/energy へ full encode し、`*_feat` を揃える。「まず小さく回す」で結論を出さない。
@@ -77,6 +79,7 @@ cargo build --release --features asio -p lightvc-app
 - **VC teacher蒸留は禁止** — 別VCモデルの変換音声を target とする synthetic parallel distillation は使わない
 - **補助モデルによる表現監督は許可** — WavLM-SV/ECAPA/ASR 等をloss・評価・蒸留に使ってよい。ただし推論時依存にしない
 - **VC teacher不要** — targetは実音声、同一内容ペア、または信号処理由来に限定
+- **TTS の生成音声(オーナー判断 2026-11-01)** — Irodori-TTS v4.1 の生成音声を学習データに使ってよい。Irodori は学習データの生成だけに使い、登録・推論に使わない。Irodori のモデルカードに従い、実在の人の声は本人の同意がある場合だけ目標にする
 
 ## Licensing
 

@@ -20,6 +20,7 @@ mod widgets;
 use clap::Parser;
 
 fn main() -> anyhow::Result<()> {
+    lightvc_core::affinity::pin_current_to_perf();
     let args = cli::Cli::parse();
     let result = match args.command {
         cli::Command::Roundtrip(cmd) => cli::run_roundtrip(cmd),
@@ -29,6 +30,9 @@ fn main() -> anyhow::Result<()> {
         cli::Command::V2f(cmd) => cli::run_v2f(cmd),
         cli::Command::Vc(cmd) => cli::run_vc(cmd),
         cli::Command::RealtimeDdsp(cmd) => cli::run_realtime_ddsp(cmd),
+        cli::Command::Artic(cmd) => cli::run_artic(cmd),
+        cli::Command::RealtimeArtic(cmd) => cli::run_realtime_artic(cmd),
+        cli::Command::ArticEnroll(cmd) => cli::run_artic_enroll(cmd),
         cli::Command::Gui(cmd) => cli::run_gui(cmd),
     };
     // Explicit exit to avoid hang on mmap/safetensors drop on Windows

@@ -3085,6 +3085,7 @@ dependencies = [
  "candle-nn",
  "candle-transformers",
  "hf-hub",
+ "libc",
  "serde",
  "serde_json",
 ]

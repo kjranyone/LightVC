@@ -1,0 +1,6 @@
+2026-10-22T07:08Z results/diag_cv_smoke/(煙テスト・ContentVec の損失の 30 step・当日中に削除の規則)
+2026-10-22T07:57Z results/diag_cvin_smoke/(煙テスト・連続の内容の特徴の入力の 30 step・当日中に削除の規則)
+2026-10-22T08:53Z results/c2_smoke/(煙テスト・C2 の 30 step・当日中に削除の規則)
+2026-10-22T11:37Z results/conv_p0/OVERNIGHT_2026-10-22.md(誤って作った空のファイル・0 バイト)
+2026-10-22T22:32Z results/diag_perdyn_smoke/(煙テスト・周期性の動きの 30 step・当日中に削除の規則)
+2026-10-22T23:20Z results/diag_perloss_smoke/(煙テスト・周期性の一致の損失の 30 step・当日中に削除の規則)

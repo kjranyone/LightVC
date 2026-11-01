@@ -1,0 +1,11 @@
+2026-10-29T09:43:25Z  results/artic_render1/artic_render_ref.py (誤って作った training/artic_render_ref.py の写し・元は training に残る)
+2026-10-29T10:51:09Z  results/conv_p0/OVERNIGHT_2026-10-29.md(誤って作った空のファイル)
+# 2026-10-29T15:13:55Z 失敗した D670 の走行(描画 0 本・--render の相対パスの誤り)の残り。証拠でない・流し直しで作り直す
+results/conv_p0/d670_d109_dev2.json
+results/conv_p0/d670_d109_dev3.json
+/home/kojirotanaka/lightvc_scratch_20261013/dev2/lda670_dump.npz
+/home/kojirotanaka/lightvc_scratch_20261013/dev3/lda670_dump.npz
+results/conv_p0/d670/cer.json
+results/conv_p0/d670/lda.log
+results/conv_p0/d670/lda_dev2.json
+results/conv_p0/d670/lda_dev3.json

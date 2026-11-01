@@ -1,0 +1,4 @@
+# 削除台帳 2026-10-14
+
+## 2026-10-14 D184 smoke (scratchpad)
+- /tmp/claude-1000/-home-kojirotanaka-kjranyone-LightVC/2e1a59c3-e906-4c48-bba4-03855ea95b2e/scratchpad/d184_smoke/{p0000_t000_TTSZ.wav,p0000_t000_TTSSELF.wav}・d184_smoke_items.json(1 項目の動作確認)

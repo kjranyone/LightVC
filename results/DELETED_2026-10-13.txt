@@ -1,0 +1,1 @@
+results/diag_rr1c_smoke/ (smoke: train_rr --align c1 30 steps, 動作確認のみ)

@@ -1,0 +1,4 @@
+## 2026-10-16 15:16 UTC smoke(diag_rr20d の学習経路の動作確認・200 step・train_rr の Store の stats の修正の確認)
+results/diag_smoke_rr20d/last.pt
+results/diag_smoke_rr20d/prereg.yaml
+results/diag_smoke_rr20d/train.log

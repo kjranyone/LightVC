@@ -1,6 +1,6 @@
 # LightVC 現行方針
 
-> 更新: 2026-09-08。製品要件と設計索引の正本。
+> 更新: 2026-11-01（研究リセット・本線を synth_nam_vc へ。製品要件・採用ゲートは維持）。製品要件と設計索引の正本。
 > 研究・設計・学習・評価の前に、本書と [RESEARCH.md](RESEARCH.md) を読む。
 
 ## 1. 目的と採用状況
@@ -14,18 +14,24 @@ ASMR・官能バ美肉向けのリアルタイムVCを作る。普通の発声�
 - zero-shotのtarget設定を最終目標として維持する。固定targetによる診断成功をzero-shot達成と呼ばない。
 - 声・style・textureの分離と説明可能な編集を目指す。保存する編集の意味を不透明なlatentの座標だけに依存させない。
 
-**採用済みの完成VCは確認できていない。** 現行研究線はB4 Dual-Path Kansei VCの **Y-S1 causal codec + 条件付き生成**。Y-S1はPROPOSEDで、未知女声の再構成に耳の合格記録、Rust decoderに単体速度の実測がある。上流を含む変換品質・制御・製品E2Eの合格とは区別する。証拠と留保は [RESEARCH.md](RESEARCH.md)。
+**2026-11-01 研究リセット(オーナー)**: これまでの出力は「適当にメルが近くなっただけ」の水準に留まった。本線を [synth_nam_vc.md](synth_nam_vc.md)(構音の構造のアナログモデリング・PROPOSED rev1)へ移す。理論の土台 = 構音の構造を変更すれば任意の話者に変換できる。フロンティア = 低レイテンシで実現可能なモデリング。学習データは Irodori-TTS v4.1 の生成・zero-shot を維持・目標の声は架空と同意済みの実在の両方。**リセット前の記録は全て撤回**で、以下の構音VC系の記述と資料も本線の根拠にしない。
+
+**採用済みの完成VCは確認できていない。** B4 Dual-Path Kansei VCの目的の下で、直近に検証したのは **構音VCの前段・変換器 + rvoc系レンダラ**。表の引きと操作者の動き、参照を読む回帰型R、分布型Fを試したが、変換の明瞭さ・自然さ・目標話者性の同時合格には至っていない。部品の再合成・Rust一致・計算速度の証拠を、製品変換・萌えの制御・E2Eの合格と区別する。
+
+Y-S1/CFMは以前に検証した経路であり、旧女声再合成の耳PASSだけを現在の品質天井にしない。現状の判定と欠測は [RESEARCH.md](RESEARCH.md)、観測・撤回・未判定の詳細は [現状監査](../results/research_audit_2026-10-13/README.md)。今回の整理で設計をADOPTEDへ昇格させていない。
 
 旧freebig等の当時の採用記録は歴史として保存した。現製品経路の採用を意味しない。
 
 ## 2. 設計と現役資料
+
+以下は目指す分担であり、採用済みモデルの配線図ではない。研究実装で各経路の分離が成立したかは別に検証する。
 
 ```text
 入力 → 自作の因果content / 明示prosody ─┐
 target参照 → voice / style / texture ──┤
 人間の制御 → 条件の写像 ──────────────┤
                                       ↓
-                      条件付き生成 → Y-S1 decoder → 出力
+                      条件付き変換・生成 → レンダラ → 出力
                                                         ↓
                                              試聴・操作・選択
 ```
@@ -33,9 +39,18 @@ target参照 → voice / style / texture ──┤
 | 資料 | 役割 |
 |---|---|
 | [RESEARCH.md](RESEARCH.md) | 確認済みの到達点、証拠の所在、未解決の問い |
-| [ROADMAP.md](ROADMAP.md) | 次に解く問いと段階の依存関係 |
-| [causal_codec.md](causal_codec.md) | Y-S1の詳細設計・ABI・codecゲート（PROPOSED） |
-| [cfm_ys1.md](cfm_ys1.md) | 現CFM実装と設計意図の差、接続契約（PROPOSED） |
+| [ROADMAP.md](ROADMAP.md) | 未決の問いと、判断に不足する証拠 |
+| [synth_nam_vc.md](synth_nam_vc.md) | **本線(2026-11-01 リセット)**: 構音の構造のアナログモデリング・低遅延で実現できるモデリングがフロンティア（PROPOSED rev1） |
+| [artic_vc.md](artic_vc.md) | 構音VCの設計・静的表と動きの診断経過（PROPOSED・製品未達） |
+| [converter.md](converter.md) | 前段・変換器の設計、Rust経路、過去の比較（PROPOSED） |
+| [renderer.md](renderer.md) | rvoc系出力部、再合成の耳記録、Rust一致（PROPOSED） |
+| [artic_inv.md](artic_inv.md) | 声道の物理座標の逆推定とその限界（PROPOSED） |
+| [paper_mf.md](paper_mf.md) | 論文の骨格: 男声 → 女声を女声だけの学習で一般化させる条件(界面の不変性・観測されない帯の外挿)・以後の腕はここの予測から導く(PROPOSED・2026-10-30) |
+| [artic_morph.md](artic_morph.md) | 構音写像VC: 操作者の身振り × 目標の声道と動き方・固定の半音で Graillon 相当に勝つ（PROPOSED・2026-10-25） |
+| [ref_reader.md](ref_reader.md) | 参照を注意で読む回帰型Rと診断結果（PROPOSED・製品未達） |
+| [dyn_flow.md](dyn_flow.md) | 分布型Fと短時間診断のBREAK（PROPOSED） |
+| [causal_codec.md](causal_codec.md) | 以前に検証したY-S1の詳細設計・ABI（PROPOSED・未採用） |
+| [cfm_ys1.md](cfm_ys1.md) | 以前のCFM/Y-S1接続契約と診断（PROPOSED・未採用） |
 | [kansei_control.md](kansei_control.md) | 官能評価、萌えのパラメタ化、再生側UX（PROPOSED） |
 | [design_laws.md](design_laws.md) | 設計三層則と起動前検査L/I/C（規範・全学習腕必須） |
 | [FAILURE_NOTES.md](FAILURE_NOTES.md) | 再試行前に確認する失敗・撤回・帰属の限界 |

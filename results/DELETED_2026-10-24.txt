@@ -1,0 +1,6 @@
+2026-10-24T09:03Z conv_p0/OVERNIGHT_2026-10-24_pre.txt(D559 の規則の下書き・同じ内容を OVERNIGHT_2026-10-18.md に移した)
+2026-10-24T09:32Z data/male_tts_v4_eval2/(g024 の 41 本・g025 の途中・manifest.json・fp32 で作り始めた関門 2 組目・GPU を 17 GB 使い自分の評価が OOM → bf16・コーデック CPU(関門 1 組目と同じ設定)で作り直す)
+2026-10-24T09:35Z 煙テスト(gate_mf_run.py の --c0shift・C2 の描画・2 組・正常): /home/kojirotanaka/lightvc_scratch_20261013/diag_mfsmoke/・/home/kojirotanaka/lightvc_scratch_20261013/e2e/eval_diag_mfsmoke_pre/・results/conv_p0/diag_mfsmoke/・results/conv_p0/diag_mfsmoke.out
+2026-10-24T10:16Z results/diag_ppgvoc57_smoke/(煙テスト・関門 2 組目の TTS の合成と GPU が重なり OOM・step 1 前)
+2026-10-24T11:31Z results/diag_ppgvoc57_smoke/(煙テスト・exit 0)
+2026-10-24T23:57Z results/conv_p0/OVERNIGHT_2026-10-24.md(誤って作った空のファイル・0 バイト)

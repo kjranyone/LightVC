@@ -4,18 +4,26 @@
 //! and weight loading for real-time voice conversion.
 
 pub mod a2vc;
+pub mod affinity;
+pub mod artic_render;
+pub mod artic_vc;
 pub mod b1_pipeline;
+pub mod c1;
 pub mod codec;
 pub mod converter;
 pub mod dac_model;
 pub mod ddsp_vc;
 pub mod eg;
+pub mod enroll;
 pub mod flow_converter;
+pub mod f0est;
 pub mod free_resynth;
 pub mod free_vocoder;
+pub mod lvl;
 pub mod mel;
 pub mod nvoc;
 pub mod pipeline;
+pub mod rr;
 pub mod rvoc;
 pub mod ship_front;
 pub mod ys1_codec;

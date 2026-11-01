@@ -1,0 +1,5 @@
+# 2026-10-11 rvtab_full(FAIL 判定済み・verdict.yaml)の途中の snap(証拠 = eval_345k / eval_360k は残す)
+results/rvtab_full/snap/ema_335k.pt ema_340k.pt ema_350k.pt ema_355k.pt — 途中の EMA(335k の写し合成 PESQ 1.310 は pesq_copy_335k.json に記録済み)
+results/rvtab_f3_smoke/ — rvtab_f3 の起動前の smoke(γ=1・F3 の条件の分位点・ship_gate PASS を確認)
+results/f4_smoke/ — F4 の起動前の smoke(ship_gate PASS・200 step で比 0.647)
+results/rvtab_x_smoke/ — rvtab_x の起動前の smoke(交差の標本の損失・速度 0.6 s/step・メモリを確認)

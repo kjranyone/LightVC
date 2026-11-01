@@ -1,0 +1,17 @@
+# 2026-10-18 smoke (same day)
+results/diag_ppgvoc1_smoke/ (data_counts.json, ev_000000, ev_000030, last_ema.pt, train.jsonl) — train_ppgvoc.py smoke, step0 SR v1 3.226 / PV v1perp 4.634 recorded in prereg/e2e_ppg.md
+results/diag_ppgvoc1_smoke.log
+results/diag_ppgvoc_smoke_table/ + .log — train_ppgvoc.py --spk table regression smoke (step0 identical to diag_ppgvoc1: SR 3.226 / PV 4.634)
+results/diag_ppgvoc_smoke_sv/ + .log — train_ppgvoc.py --spk sv smoke (step0 SR v1 4.61 / PV v1perp 5.52, ridge R2 0.67; recorded in diag_svc1 prereg follow-up)
+results/diag_ppgvoc3_smoke/ + results/diag_ppgvoc3_smoke.log — cross-path smoke (step0 = ppgvoc1 5k SR 2.314 / PV 4.061 reproduced; x_adv logged)
+results/diag_ppgvoc4_smoke/ + .log — SSL-disc cross smoke (step0 = ppgvoc1 5k reproduced; slm_adv/slm_dl logged)
+results/diag_ppgvoc5_smoke/ + .log — dyn-input smoke from ppgvoc1 5k (step0 gamma0.7 reproduces D282 g070: SR 0.454 / PV 3.975)
+results/diag_ppgvoc6_smoke/ + .log — ctx-encoder long-segment smoke (step0 = ppgvoc4 SR 1.538 / PV 3.681; 26 new keys; future invariance 0)
+results/diag_ppgvoc8_smoke/ + .log — identity-loss smoke (step0 = ppgvoc7 final; x_id 0.5-0.65 logged)
+results/diag_ppgvoc9_smoke/ + .log — conditioned SSL-disc smoke (step0 = ppgvoc8 final)
+results/diag_ppgvoc10_smoke/ + .log — content-consistency smoke (lag check: 0.603/0.679/0.666 at lag 0/1/2; x_ct ~0.9-1.6)
+results/diag_ppgvoc11_smoke/ + .log — hard-target content-consistency smoke (x_ct CE 2-3)
+results/diag_ppgvoc13_smoke/ + .log — female-only content smoke
+results/diag_ppgvoc15_smoke/ + .log — invariance-adapter smoke (step0 = ppgvoc11; inv/gd logged)
+results/diag_ppgvoc16_smoke/ + .log — x_nm 8 smoke
+results/diag_ppgvoc17_smoke/ + .log — ctx 96ch smoke

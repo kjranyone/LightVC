@@ -24,12 +24,12 @@ pub const NFFT: usize = 2048;
 pub const WIN: usize = 1024;
 const NBIN: usize = NFFT / 2 + 1;
 
-struct Tensors {
+pub(crate) struct Tensors {
     t: HashMap<String, (Vec<f32>, Vec<usize>)>,
 }
 
 impl Tensors {
-    fn load(dir: &Path) -> Result<(Self, serde_json::Value)> {
+    pub(crate) fn load(dir: &Path) -> Result<(Self, serde_json::Value)> {
         let man: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.join("manifest.json"))?)?;
         let raw = std::fs::read(dir.join("weights.bin"))?;
         let all: Vec<f32> = raw.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
@@ -43,7 +43,7 @@ impl Tensors {
         Ok((Self { t }, man))
     }
 
-    fn get(&self, k: &str) -> Result<(Vec<f32>, Vec<usize>)> {
+    pub(crate) fn get(&self, k: &str) -> Result<(Vec<f32>, Vec<usize>)> {
         self.t.get(k).cloned().with_context(|| format!("missing tensor {k}"))
     }
 }
@@ -211,6 +211,10 @@ impl CConv {
 
     pub(crate) fn reset(&mut self) {
         self.hist.iter_mut().for_each(|v| *v = 0.0);
+    }
+
+    pub(crate) fn co_len(&self) -> usize {
+        self.co
     }
 
     /// inp [ci][n] → out [co][n]
@@ -402,7 +406,7 @@ impl Stage {
     }
 }
 
-struct MelFront {
+pub(crate) struct MelFront {
     fb: Vec<f32>,
     win: Vec<f32>,
     ring: Vec<f32>,
@@ -412,7 +416,12 @@ struct MelFront {
 }
 
 impl MelFront {
-    fn push(&mut self, x: &[f32], mel: &mut [f32]) {
+    pub(crate) fn new(fb: Vec<f32>, win: Vec<f32>) -> Self {
+        Self { fb, win, ring: vec![0.0; WIN], re: vec![0.0; NFFT], im: vec![0.0; NFFT], mag: vec![0.0; NBIN] }
+    }
+
+    /// 入力ブロック [HOP] → 対数メル [N_MEL](ln・下限 1e-5)。フレーム t は (t+1)·HOP に終わる WIN の窓(初期は 0 の左文脈)。
+    pub(crate) fn push(&mut self, x: &[f32], mel: &mut [f32]) {
         self.ring.copy_within(HOP.., 0);
         self.ring[WIN - HOP..].copy_from_slice(x);
         for i in 0..NFFT {
@@ -435,7 +444,7 @@ impl MelFront {
 }
 
 /// 帯域制限パルス列（単位 RMS）。ブロック t は f0[t−1] → f0[t] の直線補間。位相は f64。
-struct HarmSrc {
+pub(crate) struct HarmSrc {
     ph: f64,
     prev: f32,
     started: bool,
@@ -445,7 +454,11 @@ struct HarmSrc {
 }
 
 impl HarmSrc {
-    fn block(&mut self, f0: f32, out: &mut [f32]) {
+    pub(crate) fn new(h_max: f32, h_roll: f32, k_max: usize) -> Self {
+        Self { ph: 0.0, prev: 0.0, started: false, h_max, h_roll, k_max }
+    }
+
+    pub(crate) fn block(&mut self, f0: f32, out: &mut [f32]) {
         let prev = if self.started { self.prev } else { f0 };
         self.started = true;
         self.prev = f0;

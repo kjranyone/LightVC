@@ -1,0 +1,8 @@
+2026-10-30T10:20:32Z results/diag_ppgvoc64_smoke/(煙テスト・exit 0)
+2026-10-30T17:45:32Z /home/kojirotanaka/lightvc_scratch_20261013/d487_uiro/rr_en_b1p/(D692 の最初の版の登録・24 係数では f0 より下だけを変えられず不使用・28 目標)
+2026-10-30T17:45:32Z /home/kojirotanaka/lightvc_scratch_20261013/d487_uiro/rr_en_b1m/(D692 の最初の版の登録・24 係数では f0 より下だけを変えられず不使用・28 目標)
+2026-10-30T17:45:32Z /home/kojirotanaka/lightvc_scratch_20261013/devvctkm/rr_en_b1p/(D692 の最初の版の登録・24 係数では f0 より下だけを変えられず不使用・30 目標)
+2026-10-30T17:45:32Z /home/kojirotanaka/lightvc_scratch_20261013/devvctkm/rr_en_b1m/(D692 の最初の版の登録・24 係数では f0 より下だけを変えられず不使用・30 目標)
+2026-10-30T18:59:55Z /home/kojirotanaka/lightvc_scratch_20261013/d693_lx (just-built symlink-only set; rebuilt with targets limited to those having rr_en_b1r)
+2026-10-30T21:34:45Z results/diag_ppgvoc65_smoke/(煙テスト・exit 0)
+2026-10-30T22:47:29Z results/diag_ppgvoc66_smoke/(煙テスト・exit 0)

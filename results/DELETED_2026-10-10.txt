@@ -1,0 +1,4 @@
+# 2026-10-10 smoke(動作確認のみ・当日削除の規則)
+results/diag_rvtab_smoke/ (last.pt 549MB・snap/・train.jsonl) — diag_rvtab の起動前の smoke(cond check・lm_tab 0.86 > lm_real 0.52 を確認済み・記録は current/artic_vc.md / train.log)
+# 2026-10-10 smoke(動作確認のみ・当日削除)
+results/rvtab_full_smoke/ (last.pt・snap・train.jsonl) — rvtab_full の起動前の smoke(γ=1 の恒等: 表側 c1..24 の分位点が本物と一致・ship_gate PASS)

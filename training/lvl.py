@@ -35,3 +35,44 @@ class Lvl(nn.Module):
         for b in self.blks:
             x = b(x)
         return lev - 2.7 + self.out(F.leaky_relu(x, 0.1))[:, 0]
+
+
+class EnvEst(nn.Module):
+    """F3: 因果な包絡推定器(artic_vc §8g・D26 の混ぜのつまみの製品化)。因果 log-mel → [c0n((c0 − C0_SIL)/10)・c1..c24 / 10](出力部の条件の行 0..24 と同じ単位)。
+    c0n は Lvl と同じく mel の平均への残差・c1..c24 は直接。教師は CheapTrick の包絡(中心窓 = 先読みあり)。先読み 0。"""
+
+    def __init__(self, ch: int = 128, dils: tuple = (1, 2, 4, 8, 16, 32, 1, 2, 4, 8, 16, 32)):
+        super().__init__()
+        self.cfg = {"ch": ch, "dils": list(dils), "out": 25}
+        self.inp = nn.Conv1d(128, ch, 1)
+        self.blks = nn.ModuleList(Blk(ch, d) for d in dils)
+        self.out = nn.Conv1d(ch, 25, 1)
+        self.rf = 1 + sum(2 * d for d in dils)
+
+    def forward(self, mel: torch.Tensor) -> torch.Tensor:
+        lev = 11.3137085 * mel.mean(1)
+        x = self.inp(mel)
+        for b in self.blks:
+            x = b(x)
+        o = self.out(F.leaky_relu(x, 0.1))
+        return torch.cat([(lev - 2.7 + o[:, 0])[:, None], o[:, 1:]], 1)
+
+
+class PerEst(nn.Module):
+    """F4: 因果な周期性推定器(artic_vc D101: 周期性の定数が写し合成の代価 0.977・本物を 1 フレーム遅らせれば 0.944)。因果 log-mel → 周期性 4 帯(出力部の条件の行 27..30・有声で意味を持つ)。
+    教師は pae.periodicity(教師の f0・中心窓)。先読み 0。EnvEst と同じ骨格で出力 4。"""
+
+    def __init__(self, ch: int = 128, dils: tuple = (1, 2, 4, 8, 16, 32, 1, 2, 4, 8, 16, 32)):
+        super().__init__()
+        self.cfg = {"ch": ch, "dils": list(dils), "out": 4}
+        self.inp = nn.Conv1d(128, ch, 1)
+        self.blks = nn.ModuleList(Blk(ch, d) for d in dils)
+        self.out = nn.Conv1d(ch, 4, 1)
+        self.rf = 1 + sum(2 * d for d in dils)
+
+    def forward(self, mel: torch.Tensor) -> torch.Tensor:
+        x = self.inp(mel)
+        for b in self.blks:
+            x = b(x)
+        return self.out(F.leaky_relu(x, 0.1))
+

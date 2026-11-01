@@ -27,6 +27,8 @@ dependencies = [
     "faster-whisper>=1.2.1",
     "speechbrain>=1.1.0",
     "openai-whisper>=20250625",
+    "speechmos>=0.0.1.1",
+    "pyopenjtalk-plus>=0.4.1.post10",
 ]
 
 [project.optional-dependencies]

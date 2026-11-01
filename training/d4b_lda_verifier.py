@@ -35,10 +35,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--wav_dir", nargs="+", required=True, help="複数可(LDA は 1 回だけ学習して各ディレクトリを評価)")
     ap.add_argument("--out", nargs="+", required=True)
+    ap.add_argument("--dump", nargs="*", default=[], help="各ディレクトリの出力ごとの全目標への得点を npz に(耳の検査の素材選び用)")
     ap.add_argument("--n_spk", type=int, default=1200)
     ap.add_argument("--per", type=int, default=4)
     ap.add_argument("--layers", type=int, nargs="*", default=[4, 6, 8])
     ap.add_argument("--exclude_spk", nargs="*", default=["fe9565ca1f33bf20", "ffb9b5647612b32b"])
+    ap.add_argument("--device", default="cuda")
     a = ap.parse_args()
     from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
     from transformers import WavLMModel
@@ -47,7 +49,7 @@ def main() -> int:
     allspk = sorted(p.name for p in (ROOT / "female-dataset").iterdir() if p.is_dir() and p.name not in held)
     rng = np.random.RandomState(0)
     spks = [allspk[i] for i in rng.permutation(len(allspk))[: a.n_spk]]
-    dev = "cuda"
+    dev = a.device
     net = WavLMModel.from_pretrained("microsoft/wavlm-large").to(dev).eval().float()
 
     @torch.no_grad()
@@ -60,8 +62,10 @@ def main() -> int:
             v += [h.mean(0), h.std(0)]
         return torch.cat(v).cpu().numpy()
 
+    import hashlib
+    ck = ROOT / "data/cache" / ("d4b_train_" + hashlib.sha1(json.dumps([spks, a.per, a.layers]).encode()).hexdigest()[:16] + ".npz")
     X, y = [], []
-    for si, s in enumerate(spks):
+    for si, s in enumerate(spks if not ck.exists() else []):
         ws = sorted((ROOT / "female-dataset" / s).glob("*.wav"))
         if len(ws) < a.per:
             continue
@@ -72,7 +76,13 @@ def main() -> int:
             X.append(emb(x)); y.append(si)
         if si % 200 == 0:
             print("train emb", si, flush=True)
-    X, y = np.stack(X), np.array(y)
+    if ck.exists():
+        z = np.load(ck); X, y = z["X"], z["y"]
+        print("train emb cache", ck.name, X.shape, flush=True)
+    else:
+        X, y = np.stack(X), np.array(y)
+        ck.parent.mkdir(parents=True, exist_ok=True)
+        np.savez(ck, X=X, y=y)
     mu = X.mean(0); sd = X.std(0) + 1e-6
     lda = LDA(solver="eigen", shrinkage=0.3, n_components=128).fit((X - mu) / sd, y)
     tr = lambda E: lda.transform((E - mu) / sd)
@@ -100,22 +110,28 @@ def main() -> int:
             meta.append((int(m.group(1)), int(m.group(2)), m.group(3), f))
         names = sorted({m[2] for m in meta})
         R = {n: ([], []) for n in names}
+        dump = {"name": [], "pi": [], "ti": [], "cond": [], "score": []}
         for pi, ti, n, f in meta:
             v = nz(tr(emb(load16(f))[None]) - mc)[0]
             se = C @ v
+            dump["name"].append(f.name); dump["pi"].append(pi); dump["ti"].append(ti); dump["cond"].append(n); dump["score"].append(se.astype(np.float32))
             R[n][0].append(int((se > se[ti]).sum()) + 1)
             R[n][1].append(ti)
-        rep = {"n_train_spk": int(len(set(y))), "n_train_clips": int(len(y)), "calib_real_top1": round(cal, 3), "chance": round(cal_chance, 3), "n_targets": S}
-        rb = np.array(R["TAB"][0])
-        tg = np.array(R["TAB"][1])
+        base = "TAB" if "TAB" in R else ("COPY" if "COPY" in R else sorted(c for c in R if c != "SRC")[0])
+        rep = {"base": base, "n_train_spk": int(len(set(y))), "n_train_clips": int(len(y)), "calib_real_top1": round(cal, 3), "chance": round(cal_chance, 3), "n_targets": S}
+        rb = np.array(R[base][0])
+        tg = np.array(R[base][1])
         for n in names:
             rk = np.array(R[n][0])
             blk = {"top1": round(float((rk == 1).mean()), 3), "top5": round(float((rk <= 5).mean()), 3), "mean_rank": round(float(rk.mean()), 2)}
-            if n not in ("SRC", "TAB"):
+            if n not in ("SRC", base) and len(rk) == len(rb):
                 ma = np.array([rk[tg == t].mean() for t in range(S)]); mb = np.array([rb[tg == t].mean() for t in range(S)])
                 blk["cluster_p_improve_vs_TAB"] = round(float(wilcoxon(ma, mb, alternative="less").pvalue), 4)
                 blk["targets_better/worse"] = [int((ma < mb).sum()), int((ma > mb).sum())]
             rep[n] = blk
+        di = a.wav_dir.index(wd_)
+        if di < len(a.dump):
+            np.savez(a.dump[di], name=np.array(dump["name"]), pi=np.array(dump["pi"]), ti=np.array(dump["ti"]), cond=np.array(dump["cond"]), score=np.stack(dump["score"]))
         print(json.dumps(rep, ensure_ascii=False, indent=1), flush=True)
         Path(out_).write_text(json.dumps(rep, ensure_ascii=False, indent=1))
     return 0

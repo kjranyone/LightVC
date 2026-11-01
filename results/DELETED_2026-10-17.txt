@@ -1,0 +1,2 @@
+20:46 UTC 煙テスト(当日削除の規則): results/diag_rvslm1_smoke/ 一式(last.pt = rvtab_x/last.pt の写し + 30 step・snap/ema_400k.pt・train.jsonl・STOP なし)。煙テストの記録は scratchpad/smoke_rvslm.log(30 step・0.6 s/step・評価 h pesq 2.725)。
+21:50 UTC 煙テスト(当日削除): results/diag_rvslm2_smoke/ 一式(rvtab_x/last.pt の写し + 30 step・snap・train.jsonl)。記録 scratchpad/smoke_rvslm2.log。

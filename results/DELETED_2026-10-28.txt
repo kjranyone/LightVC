@@ -1,0 +1,4 @@
+2026-10-28T01:53:45Z  scratch /home/kojirotanaka/lightvc_scratch_20261013/dev2/d570/WFG5/p0000_t000_WFG5.wav /home/kojirotanaka/lightvc_scratch_20261013/dev2/d570/WEG5/p0000_t000_WEG5.wav  (D632 の煙テストの出力・整列の修正前・作り直すため削除)
+2026-10-28T05:34:27Z  results/diag_envnet1_smoke/ (煙テストの last.pt・train.jsonl・data_counts.json — train_envnet.py の動作確認のみ・当日削除の規約)
+2026-10-28T08:29:30Z  results/diag_envnet2_smoke/ (煙テストの last.pt・train.jsonl・data_counts.json — train_envnet.py の --pert / --init の動作確認のみ・当日削除の規約)
+2026-10-28T09:56:15Z  results/diag_envnet3_smoke/ (煙テストの last.pt・train.jsonl・data_counts.json — train_envnet3.py の動作確認のみ・当日削除の規約)

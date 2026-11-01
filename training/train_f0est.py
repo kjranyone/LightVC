@@ -86,9 +86,9 @@ def perturb(x: np.ndarray, rng: random.Random) -> np.ndarray:
 
 
 class DS(torch.utils.data.IterableDataset):
-    def __init__(self, male: list, real: list, tts: list, seed: int, warm: int = WARM, hi: list | None = None, p_hi: float = 0.0):
+    def __init__(self, male: list, real: list, tts: list, seed: int, warm: int = WARM, hi: list | None = None, p_hi: float = 0.0, p_real: float = 0.5):
         self.male, self.real, self.tts, self.seed, self.warm = male, real, tts, seed, warm
-        self.hi, self.p_hi = hi or [], p_hi
+        self.hi, self.p_hi, self.p_real = hi or [], p_hi, p_real
 
     def __iter__(self):
         wi = torch.utils.data.get_worker_info()
@@ -97,7 +97,7 @@ class DS(torch.utils.data.IterableDataset):
         while True:
             u = rng.random()
             use_hi = bool(self.hi) and rng.random() < self.p_hi
-            g = self.hi if use_hi else (self.male if u < 0.5 else (self.real if u < 0.75 else self.tts))
+            g = self.hi if use_hi else (self.male if u < 0.5 else (self.real if u < 0.5 + 0.5 * self.p_real else self.tts))
             wav, f0p, sr, dur = g[rng.randrange(len(g))]
             try:
                 n48 = int(dur * N.SR)
@@ -333,6 +333,8 @@ def main() -> int:
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--p_hi", type=float, default=0.0, help="1kHz 超のフレームを含む女声の区間をこの確率で引く(評価話者の実音声を除く)")
     ap.add_argument("--long_rf", action="store_true", help="受容野 1.27s(dil 1〜32 × 2)= オクターブの判断に長い文脈")
+    ap.add_argument("--p_real", type=float, default=0.5, help="女声の引きのうち実録音の割合(既定 0.5 = 実:TTS 1:1・f0est4: 実録音の息の端の有声の判定)")
+    ap.add_argument("--init", default="", help="この ckpt(last.pt)の重みから始める(構造は同じであること)")
     a = ap.parse_args()
     dev = "cuda"
     out = ROOT / "results" / a.tag
@@ -353,7 +355,12 @@ def main() -> int:
     rf = 2 + sum(2 * d for d in net.cfg["dils"])
     WARM = max(WARM, rf + 2)
     TT = WARM + T
-    print("params (M)", round(sum(p.numel() for p in net.parameters()) / 1e6, 3), flush=True)
+    if a.init:
+        s_i = torch.load(a.init, map_location="cpu", weights_only=False)
+        assert s_i["cfg"] == net.cfg, "init の構造が違う"
+        net.load_state_dict(s_i["net"])
+        print("初期値", a.init, "step", s_i.get("step"), flush=True)
+    print("params (M)", round(sum(p.numel() for p in net.parameters()) / 1e6, 3), "p_real", a.p_real, flush=True)
     if not a.smoke and not ship_gate(front, net):
         print("出荷ゲート FAIL: 起動しない", flush=True)
         return 1
@@ -369,7 +376,7 @@ def main() -> int:
     opt = torch.optim.AdamW(net.parameters(), lr=a.lr, weight_decay=1e-4)
     total = 30 if a.smoke else a.steps
     sch = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=a.lr, total_steps=total, pct_start=0.05)
-    loader = iter(torch.utils.data.DataLoader(DS(male, real, tts, 11, WARM, hi_rows() if a.p_hi > 0 else None, a.p_hi), batch_size=a.bs, num_workers=a.workers, pin_memory=True,
+    loader = iter(torch.utils.data.DataLoader(DS(male, real, tts, 11, WARM, hi_rows() if a.p_hi > 0 else None, a.p_hi, a.p_real), batch_size=a.bs, num_workers=a.workers, pin_memory=True,
                                               persistent_workers=True, prefetch_factor=4))
     log = open(out / "train.jsonl", "a")
     r0 = {"step": 0, **evaluate(front, net, sets, dev, rgen, rfront)}

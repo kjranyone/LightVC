@@ -1,5 +1,6 @@
 # ===== Build artifacts =====
 /target/
+/target_dev/
 **/*.rs.bk
 
 # ===== Model weights (large, not for git) =====
