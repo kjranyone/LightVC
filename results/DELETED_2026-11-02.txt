@@ -1,0 +1,18 @@
+2026-11-02T00:39:27Z A3e の事前検査(5k step × 4・結果は results/diag_snv_a3e_precheck/verdict.yaml に写し、事前登録の写しも同じ所): results/diag_snv_a3e_pre_b/ results/diag_snv_a3e_pre_l01/ results/diag_snv_a3e_pre_l1/ results/diag_snv_a3e_pre_r2/(last.pt・swap_stats.pt・norm.npz・train.log・train_log.json・attn_match.log・heldout.log・run.log・run.pid・prereg.yaml)・training/run_snv_a3e_pre.sh
+
+# 2026-11-02T06:19:09Z N0b 事前検査の生成(scratchpad・数値は results/snv_n0/verdict.yaml の n0b_precheck)
+/tmp/claude-1000/-home-kojirotanaka-kjranyone-LightVC/5ae66e8d-1f63-4c6f-87bb-74ff44981b24/scratchpad/n0b_pre/ (85 files: base/cap/cap_s3 × pm000〜003 × 7 種 の npy + meta.json)
+/tmp/claude-1000/-home-kojirotanaka-kjranyone-LightVC/5ae66e8d-1f63-4c6f-87bb-74ff44981b24/scratchpad/n0b_pre2/ (534 files: ref_pm000〜005・bright/s2/s1/c5/kv/noref × pm000〜005 × 7 種 × 2 の wav・bright の普通の発話 n0〜n3)
+
+# 2026-11-02T14:55:56Z A4 の学習の煙テスト(本番の入口・300 step・E1-NV の最初の 100 声だけ・判定に使わない)
+results/diag_snv_a4_smoke_c/ results/diag_snv_a4_smoke_cg/ results/diag_snv_a4_smoke_x/(last.pt・norm.npz・train_log.json)
+
+# 2026-11-02T16:17:25Z N2 の劣化の版(scratchpad・数値は results/snv_n2/ ・ snv_n2b/ ・ snv_n2c/ の json と verdict.yaml)・N0d 事前検査の wav(数値は results/snv_n0/verdict.yaml の n0d_precheck)
+/tmp/claude-1000/-home-kojirotanaka-kjranyone-LightVC/5ae66e8d-1f63-4c6f-87bb-74ff44981b24/scratchpad/n2var/ (iro_F_dev/test・iro_M_dev/test・real_F_dev/test・real_M_dev/test の npz = 2,513 本 × 16 kHz の劣化の版・wavlm.npz = 30,660 埋め込み。clean の 2,513 埋め込みだけ results/snv_n2b/knn_bank_clean.npz へ写した)
+/tmp/claude-1000/-home-kojirotanaka-kjranyone-LightVC/5ae66e8d-1f63-4c6f-87bb-74ff44981b24/scratchpad/n0d_pre/ (1,296 wav: cap_end3 などの指定 × pm000〜005 × 6 種 × 4 文)
+
+# 2026-11-02T16:28:59Z A4 の評価の煙テスト(段 1 の 10k step の重みを段 2 の名前にも当て、各部を数本に絞った・結果は書かない・判定に使わない)
+/tmp/claude-1000/-home-kojirotanaka-kjranyone-LightVC/5ae66e8d-1f63-4c6f-87bb-74ff44981b24/scratchpad/a4smoke/ (2 files: NM.npz・NJ.npz の 16 kHz の出力)・/tmp/claude-1000/-home-kojirotanaka-kjranyone-LightVC/5ae66e8d-1f63-4c6f-87bb-74ff44981b24/scratchpad/a4smoke.log
+
+# 2026-11-02T20:25:57Z A4 の評価の 16 kHz の出力(scratchpad・N2b の記録の素材・数値は results/diag_snv_a4/n2b_record.json と a4_eval.json)
+/tmp/claude-1000/-home-kojirotanaka-kjranyone-LightVC/5ae66e8d-1f63-4c6f-87bb-74ff44981b24/scratchpad/a4dump/ (NM.npz 4,032 本・NJ.npz 4,392 本・aes.json)

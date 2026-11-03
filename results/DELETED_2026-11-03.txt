@@ -1,0 +1,19 @@
+# 2026-11-03T02:29:36Z 煙テストの出力(A5 の train_snv_a5.py 段 1 / 段 2 各 300 step・本番の入口の経路確認のみ・評価の煙テストは結果を書かない)
+results/diag_snv_a5_smoke_gan/last.pt
+results/diag_snv_a5_smoke_gan/norm.npz
+results/diag_snv_a5_smoke_gan/train_log.json
+results/diag_snv_a5_smoke/last.pt
+results/diag_snv_a5_smoke/norm.npz
+results/diag_snv_a5_smoke/train_log.json
+# 2026-11-03T03:18:52Z 煙テストの出力(A5 一階版の train_snv_a5.py 段 1 / 段 2 各 300 step・経路確認のみ)
+results/diag_snv_a5_smoke_gan/last.pt
+results/diag_snv_a5_smoke_gan/norm.npz
+results/diag_snv_a5_smoke_gan/train_log.json
+results/diag_snv_a5_smoke/last.pt
+results/diag_snv_a5_smoke/norm.npz
+results/diag_snv_a5_smoke/train_log.json
+# 2026-11-03T04:52:31Z results/diag_snv_a5_s2/(段 2 を途中信号の規則で起動しなかった空の dir・ファイルなし)
+# 2026-11-03T05:11:41Z 煙テストの出力(A6 の train_snv_a4.py --hold scream,moan,mixed 300 step・経路確認のみ・評価の煙テストは結果を書かない)
+results/diag_snv_a6_smoke/last.pt
+results/diag_snv_a6_smoke/norm.npz
+results/diag_snv_a6_smoke/train_log.json

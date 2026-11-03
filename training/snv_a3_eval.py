@@ -84,6 +84,7 @@ def main() -> int:
     a0w = {(it["voice"], it["j"]): librosa.load(str(A0 / f"wav/{it['voice']}_{it['j']}.wav"), sr=SR, mono=True)[0] for it in pv}
     latents: dict = {}
     mels: dict = {}
+    res_match: dict = {}
     for tag in a.tags:
         d = ROOT / "results" / tag
         ck = torch.load(d / "last.pt", map_location="cpu", weights_only=True)
@@ -92,13 +93,16 @@ def main() -> int:
         nz = np.load(d / "norm.npz")
         mu, sd = nz["mu"], nz["sd"]
         ents = []
+        match: dict = {}
         with torch.no_grad():
-            S = {}
+            S, R = {}, {}
             for v in tgts:
                 n = np.load(FEAT / f"mel/a0enroll/{v}.npy").shape[1]
                 rmel = np.load(FEAT / f"mel/a0enroll/{v}.npy").astype(np.float32)
                 rw = wav44(FEAT / f"wav44/a0enroll__{v}.wav", n)
-                rs = (playing(FEAT / f"sparc/a1src/tref_{v}.npz", n)[:, 12:15] - mu) / sd
+                rp_ = playing(FEAT / f"sparc/a1src/tref_{v}.npz", n)
+                R[v] = rp_[:, :12]
+                rs = (rp_[:, 12:15] - mu) / sd
                 S[v] = m.structure(torch.from_numpy(rmel)[None].to(DEV), envelope(torch.from_numpy(rw)[None].to(DEV)),
                                    torch.from_numpy(rs)[None].to(DEV), torch.ones(1, n, dtype=torch.bool, device=DEV))
 
@@ -114,6 +118,8 @@ def main() -> int:
                 mel, att = m(envelope(torch.from_numpy(y)[None].to(DEV)), torch.from_numpy(src)[None].to(DEV), S[v], return_attn=True)
                 ents.append(float((-(att.clamp(min=1e-9).log() * att).sum(-1)).mean()))
                 mels[key] = mel[0].cpu().numpy()
+                pa = np.einsum("htr,rd->htd", att[0].double().cpu().numpy(), R[v]).mean(0)
+                match.setdefault(key[0].split("_")[0], []).append(float(np.nanmean([np.corrcoef(pa[:, j], p[:, j])[0, 1] for j in range(12)])))
                 return render(mel)
 
             for r in drows:
@@ -130,6 +136,8 @@ def main() -> int:
             for k, y in a0w.items():
                 latents[(tag,) + k] = m.e((envelope(torch.from_numpy(y[: (len(y) // HOP) * HOP])[None].to(DEV)) - m.env_mu) / m.env_sd)[0].cpu().numpy()
         print(tag, "attention entropy mean", float(np.mean(ents)), flush=True)
+        res_match[tag] = {c: float(np.mean(v_)) for c, v_ in match.items()}
+        print(tag, "attention state match(読んだ参照の EMA と今の EMA の相関・EMA は物差しだけ)", res_match[tag], flush=True)
         for k, w in wavs.items():
             if k[0] in (f"M_{tag}", f"M12_{tag}") and k[2] in tgts[:4] and k[1] in (srcs[0], srcs[-1]):
                 sf.write(vdir / f"{k[0]}__{k[1]}__{k[2]}.wav", w, SR)
@@ -230,6 +238,8 @@ def main() -> int:
         res[f"melQDA_O_{t}"] = {"to_target": float(np.mean([mread(mels[k]) == k[1] for k in ko])), "read_as_source": float(np.mean([mread(mels[k]) == src_of[(k[1], k[2])] for k in ko]))}
         res[f"melQDA_M_{t}"] = {"to_target": float(np.mean([mread(mels[k]) == k[2] for k in km]))}
     print("melQDA", {k: v for k, v in res.items() if k.startswith("melQDA")}, flush=True)
+    res["attn_match"] = res_match
+    res["ref_attn_match"] = {"diag_snv_a2_x": {"S": 0.855, "O": 0.845, "M": 0.808}, "diag_snv_a3c_w": {"S": 0.769, "O": 0.719, "M": 0.468}}
 
     from sklearn.linear_model import LogisticRegression, Ridge
     from sklearn.pipeline import make_pipeline

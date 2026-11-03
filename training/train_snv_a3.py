@@ -6,6 +6,8 @@ E の入力 = 左寄せの窓(2048 点・hop 512・先読み 0)の対数振幅�
 E には D の事後確率を一様へ寄せる損失を λ 倍で足す(不変性の正則化・分布の段)。声は発話の全体で一定なので、フレームの窓だけの識別器は騙せても発話で束ねると残る(煙テスト)。
 --swap(A3c)= E の入力の包絡を、学習の声ごとの平均・共分散で白色化し、発話ごとに乱数で選んだ別の学習の声 B の平均・共分散で着色し直す(話者の統計の差し替え)。
 目標・参照・声源は元の声 A のまま = 入力側だけの加工。E に残る声の手がかりは B のもの = 目標と無関係になり、参照の鍵(A)と質問(B 風)が話者を跨ぐ。
+--pair_nce λ(A3e)= E1 の中の同じ文を別の声で読んだ組を DTW で揃え(既定 = 声ごとの平均を引いた包絡・--pair_align_from TAG = その腕の E の出力)、8 フレームの窓と揃えた相手の区間の
+E の出力の平均を対照の損失(InfoNCE)で対応させる(回帰ではない・出力は自己の reamp のまま)。
 --swap_mode state / state_cov(A3d)= 全体の差し替えに加えて、白色化した空間で調音の状態(学習の声の白色化した包絡に当てはめた共通の GMM・--states 成分)ごとに、
 声 A の状態ごとの平均(state)と標準偏差(state_cov)を B のものへ写す(状態の事後確率で重みづけ)。全体の差し替えが残す状態ごとの包絡の形を B へ替える。
 LEAK(検証の 30 声・前半の発話で当てはめ後半で当てる・E の出力の線形と QDA)と XFER(検証の声 A の発話を次の検証の声 B の参照で変換し、
@@ -18,6 +20,7 @@ LEAK(検証の 30 声・前半の発話で当てはめ後半で当てる・E の
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import math
 import queue
@@ -42,6 +45,7 @@ N_ENV = 80
 D_E = 12
 ENV_F = librosa.mel_frequencies(n_mels=N_ENV, fmin=60.0, fmax=12000.0)
 ALPHA = (0.8, 1.25)
+PAIR_CTX = 37
 EQ_AMP = 0.3
 GAIN = 0.7
 
@@ -320,6 +324,104 @@ def load_corpus() -> dict:
     return voices
 
 
+def span(i: np.ndarray, j: np.ndarray, n: int) -> tuple[np.ndarray, np.ndarray]:
+    lo = np.full(n, np.iinfo(np.int64).max, dtype=np.int64)
+    hi = np.full(n, -1, dtype=np.int64)
+    np.minimum.at(lo, i, j)
+    np.maximum.at(hi, i, j)
+    return lo, hi
+
+
+def pair_paths(voices: dict, names: list[str], dev: str, align: "Model | None" = None) -> list[tuple]:
+    man = json.loads((ROOT / "data/snv_e1/manifest.json").read_text())
+    pos = {n: i for i, n in enumerate(names)}
+    by: dict = {}
+    for v in man["voices"]:
+        if v["voice"] not in pos:
+            continue
+        k = 0
+        for f in v["files"]:
+            if all((FEAT / f"{d}/e1/{v['voice']}/{f['t']}.{e}").exists() for d, e in (("mel", "npy"), ("sparc", "npz"), ("wav44", "npy"))):
+                assert voices[v["voice"]][k][0].shape[1] == np.load(FEAT / f"mel/e1/{v['voice']}/{f['t']}.npy", mmap_mode="r").shape[1], "組の発話の番号が load_corpus とずれる"
+                by.setdefault(f["text"], []).append((v["voice"], k))
+                k += 1
+    pairs = [(a, b) for us in by.values() for a, b in itertools.combinations(us, 2) if a[0] != b[0]]
+    need = sorted({n for p in pairs for n, _ in p})
+    with torch.no_grad():
+        env = {n: [envelope(torch.from_numpy(np.asarray(w, dtype=np.float32))[None].to(dev))[0].T.cpu() for _, _, w in voices[n]] for n in need}
+    mu = {n: torch.cat(env[n]).mean(0) for n in need}
+    gsd = torch.cat([torch.cat(env[n]) for n in need]).std(0)
+
+    def feat(n: str, u: int) -> np.ndarray:
+        if align is None:
+            return ((env[n][u] - mu[n]) / gsd).numpy().astype(np.float64)
+        with torch.no_grad():
+            return F.normalize(align.encode(env[n][u].T[None].to(dev))[0], dim=-1).cpu().numpy().astype(np.float64)
+
+    out = []
+    for (a, ua), (c, uc) in pairs:
+        X, Y = feat(a, ua), feat(c, uc)
+        _, wp = librosa.sequence.dtw(X=X.T, Y=Y.T, metric="cosine")
+        wp = wp[::-1]
+        out.append((pos[a], ua, pos[c], uc, span(wp[:, 0], wp[:, 1], len(X)), span(wp[:, 1], wp[:, 0], len(Y))))
+    return out
+
+
+def crop_wav(wav: np.ndarray, s: int, n: int) -> np.ndarray:
+    a0 = (s - PAIR_CTX) * HOP - (NFFT - HOP)
+    w = np.zeros((NFFT - HOP) + (n + PAIR_CTX) * HOP, np.float32)
+    seg = np.asarray(wav[max(0, a0):(s + n) * HOP], dtype=np.float32)
+    w[max(0, -a0):max(0, -a0) + len(seg)] = seg
+    return w
+
+
+class PairBatches:
+    def __init__(self, voices: dict, names: list[str], pairs: list[tuple], seed: int) -> None:
+        self.v, self.names, self.p = voices, names, pairs
+        self.rng = random.Random(seed)
+
+    def sample(self, n: int, L: int, win: int) -> dict:
+        wa, wc, ia, ic, segs = [], [], [], [], []
+        for b in range(n):
+            pa, ua, pc, uc, sp_ac, sp_ca = self.rng.choice(self.p)
+            if self.rng.random() < 0.5:
+                pa, ua, pc, uc, sp_ac = pc, uc, pa, ua, sp_ca
+            lo, hi = sp_ac
+            La = min(L, len(lo)) // win * win
+            s = self.rng.randint(0, len(lo) - La)
+            j0, j1 = int(lo[s]), int(hi[s + La - 1]) + 1
+            wa.append(crop_wav(self.v[self.names[pa]][ua][2], s, La))
+            wc.append(crop_wav(self.v[self.names[pc]][uc][2], j0, j1 - j0))
+            ia.append(pa), ic.append(pc)
+            segs += [(b, k, k * win, (k + 1) * win, int(lo[s + k * win]) - j0, int(hi[s + (k + 1) * win - 1]) + 1 - j0) for k in range(La // win)]
+
+        def pad(ws: list[np.ndarray]) -> torch.Tensor:
+            out = np.zeros((len(ws), max(len(w) for w in ws)), np.float32)
+            for i, w in enumerate(ws):
+                out[i, :len(w)] = w
+            return torch.from_numpy(out)
+
+        return {"wa": pad(wa), "wc": pad(wc), "ia": torch.tensor(ia), "ic": torch.tensor(ic), "segs": torch.tensor(segs)}
+
+
+def seg_pool(z: torch.Tensor, b: torch.Tensor, i0: torch.Tensor, i1: torch.Tensor) -> torch.Tensor:
+    cs = F.pad(z.cumsum(1), (0, 0, 1, 0))
+    return (cs[b, i1] - cs[b, i0]) / (i1 - i0).clamp(min=1)[:, None].to(z.dtype)
+
+
+def pair_nce(za: torch.Tensor, zc: torch.Tensor, segs: torch.Tensor, tau: float) -> tuple[torch.Tensor, torch.Tensor]:
+    b, k = segs[:, 0], segs[:, 1]
+    a = F.normalize(seg_pool(za, b, segs[:, 2], segs[:, 3]), dim=-1)
+    c = F.normalize(seg_pool(zc, b, segs[:, 4], segs[:, 5]), dim=-1)
+    logits = a @ c.T / tau
+    eye = torch.eye(len(segs), dtype=torch.bool, device=logits.device)
+    near = (b[:, None] == b[None, :]) & ((k[:, None] - k[None, :]).abs() <= 1) & ~eye
+    logits = logits.masked_fill(near, -1e9)
+    t = torch.arange(len(segs), device=logits.device)
+    loss = 0.5 * (F.cross_entropy(logits, t) + F.cross_entropy(logits.T, t))
+    return loss, (logits.argmax(1) == t).float().mean()
+
+
 class Batches:
     def __init__(self, voices: dict, names: list[str], mu: np.ndarray, sd: np.ndarray, seed: int) -> None:
         self.v, self.names, self.mu, self.sd = voices, names, mu, sd
@@ -455,7 +557,23 @@ def unit_tests() -> dict:
     for md in ("state", "state_cov"):
         assert torch.allclose(swap(e0, eq_st, torch.tensor([0]), torch.tensor([1]), md), swap(e0, st, torch.tensor([0]), torch.tensor([1])), atol=1e-8), f"状態の統計が同じ声どうしで {md} が全体の差し替えと一致しない"
     assert not torch.allclose(swap(e0, st, torch.tensor([0]), torch.tensor([1]), "state"), swap(e0, st, torch.tensor([0]), torch.tensor([1]))), "状態ごとの差し替えが全体の差し替えから動かない"
-    print(f"unit tests ok(話者の統計の差し替え = 恒等と B への一致・状態ごとの差し替え = 恒等と状態の統計が同じなら全体に一致・識別器の束ね・包絡のフレーム数・切り出しの整合・α=1 の恒等・E + G の未来不変性 = 実音声で編集 {P} 以降・包絡の高さの頑健さ 高さの差 {d_pitch:.3f} / 母音の差 {d_form:.3f})", flush=True)
+    yn = y[0].numpy()
+    with torch.no_grad():
+        zf = m.encode(envelope(y))
+        for s0, Lc in ((40, 40), (90, 64)):
+            zc = m.encode(envelope(torch.from_numpy(crop_wav(yn, s0, Lc))[None], left_pad=False))[:, PAIR_CTX:]
+            assert zc.shape[1] == Lc and torch.allclose(zc, zf[:, s0:s0 + Lc], atol=1e-4), "組の切り出し(前の文脈 37 フレームつき)の E が全体の E とずれる"
+    lo, hi = span(np.array([0, 1, 1, 2, 3, 3]), np.array([0, 0, 1, 2, 2, 3]), 4)
+    assert lo.tolist() == [0, 0, 2, 2] and hi.tolist() == [0, 1, 2, 3], "DTW の経路から相手の範囲を作る span がずれる"
+    zz2 = torch.randn(2, 30, D_E, generator=g0)
+    sg = torch.tensor([[0, 0, 3, 9, 0, 4], [1, 0, 10, 11, 5, 30]])
+    assert torch.allclose(seg_pool(zz2, sg[:, 0], sg[:, 2], sg[:, 3]), torch.stack([zz2[0, 3:9].mean(0), zz2[1, 10:11].mean(0)]), atol=1e-5), "区間の平均(累積和)が直接の平均とずれる"
+    ortho = torch.eye(D_E)[None]
+    sg2 = torch.tensor([[0, k_, k_, k_ + 1, k_, k_ + 1] for k_ in range(0, D_E, 3)])
+    l_same, acc_same = pair_nce(ortho, ortho, sg2, 0.1)
+    l_rand, _ = pair_nce(torch.randn(1, D_E, D_E, generator=g0), torch.randn(1, D_E, D_E, generator=g0), sg2, 1e3)
+    assert float(acc_same) == 1.0 and float(l_same) < 0.01 and abs(float(l_rand) - math.log(len(sg2))) < 0.05, "対照の損失が一致で 0・無関係で log N にならない"
+    print(f"unit tests ok(組の切り出しの E = 全体の E・span・区間の平均・対照の損失の両端・話者の統計の差し替え = 恒等と B への一致・状態ごとの差し替え = 恒等と状態の統計が同じなら全体に一致・識別器の束ね・包絡のフレーム数・切り出しの整合・α=1 の恒等・E + G の未来不変性 = 実音声で編集 {P} 以降・包絡の高さの頑健さ 高さの差 {d_pitch:.3f} / 母音の差 {d_form:.3f})", flush=True)
     return {"pitch_vs_vowel": d_pitch / d_form}
 
 
@@ -473,6 +591,12 @@ def main() -> int:
     ap.add_argument("--swap_mode", choices=["global", "state", "state_cov"], default="global")
     ap.add_argument("--states", type=int, default=16)
     ap.add_argument("--ecapa_trip", type=float, default=1.01)
+    ap.add_argument("--pair_nce", type=float, default=0.0)
+    ap.add_argument("--pair_bs", type=int, default=8)
+    ap.add_argument("--pair_len", type=int, default=172)
+    ap.add_argument("--pair_win", type=int, default=8)
+    ap.add_argument("--nce_tau", type=float, default=0.1)
+    ap.add_argument("--pair_align_from", default="")
     a = ap.parse_args()
     out = ROOT / "results" / a.tag
     out.mkdir(parents=True, exist_ok=True)
@@ -513,6 +637,16 @@ def main() -> int:
             print("state stats", a.states, "states・学習の声の先頭 20 声の状態ごとのフレーム数", [int(x) for x in g_.tolist()], flush=True)
         torch.save({k: v.cpu() for k, v in sw.items()}, out / "swap_stats.pt")
         print("swap stats", len(tr), "voices", a.swap_mode, flush=True)
+    pb = None
+    if a.pair_nce > 0:
+        am = None
+        if a.pair_align_from:
+            am = Model().to(dev).eval()
+            am.load_state_dict(torch.load(ROOT / "results" / a.pair_align_from / "last.pt", map_location="cpu", weights_only=True)["model"])
+        pp = pair_paths(voices, tr, dev, am)
+        del am
+        print("pairs", len(pp), "voices", len({x for q in pp for x in (q[0], q[2])}), "(学習の声どうし・同じ文・DTW = " + (f"{a.pair_align_from} の E の出力の cosine" if a.pair_align_from else "声ごとの平均を引いた包絡の cosine") + ")", flush=True)
+        pb = PairBatches(voices, tr, pp, a.seed + 7)
     spk = Spk(len(tr)).to(dev) if a.adv > 0 else None
     sopt = torch.optim.AdamW(spk.parameters(), lr=1e-3, weight_decay=0.0) if spk is not None else None
 
@@ -529,6 +663,19 @@ def main() -> int:
         z = model.encode(env)
         return l1(model.g(torch.cat([z, b["src"]], -1), s), b["mel"], b["mask"]), z, b
 
+    def pair_loss() -> tuple[torch.Tensor, torch.Tensor]:
+        pbs = pb.sample(a.pair_bs, a.pair_len, a.pair_win)
+        ea, ec = envelope(pbs["wa"].to(dev), left_pad=False), envelope(pbs["wc"].to(dev), left_pad=False)
+        if sw is not None:
+            for key, e_ in (("ia", "a"), ("ic", "c")):
+                who = pbs[key].to(dev)
+                oth = (who + torch.randint(1, len(tr), who.shape, generator=gen, device=dev)) % len(tr)
+                if e_ == "a":
+                    ea = swap(ea, sw, who, oth, a.swap_mode)
+                else:
+                    ec = swap(ec, sw, who, oth, a.swap_mode)
+        return pair_nce(model.encode(ea)[:, PAIR_CTX:], model.encode(ec)[:, PAIR_CTX:], pbs["segs"].to(dev), a.nce_tau)
+
     def evaluate() -> tuple[float, float]:
         model.eval()
         with torch.no_grad():
@@ -542,9 +689,14 @@ def main() -> int:
     log = []
     t0 = time.time()
     leaks = {}
+    nce_run: list = []
     for step in range(1, a.steps + 1):
         loss, z, bd = step_loss(trb.next(), a.perturb == "p", sw is not None)
         tot, conf = loss, None
+        if pb is not None:
+            nce, nacc = pair_loss()
+            tot = tot + a.pair_nce * nce
+            nce_run.append((float(nce.detach()), float(nacc)))
         if spk is not None:
             lam = a.adv * min(1.0, max(0.0, (step - 1000) / 4000))
             conf = confusion(spk(z, bd["mask"]))
@@ -566,6 +718,9 @@ def main() -> int:
         if step % 500 == 0:
             vl, _ = evaluate()
             rec = {"step": step, "train_l1": float(loss.detach()), "val_l1": vl, "sec": time.time() - t0}
+            if nce_run:
+                rec.update({"nce": float(np.mean([x[0] for x in nce_run])), "nce_acc": float(np.mean([x[1] for x in nce_run]))})
+                nce_run.clear()
             if spk is not None:
                 rec.update({"lam": lam, "conf": float(conf.detach()), "spk_ce": float(ce.detach()), "log_k": math.log(len(tr))})
             log.append(rec)
