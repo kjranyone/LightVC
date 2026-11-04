@@ -7,6 +7,7 @@ x = A2 の x(参照 = 同じ声の普通の発話 2 本・音素の無い発声�
     cd training && uv run --no-sync python train_snv_a4.py --mode c --tag diag_snv_a4_c
     cd training && uv run --no-sync python train_snv_a4.py --mode c --tag diag_snv_a4_c_gan --init diag_snv_a4_c --gan --steps 20000
 A6 = --hold scream,moan,mixed(その種類の音素の無い発声を学習から抜く・検証の声からも抜く)--prereg results/diag_snv_a6/prereg.yaml。
+A7 = --glot(演奏 = SPARC 15 + 声門 9 = PG 24 次元・snv_glot.py・data/snv_e1_feat/glot)--prereg results/diag_snv_a7/prereg.yaml。
 """
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils import spectral_norm
 
+from snv_glot import G_DIM
 from train_snv_a2 import CROP, FEAT, N_MEL, P_DIM, REF_UTT, ROOT, VAL_VOICES, WARM, G, l1, playing
 
 N_LAYER = 12
@@ -35,7 +37,16 @@ FIT_STEPS = 400
 FIT_LR = 1e-2
 
 
-def load_corpus(hold: frozenset = frozenset()) -> dict:
+def play(sp: Path, n: int, glot: bool = False) -> np.ndarray:
+    p = playing(sp, n)
+    if not glot:
+        return p
+    g = np.load(sp.parent.as_posix().replace("/sparc/", "/glot/", 1) + f"/{sp.stem}.npy")
+    assert g.shape == (n, G_DIM), (sp, g.shape, n)
+    return np.concatenate([p, g], 1)
+
+
+def load_corpus(hold: frozenset = frozenset(), glot: bool = False) -> dict:
     man = json.loads((ROOT / "data/snv_e1/manifest.json").read_text())
     nv = json.loads((ROOT / "data/snv_e1nv/manifest.json").read_text())["items"]
     voices = {}
@@ -45,13 +56,13 @@ def load_corpus(hold: frozenset = frozenset()) -> dict:
             mp, sp = FEAT / f"mel/e1/{v['voice']}/{f['t']}.npy", FEAT / f"sparc/e1/{v['voice']}/{f['t']}.npz"
             if mp.exists() and sp.exists():
                 mel = np.load(mp).astype(np.float32)
-                n.append((mel, playing(sp, mel.shape[1])))
+                n.append((mel, play(sp, mel.shape[1], glot)))
         voices[v["voice"]] = {"n": n, "v": []}
     for it in [it for it in nv if it["k"] == 0 and it["cat"] not in hold]:
         mp, sp = FEAT / f"mel/e1nv/{it['voice']}/{it['cat']}_{it['k']}.npy", FEAT / f"sparc/e1nv/{it['voice']}/{it['cat']}_{it['k']}.npz"
         if it["voice"] in voices and mp.exists() and sp.exists():
             mel = np.load(mp).astype(np.float32)
-            voices[it["voice"]]["v"].append((mel, playing(sp, mel.shape[1])))
+            voices[it["voice"]]["v"].append((mel, play(sp, mel.shape[1], glot)))
     return {k: d for k, d in voices.items() if len(d["n"]) >= REF_UTT + 1 and d["v"]}
 
 
@@ -82,7 +93,7 @@ class Batches:
             T = mel.shape[1]
             s = self.rng.randint(0, max(0, T - CROP))
             m = np.zeros((N_MEL, CROP), np.float32)
-            q = np.zeros((CROP, P_DIM), np.float32)
+            q = np.zeros((CROP, len(self.mu)), np.float32)
             k = np.zeros(CROP, np.float32)
             n = min(CROP, T - s)
             m[:, :n] = mel[:, s:s + n]
@@ -94,7 +105,7 @@ class Batches:
             rl.append(rm[-1].shape[1])
         L = max(rl)
         RM = np.zeros((bs, N_MEL, L), np.float32)
-        RP = np.zeros((bs, L, P_DIM), np.float32)
+        RP = np.zeros((bs, L, len(self.mu)), np.float32)
         RK = np.zeros((bs, L), bool)
         for i, (a, b, l) in enumerate(zip(rm, rp, rl)):
             RM[i, :, :l], RP[i, :l], RK[i, :l] = a, b, True
@@ -116,9 +127,9 @@ class CBlock(nn.Module):
 
 
 class C(nn.Module):
-    def __init__(self, ch: int = CH) -> None:
+    def __init__(self, ch: int = CH, pdim: int = P_DIM) -> None:
         super().__init__()
-        self.inp = nn.Conv1d(P_DIM, ch, 1)
+        self.inp = nn.Conv1d(pdim, ch, 1)
         self.blocks = nn.ModuleList([CBlock(ch, d) for d in [1, 2, 4, 8, 16, 32] * 2])
         self.head = nn.Conv1d(ch, N_MEL, 1)
 
@@ -211,6 +222,7 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--hold", default="")
     ap.add_argument("--prereg", default="results/diag_snv_a4/prereg.yaml")
+    ap.add_argument("--glot", action="store_true")
     a = ap.parse_args()
     out = ROOT / "results" / a.tag
     out.mkdir(parents=True, exist_ok=True)
@@ -222,7 +234,10 @@ def main() -> int:
     assert hold <= {it["cat"] for it in nvm}, f"抜く種類の名前が違う: {hold}"
     kept = sorted({it["cat"] for it in nvm} - hold)
     print("hold", sorted(hold), "nv cats in training", kept, flush=True)
-    voices = load_corpus(hold)
+    pdim = P_DIM + (G_DIM if a.glot else 0)
+    print("playing", "PG = SPARC 15 + glot 9" if a.glot else "P = SPARC 15", "pdim", pdim, flush=True)
+    voices = load_corpus(hold, a.glot)
+    assert all(p.shape[1] == pdim for d in voices.values() for _, p in d["n"] + d["v"]), "演奏の次元が違う"
     assert sum(len(d["v"]) for d in voices.values()) == sum(1 for it in nvm if it["k"] == 0 and it["cat"] in kept and it["voice"] in voices), "抜いた種類が学習に残る"
     names = sorted(voices)
     val, tr = names[-VAL_VOICES:], names[:-VAL_VOICES]
@@ -234,7 +249,7 @@ def main() -> int:
     np.savez(out / "norm.npz", mu=mu, sd=sd)
     print("voices", len(voices), "train", len(tr), "val", len(val), "normal", sum(len(voices[n]["n"]) for n in tr), "nv", sum(len(voices[n]["v"]) for n in tr), flush=True)
     dev = "cuda"
-    net = (C() if a.mode == "c" else G("x")).to(dev)
+    net = (C(pdim=pdim) if a.mode == "c" else G("x", pdim=pdim)).to(dev)
     codes = nn.Embedding(len(tr), PHI, sparse=True).to(dev) if a.mode == "c" else None
     if codes is not None:
         nn.init.zeros_(codes.weight)
@@ -336,7 +351,7 @@ def main() -> int:
                 (out / "train_log.json").write_text(json.dumps({"floors": v0, "log": log, "aborted": "tripwire"}, indent=1))
                 return 2
         if step % 10000 == 0 or step == a.steps:
-            ck = {"g": net.state_dict(), "mode": a.mode, "step": step}
+            ck = {"g": net.state_dict(), "mode": a.mode, "step": step, "pdim": pdim}
             if codes is not None:
                 ck["codes"] = codes.state_dict()
             if D is not None:

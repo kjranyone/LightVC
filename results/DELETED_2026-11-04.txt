@@ -1,0 +1,5 @@
+# 2026-11-04T00:06:24Z A7 の煙テスト(train_snv_a4.py --glot --hold scream,moan,mixed --steps 200 × c / x + snv_a7_eval.py dev1 / test smoke)。経路の確認だけ・結果は書いていない
+results/diag_snv_a7_c_smoke/ (last.pt 36 MB, norm.npz, train_log.json)
+results/diag_snv_a7_x_smoke/ (last.pt 35 MB, norm.npz, train_log.json)
+results/diag_snv_a7_c_smoke.log
+results/diag_snv_a7_x_smoke.log

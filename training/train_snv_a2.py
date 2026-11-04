@@ -111,10 +111,10 @@ class Block(nn.Module):
 
 
 class G(nn.Module):
-    def __init__(self, mode: str, ch: int = 256, zdim: int = 256, heads: int = 4, dk: int = 64, dv: int = 16) -> None:
+    def __init__(self, mode: str, ch: int = 256, zdim: int = 256, heads: int = 4, dk: int = 64, dv: int = 16, pdim: int = P_DIM) -> None:
         super().__init__()
         self.mode, self.heads, self.dk, self.dv = mode, heads, dk, dv
-        self.inp = nn.Conv1d(P_DIM, ch, 1)
+        self.inp = nn.Conv1d(pdim, ch, 1)
         dils = [1, 2, 4, 8, 16, 32] * 2
         self.blocks = nn.ModuleList([Block(ch, d, zdim) for d in dils])
         self.head = nn.Conv1d(ch, N_MEL, 1)
@@ -123,7 +123,7 @@ class G(nn.Module):
         self.gz = nn.Linear(ch, zdim)
         if mode in ("x", "xs"):
             self.q = nn.Linear(ch, heads * dk) if mode == "x" else nn.Parameter(torch.randn(heads * dk) / math.sqrt(dk))
-            self.k = nn.Sequential(nn.Linear(P_DIM, ch), nn.ReLU(), nn.Linear(ch, heads * dk))
+            self.k = nn.Sequential(nn.Linear(pdim, ch), nn.ReLU(), nn.Linear(ch, heads * dk))
             self.venc = nn.Sequential(nn.Conv1d(N_MEL, ch, 3, padding=1), nn.ReLU(), nn.Conv1d(ch, heads * dv, 3, padding=1))
             self.o = nn.Linear(heads * dv, ch)
 
