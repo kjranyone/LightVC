@@ -1,12 +1,39 @@
 LightVC — real-time voice conversion (MIT License)
 
-Bundled model weights (models/v2f.bin) were trained on:
-  - female-dataset (2775 real speakers)
-  - irodori-tts corpus (669 speakers)
+Model weights
+-------------
+The weights are not stored in this repository. `cargo run -p lightvc-xtask -- package`
+copies three exported parts into models/ of the distribution:
 
-Third-party licenses:
-  - CLAP plugin ABI: MIT
-  - VST3 support via clap-wrapper: MIT
+  - models/pfront_export — front end v3 (signal processing only).
+    Holds a fixed mel filterbank and a DCT matrix. It has no learned weights
+    and no training data.
+
+  - models/p_model_export — performance encoder E and circuit C
+    (checkpoint snv_p11_r, step 20000).
+    Trained only on speech generated with Irodori-TTS-v4.1-Small (Aratako; MIT):
+    564 fictional voices (VoiceDesign, made from text descriptions; no recording
+    of a real person was used as a voice reference), 10 utterances per voice,
+    plus non-verbal vocalizations by the same voices.
+    The sentences were taken from the transcripts of a non-public speech dataset,
+    which is not distributed.
+
+  - models/rvoc3hi — vocoder rvoc3hi (step 330000). Trained on:
+      - a non-public dataset of real speech, which is not distributed;
+      - speech generated with Irodori-TTS-600M-v3-VoiceDesign (Aratako; MIT)
+        using clips of that dataset as voice references.
+
+Third-party licenses
+--------------------
+  - CLAP plugin ABI (clap-sys): MIT OR Apache-2.0
+  - VST3 support: clap-wrapper crate (MIT OR Apache-2.0) with its bundled
+    VST3 SDK 3.8.0 (Steinberg Media Technologies GmbH; MIT)
+  - Plugin framework nice-plug / nice-plug-egui: ISC
+  - Other Rust crates: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Zlib,
+    Unicode-3.0 or CC0-1.0. self_cell is dual-licensed (Apache-2.0 OR GPL-2.0-only)
+    and is used under Apache-2.0.
+  - The GUI and the plugin editor embed egui's default fonts
+    (SIL Open Font License 1.1, Ubuntu Font Licence 1.0).
   - WORLD (M. Morise) — modified BSD. crates/lightvc-core/src/enroll.rs ports
     CheapTrick (cheaptrick.cpp / common.cpp / matlabfunctions.cpp). License text below.
   - ASIO SDK is NOT included (proprietary; users must obtain it from Steinberg

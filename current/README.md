@@ -1,6 +1,6 @@
 # LightVC 現行方針
 
-> 更新: 2026-11-01（研究リセット・本線を synth_nam_vc へ。製品要件・採用ゲートは維持）。製品要件と設計索引の正本。
+> 更新: 2026-11-10（棚卸し。学習データと補助モデルの記載を 2026-11-01〜11-10 のオーナー判断に合わせた）。製品要件と設計索引の正本。研究の正本は [paper_snv.md](paper_snv.md)。
 > 研究・設計・学習・評価の前に、本書と [RESEARCH.md](RESEARCH.md) を読む。
 
 ## 1. 目的と採用状況
@@ -14,13 +14,9 @@ ASMR・官能バ美肉向けのリアルタイムVCを作る。普通の発声�
 - zero-shotのtarget設定を最終目標として維持する。固定targetによる診断成功をzero-shot達成と呼ばない。
 - 声・style・textureの分離と説明可能な編集を目指す。保存する編集の意味を不透明なlatentの座標だけに依存させない。
 
-**2026-11-01 研究リセット(オーナー)**: これまでの出力は「適当にメルが近くなっただけ」の水準に留まった。本線を [synth_nam_vc.md](synth_nam_vc.md)(構音の構造のアナログモデリング・PROPOSED rev1)へ移す。理論の土台 = 構音の構造を変更すれば任意の話者に変換できる。フロンティア = 低レイテンシで実現可能なモデリング。学習データは Irodori-TTS v4.1 の生成・zero-shot を維持・目標の声は架空と同意済みの実在の両方。**リセット前の記録は全て撤回**で、以下の構音VC系の記述と資料も本線の根拠にしない。
+**2026-11-01 研究リセット(オーナー)**: これまでの出力は「適当にメルが近くなっただけ」の水準に留まった。本線を [synth_nam_vc.md](synth_nam_vc.md)(構音の構造のアナログモデリング・PROPOSED rev1)へ移す。理論の土台 = 構音の構造を変更すれば任意の話者に変換できる。フロンティア = 低レイテンシで実現可能なモデリング。学習データは Irodori-TTS v4.1 の生成・zero-shot を維持・目標の声は架空と同意済みの実在の両方。**リセット前の記録は全て撤回**で、構音VC系の旧資料は 2026-11-10 の棚卸しで削除した。
 
-**採用済みの完成VCは確認できていない。** B4 Dual-Path Kansei VCの目的の下で、直近に検証したのは **構音VCの前段・変換器 + rvoc系レンダラ**。表の引きと操作者の動き、参照を読む回帰型R、分布型Fを試したが、変換の明瞭さ・自然さ・目標話者性の同時合格には至っていない。部品の再合成・Rust一致・計算速度の証拠を、製品変換・萌えの制御・E2Eの合格と区別する。
-
-Y-S1/CFMは以前に検証した経路であり、旧女声再合成の耳PASSだけを現在の品質天井にしない。現状の判定と欠測は [RESEARCH.md](RESEARCH.md)、観測・撤回・未判定の詳細は [現状監査](../results/research_audit_2026-10-13/README.md)。今回の整理で設計をADOPTEDへ昇格させていない。
-
-旧freebig等の当時の採用記録は歴史として保存した。現製品経路の採用を意味しない。
+**採用済みの完成VCはない。** 現状・製品の候補・未決の問いは [RESEARCH.md](RESEARCH.md) §0 と [paper_snv.md](paper_snv.md)。
 
 ## 2. 設計と現役資料
 
@@ -39,38 +35,36 @@ target参照 → voice / style / texture ──┤
 | 資料 | 役割 |
 |---|---|
 | [RESEARCH.md](RESEARCH.md) | 確認済みの到達点、証拠の所在、未解決の問い |
-| [ROADMAP.md](ROADMAP.md) | 未決の問いと、判断に不足する証拠 |
 | [synth_nam_vc.md](synth_nam_vc.md) | **本線(2026-11-01 リセット)**: 構音の構造のアナログモデリング・低遅延で実現できるモデリングがフロンティア（PROPOSED rev1） |
-| [artic_vc.md](artic_vc.md) | 構音VCの設計・静的表と動きの診断経過（PROPOSED・製品未達） |
-| [converter.md](converter.md) | 前段・変換器の設計、Rust経路、過去の比較（PROPOSED） |
-| [renderer.md](renderer.md) | rvoc系出力部、再合成の耳記録、Rust一致（PROPOSED） |
-| [artic_inv.md](artic_inv.md) | 声道の物理座標の逆推定とその限界（PROPOSED） |
-| [paper_mf.md](paper_mf.md) | 論文の骨格: 男声 → 女声を女声だけの学習で一般化させる条件(界面の不変性・観測されない帯の外挿)・以後の腕はここの予測から導く(PROPOSED・2026-10-30) |
-| [artic_morph.md](artic_morph.md) | 構音写像VC: 操作者の身振り × 目標の声道と動き方・固定の半音で Graillon 相当に勝つ（PROPOSED・2026-10-25） |
-| [ref_reader.md](ref_reader.md) | 参照を注意で読む回帰型Rと診断結果（PROPOSED・製品未達） |
-| [dyn_flow.md](dyn_flow.md) | 分布型Fと短時間診断のBREAK（PROPOSED） |
-| [causal_codec.md](causal_codec.md) | 以前に検証したY-S1の詳細設計・ABI（PROPOSED・未採用） |
-| [cfm_ys1.md](cfm_ys1.md) | 以前のCFM/Y-S1接続契約と診断（PROPOSED・未採用） |
+| [paper_snv.md](paper_snv.md) | **本線の論文・研究の正本(2026-11-06〜・PROPOSED)**。オーナー方針(11-06)「では論文からのみ学習／評価を行うこと」: 演奏と回路の境界は内容で条件づけた共有でだけ決まる(命題 1 = 自己の reamp では変換が決まらない・命題 2 = 内容の条件付き分布の共有で決まる)。以後の学習は本稿 §6 の管路(段 T 合成の世界での立証 → 段 D データ → 段 I Irodori の全量 → 段 P 製品)の段としてだけ走らせる |
+| [renderer.md](renderer.md) | rvoc系出力部(製品の候補の描画器 rvoc3hi)の設計（PROPOSED・耳記録はリセット前で撤回） |
 | [kansei_control.md](kansei_control.md) | 官能評価、萌えのパラメタ化、再生側UX（PROPOSED） |
 | [design_laws.md](design_laws.md) | 設計三層則と起動前検査L/I/C（規範・全学習腕必須） |
-| [FAILURE_NOTES.md](FAILURE_NOTES.md) | 再試行前に確認する失敗・撤回・帰属の限界 |
-| [EVALUATION.md](EVALUATION.md) | 評価記録とレイテンシ計測の共通契約 |
+| [ml_method.md](ml_method.md) | ML の計画法（単一の最適化指標・端から端の基準・誤差の分析） |
 
 現行アーキテクチャの詳細は各ネットワークの一ファイルへ集約する。新しい仮説・数値・run状態をREADMEへ積み上げない。
 
 ## 3. 実装・学習の境界
 
-- 推論はRust/Candle、学習はPyTorchのuv環境。Python runtime不要、conda禁止。
-- 製品推論は自作のネットワークを使う。SSL/ASR・話者認識等の補助モデルは学習・評価・表現監督用とし、出荷時依存にしない。
-- contentはSSL/ASR系、prosodyは明示特徴、voice/style/textureは別経路。DAC latentからspeaker-free contentを学ぶStage1へ戻らない。
-- 別VCの変換音声をtargetにするteacher蒸留は禁止。実音声・同一内容ペア・検証された信号処理由来の教師を使う。
+- 推論はRust(`crates/lightvc-core` の自作の実装・入口は `snv_stream::SnvStream`)、学習はPyTorchのuv環境。Python runtime不要、conda禁止。
+- 製品の経路は paper_snv の段 P: 前段 v3 → E / C(`results/snv_p11_r`)→ rvoc3hi(48 kHz・hop 240)。研究の製品の候補(RESEARCH.md の c_pr・段 I の型)は Rust に移していない。
+- 製品推論は自作のネットワークを使う。SSL/ASR・話者認識等の補助モデルは評価の物差し・参考値まで。学習の目標・蒸留・表現の監督として直接使わない(オーナー判断 2026-11-01「既存アルゴリズムはベンチマークの参考値にしても良いが、直接教師にしない」)。出荷時依存にしない。
+- prosodyは明示特徴、voice/style/textureは別経路。contentをSSL/ASRの表現で作る旧方針は上の判断で置き換えた。DAC latentからspeaker-free contentを学ぶStage1へ戻らない。
+- 別VCの変換音声をtargetにするteacher蒸留は禁止。実音声・同一内容ペア・検証された信号処理由来の教師を使う。例外は Irodori-TTS v4.1 の生成音声(オーナー判断 2026-11-01・加工は入力側だけ)。
 - GANは信号・内容・制御が成立した後のtexture fine-tune。失敗したcontentを救済しない。
 - 製品経路の未来参照・発話全体正規化は禁止。dataset固定統計と因果stateを使う。
 - PythonとRustの重みキー・正規化・時刻規約を一致させる。境界のsample rateとhopを明記する。
 - Intel GPUはXPU。groups=1標準convを前提とし、既知のXPU backward問題を回避する。
-- MIT、GPLv3依存禁止。VST3はMITのclap-wrapper経由。ASIO SDKをコミットしない。
+- MIT、GPLv3依存禁止。VST3はMITのclap-wrapper経由。ASIO SDKをコミットしない。配布物の重みの学習データと第三者の許諾は [NOTICE](../NOTICE)。
 
-データの用途を混同しない。codecと変換音の主教師・評価は実音声。TTSは補助用途を明記し、実音声の品質証拠に置き換えない。本番のデータ被覆と、切り分け用overfitを区別する。現存量・split・キャッシュは実行時に確認する。
+データの用途を混同しない。
+- 学習データは Irodori-TTS-v4.1-Small の生成(入力側も出力側も・VoiceDesign の架空の声・オーナー判断 2026-11-01)。
+- 入力側の乱しにだけ、許諾の明らかな本物の非音声の音源を使う(CC0 / CC BY / PD・人の声を除く・オーナー判断 2026-11-08)。
+- 評価は本物の男声の入力(外郎売・namikawa・VCTK)。JVNV / JNV は較正と評価の入力の側だけに使う。TTS の結果を本物の音声の品質の証拠に置き換えない。
+- female-dataset は公開しない(オーナー判断 2026-11-10)。
+- 本番のデータ被覆と、切り分け用overfitを区別する。現存量・split・キャッシュは実行時に確認する。
+
+詳細は AGENTS.md の Data と `data/README.md`(ローカルだけ)。
 
 ## 4. 研究の進め方
 
@@ -82,6 +76,4 @@ target参照 → voice / style / texture ──┤
 
 ## 5. 退役資料
 
-2026-09-08以前の混在資料は [.archive/docs_2026-09-08/README.md](../.archive/docs_2026-09-08/README.md) に案内を残し、整理直前の23ファイルを完全保存した。
-
-退役資料の「現在」「必須」「次に実行」は当時の記述であり、現行指示ではない。通常の作業で全履歴を読み直す必要はない。再試行を検討するときだけFAILURE_NOTESから該当記録を調べる。
+リセット前の資料・`.archive/`・撤回された結果・旧経路の Rust 実装は 2026-11-09〜10 の棚卸しで削除した。一覧は `results/DELETED_2026-11-09.txt` / `results/DELETED_2026-11-10.txt`、本文は git の履歴にある。再試行を検討するときだけ履歴から該当記録を調べ、本線の根拠にしない。
