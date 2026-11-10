@@ -2,6 +2,7 @@
 次元 = tilt・hf・cpp・h1h2・shr・jit・shim・mod・flat(results/snv_a7a/prereg.yaml)。高さは SPARC の pitch(mel のフレームへ補間した値)を受け取る。
 出力 = data/snv_e1_feat/glot/e1/{voice}/{t}.npy・glot/e1nv/{voice}/{cat}_{k}.npy(float32・[T, 9]・T = mel のフレーム数)。
 eval = A7 の評価の音: glot/n0r・glot/a1diag(D0)・glot/a1src/tref_{v}(登録 = wav44/a0enroll と同じ音)・glot/a1src/{源}(本物の男声の 10 s を元の mp3 から切り直す・T = 862)。
+A8a = glot/a1src/{uirou,namikawa}_enroll(本物の男声の操作者の登録 = 先頭 30 s・T = 2584・試験の区間と重ならない)も eval で作る。
     cd training && uv run --no-sync python snv_glot.py test
     cd training && uv run --no-sync python snv_glot.py
     cd training && uv run --no-sync python snv_glot.py eval
@@ -22,6 +23,7 @@ HOP = 512
 WIN = 2048
 SUB = 128
 SRC_T = int(10 * SR / HOP) + 1
+ENR_T = int(30 * SR / HOP) + 1
 G_DIM = 9
 NAMES = ("tilt", "hf", "cpp", "h1h2", "shr", "jit", "shim", "mod", "flat")
 EPS = 1e-10
@@ -139,8 +141,8 @@ def eval_sources() -> int:
     import soundfile as sf
     from snv_a1_convert import segments
     for name, mp3 in (("uirou", ROOT / "外郎売.mp3"), ("namikawa", ROOT / "namikawa.mp3")):
-        _, tests, sr = segments(mp3)
-        for i, seg in enumerate(tests):
+        enr, tests, sr = segments(mp3)
+        for i, seg, n in [("enroll", enr, ENR_T)] + [(i, seg, SRC_T) for i, seg in enumerate(tests)]:
             out = FEAT / f"glot/a1src/{name}_{i}.npy"
             y = librosa.resample(seg.astype(np.float32), orig_sr=sr, target_sr=SR)
             ref16 = sf.read(str(ROOT / f"results/snv_a1/src/{name}_{i}.wav"))[0]
@@ -148,7 +150,7 @@ def eval_sources() -> int:
             r = float(np.corrcoef(y16, ref16[: len(y16)])[0, 1])
             assert r > 0.99, (name, i, r)
             out.parent.mkdir(parents=True, exist_ok=True)
-            np.save(out, glot(y, f0_of(FEAT / f"sparc/a1src/{name}_{i}.npz", SRC_T), SRC_T))
+            np.save(out, glot(y, f0_of(FEAT / f"sparc/a1src/{name}_{i}.npz", n), n))
             print(name, i, "corr with the 16 kHz source", round(r, 5), flush=True)
     return 0
 

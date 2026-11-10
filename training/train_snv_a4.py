@@ -8,6 +8,8 @@ x = A2 の x(参照 = 同じ声の普通の発話 2 本・音素の無い発声�
     cd training && uv run --no-sync python train_snv_a4.py --mode c --tag diag_snv_a4_c_gan --init diag_snv_a4_c --gan --steps 20000
 A6 = --hold scream,moan,mixed(その種類の音素の無い発声を学習から抜く・検証の声からも抜く)--prereg results/diag_snv_a6/prereg.yaml。
 A7 = --glot(演奏 = SPARC 15 + 声門 9 = PG 24 次元・snv_glot.py・data/snv_e1_feat/glot)--prereg results/diag_snv_a7/prereg.yaml。
+A9 = --glot_dims cpp,hf,mod,flat(声門の次元の部分集合だけを演奏に足す・推論は A8a の登録のずらし)--prereg results/diag_snv_a9/prereg.yaml。
+A8 = --glot_rel(声門の 9 次元をその声の登録の平均からの外れで持つ = 参照の発話の有声のフレームの平均を対象と参照の両方から引く・推論は操作者 / 目標の登録の平均)--prereg results/diag_snv_a8/prereg.yaml。
 """
 from __future__ import annotations
 
@@ -24,7 +26,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils import spectral_norm
 
-from snv_glot import G_DIM
+from snv_glot import G_DIM, NAMES
 from train_snv_a2 import CROP, FEAT, N_MEL, P_DIM, REF_UTT, ROOT, VAL_VOICES, WARM, G, l1, playing
 
 N_LAYER = 12
@@ -35,18 +37,29 @@ PRIOR = 1e-4
 CD = 128
 FIT_STEPS = 400
 FIT_LR = 1e-2
+VOICED = 0.5
+MIN_VOICED = 50
+GL = slice(P_DIM, P_DIM + G_DIM)
 
 
-def play(sp: Path, n: int, glot: bool = False) -> np.ndarray:
+def play(sp: Path, n: int, glot: bool = False, dims: tuple | None = None) -> np.ndarray:
     p = playing(sp, n)
     if not glot:
         return p
     g = np.load(sp.parent.as_posix().replace("/sparc/", "/glot/", 1) + f"/{sp.stem}.npy")
     assert g.shape == (n, G_DIM), (sp, g.shape, n)
+    if dims is not None:
+        g = g[:, [NAMES.index(d) for d in dims]]
     return np.concatenate([p, g], 1)
 
 
-def load_corpus(hold: frozenset = frozenset(), glot: bool = False) -> dict:
+def voiced_base(p: np.ndarray) -> tuple[np.ndarray, bool]:
+    v = p[:, 14] >= VOICED
+    ok = int(v.sum()) >= MIN_VOICED
+    return (p[v] if ok else p)[:, GL].mean(0), ok
+
+
+def load_corpus(hold: frozenset = frozenset(), glot: bool = False, dims: tuple | None = None) -> dict:
     man = json.loads((ROOT / "data/snv_e1/manifest.json").read_text())
     nv = json.loads((ROOT / "data/snv_e1nv/manifest.json").read_text())["items"]
     voices = {}
@@ -56,25 +69,34 @@ def load_corpus(hold: frozenset = frozenset(), glot: bool = False) -> dict:
             mp, sp = FEAT / f"mel/e1/{v['voice']}/{f['t']}.npy", FEAT / f"sparc/e1/{v['voice']}/{f['t']}.npz"
             if mp.exists() and sp.exists():
                 mel = np.load(mp).astype(np.float32)
-                n.append((mel, play(sp, mel.shape[1], glot)))
+                n.append((mel, play(sp, mel.shape[1], glot, dims)))
         voices[v["voice"]] = {"n": n, "v": []}
     for it in [it for it in nv if it["k"] == 0 and it["cat"] not in hold]:
         mp, sp = FEAT / f"mel/e1nv/{it['voice']}/{it['cat']}_{it['k']}.npy", FEAT / f"sparc/e1nv/{it['voice']}/{it['cat']}_{it['k']}.npz"
         if it["voice"] in voices and mp.exists() and sp.exists():
             mel = np.load(mp).astype(np.float32)
-            voices[it["voice"]]["v"].append((mel, play(sp, mel.shape[1], glot)))
+            voices[it["voice"]]["v"].append((mel, play(sp, mel.shape[1], glot, dims)))
     return {k: d for k, d in voices.items() if len(d["n"]) >= REF_UTT + 1 and d["v"]}
 
 
-def norm_stats(voices: dict) -> tuple[np.ndarray, np.ndarray]:
-    P = np.concatenate([p for d in voices.values() for _, p in d["n"] + d["v"]], 0)
+def norm_stats(voices: dict, rel: bool = False) -> tuple[np.ndarray, np.ndarray]:
+    parts = []
+    for d in voices.values():
+        b = voiced_base(np.concatenate([p for _, p in d["n"]], 0))[0] if rel else None
+        for _, p in d["n"] + d["v"]:
+            q = p.copy()
+            if rel:
+                q[:, GL] -= b
+            parts.append(q)
+    P = np.concatenate(parts, 0)
     return P.mean(0).astype(np.float32), (P.std(0) + 1e-4).astype(np.float32)
 
 
 class Batches:
-    def __init__(self, voices: dict, names: list[str], mu: np.ndarray, sd: np.ndarray, seed: int) -> None:
-        self.v, self.names, self.mu, self.sd = voices, names, mu, sd
+    def __init__(self, voices: dict, names: list[str], mu: np.ndarray, sd: np.ndarray, seed: int, rel: bool = False) -> None:
+        self.v, self.names, self.mu, self.sd, self.rel = voices, names, mu, sd, rel
         self.rng = random.Random(seed)
+        self.fallback, self.drawn = 0, 0
 
     def sample(self, bs: int) -> dict:
         tm, tp, mask, idx, isnv, rm, rp, rl = [], [], [], [], [], [], [], []
@@ -90,6 +112,14 @@ class Batches:
             else:
                 mel, p = d["n"][order[0]]
                 refs = [d["n"][i] for i in order[1:1 + REF_UTT]]
+            rpp = np.concatenate([r[1] for r in refs], 0)
+            if self.rel:
+                b, ok = voiced_base(rpp)
+                self.fallback += not ok
+                self.drawn += 1
+                p, rpp = p.copy(), rpp.copy()
+                p[:, GL] -= b
+                rpp[:, GL] -= b
             T = mel.shape[1]
             s = self.rng.randint(0, max(0, T - CROP))
             m = np.zeros((N_MEL, CROP), np.float32)
@@ -101,7 +131,7 @@ class Batches:
             k[WARM:n] = 1.0
             tm.append(m), tp.append(q), mask.append(k), idx.append(vi), isnv.append(nv)
             rm.append(np.concatenate([r[0] for r in refs], 1))
-            rp.append((np.concatenate([r[1] for r in refs], 0) - self.mu) / self.sd)
+            rp.append((rpp - self.mu) / self.sd)
             rl.append(rm[-1].shape[1])
         L = max(rl)
         RM = np.zeros((bs, N_MEL, L), np.float32)
@@ -206,7 +236,24 @@ def unit_tests() -> None:
             tv = float(s["mel"][i, 0, 0])
             refs = set(np.unique(s["rmel"][i][:, s["rmask"][i]].numpy()).tolist())
             assert 9.0 not in refs and tv not in refs and bool(s["nv"][i]) == (tv == 9.0), "参照に音素の無い発声か対象の発話が入る"
-    print("unit tests ok(C の因果性・Φ の止め・参照の組み方)", flush=True)
+    pd = P_DIM + G_DIM
+
+    def utt(level: float, n: int = 400) -> np.ndarray:
+        q = np.zeros((n, pd), np.float32)
+        q[:, 14] = 1.0
+        q[:, GL] = level
+        return q
+
+    br = Batches({"a": {"n": [(np.zeros((N_MEL, 400), np.float32), utt(3.0)) for _ in range(4)], "v": [(np.zeros((N_MEL, 400), np.float32), utt(8.0))]}},
+                 ["a"], np.zeros(pd, np.float32), np.ones(pd, np.float32), 0, rel=True)
+    for _ in range(20):
+        s = br.sample(4)
+        for i in range(4):
+            g = s["p"][i, :300, GL].numpy()
+            want = 5.0 if bool(s["nv"][i]) else 0.0
+            assert np.allclose(g, want) and np.allclose(s["rp"][i][s["rmask"][i]][:, GL].numpy(), 0.0), "声門の次元の外れの作り方が違う"
+    assert br.fallback == 0
+    print("unit tests ok(C の因果性・Φ の止め・参照の組み方・声門の外れ)", flush=True)
 
 
 def main() -> int:
@@ -223,7 +270,12 @@ def main() -> int:
     ap.add_argument("--hold", default="")
     ap.add_argument("--prereg", default="results/diag_snv_a4/prereg.yaml")
     ap.add_argument("--glot", action="store_true")
+    ap.add_argument("--glot_rel", action="store_true")
+    ap.add_argument("--glot_dims", default="")
     a = ap.parse_args()
+    dims = tuple(d for d in a.glot_dims.split(",") if d) or None
+    assert dims is None or (set(dims) <= set(NAMES) and len(set(dims)) == len(dims) and not a.glot_rel), dims
+    a.glot = a.glot or a.glot_rel or dims is not None
     out = ROOT / "results" / a.tag
     out.mkdir(parents=True, exist_ok=True)
     print("prereg", ROOT / a.prereg, flush=True)
@@ -234,9 +286,13 @@ def main() -> int:
     assert hold <= {it["cat"] for it in nvm}, f"抜く種類の名前が違う: {hold}"
     kept = sorted({it["cat"] for it in nvm} - hold)
     print("hold", sorted(hold), "nv cats in training", kept, flush=True)
-    pdim = P_DIM + (G_DIM if a.glot else 0)
-    print("playing", "PG = SPARC 15 + glot 9" if a.glot else "P = SPARC 15", "pdim", pdim, flush=True)
-    voices = load_corpus(hold, a.glot)
+    pdim = P_DIM + ((len(dims) if dims else G_DIM) if a.glot else 0)
+    print("playing", f"PG = SPARC 15 + glot {pdim - P_DIM}" if a.glot else "P = SPARC 15", "pdim", pdim, flush=True)
+    if dims:
+        print("glot dims", list(dims), flush=True)
+    if a.glot_rel:
+        print("glot relative: glot 9 minus the voiced mean of the reference utterances (target and references alike)", flush=True)
+    voices = load_corpus(hold, a.glot, dims)
     assert all(p.shape[1] == pdim for d in voices.values() for _, p in d["n"] + d["v"]), "演奏の次元が違う"
     assert sum(len(d["v"]) for d in voices.values()) == sum(1 for it in nvm if it["k"] == 0 and it["cat"] in kept and it["voice"] in voices), "抜いた種類が学習に残る"
     names = sorted(voices)
@@ -245,7 +301,7 @@ def main() -> int:
         nz = np.load(ROOT / "results" / a.init / "norm.npz")
         mu, sd = nz["mu"], nz["sd"]
     else:
-        mu, sd = norm_stats({n: voices[n] for n in tr})
+        mu, sd = norm_stats({n: voices[n] for n in tr}, a.glot_rel)
     np.savez(out / "norm.npz", mu=mu, sd=sd)
     print("voices", len(voices), "train", len(tr), "val", len(val), "normal", sum(len(voices[n]["n"]) for n in tr), "nv", sum(len(voices[n]["v"]) for n in tr), flush=True)
     dev = "cuda"
@@ -266,7 +322,7 @@ def main() -> int:
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1.0, (s + 1) / (warm + 1)) * 0.5 * (1 + math.cos(math.pi * min(s, a.steps) / a.steps)))
     D = MultiD().to(dev) if a.gan else None
     dopt = torch.optim.AdamW(D.parameters(), lr=2e-4, betas=(0.8, 0.99)) if a.gan else None
-    trb, vab = Batches(voices, tr, mu, sd, a.seed), Batches(voices, val, mu, sd, 12345)
+    trb, vab = Batches(voices, tr, mu, sd, a.seed, a.glot_rel), Batches(voices, val, mu, sd, 12345, a.glot_rel)
     vbs = [vab.sample(a.bs) for _ in range(8)]
     mel_mean = torch.from_numpy(np.concatenate([m for n in tr for m, _ in voices[n]["n"]], 1).mean(1)).to(dev)
 
@@ -351,13 +407,15 @@ def main() -> int:
                 (out / "train_log.json").write_text(json.dumps({"floors": v0, "log": log, "aborted": "tripwire"}, indent=1))
                 return 2
         if step % 10000 == 0 or step == a.steps:
-            ck = {"g": net.state_dict(), "mode": a.mode, "step": step, "pdim": pdim}
+            ck = {"g": net.state_dict(), "mode": a.mode, "step": step, "pdim": pdim, "glot_rel": a.glot_rel, "glot_dims": list(dims) if dims else None}
             if codes is not None:
                 ck["codes"] = codes.state_dict()
             if D is not None:
                 ck["d"] = D.state_dict()
             torch.save(ck, out / "last.pt")
-    (out / "train_log.json").write_text(json.dumps({"floors": v0, "log": log, "names_train": tr, "names_val": val}, indent=1))
+    (out / "train_log.json").write_text(json.dumps({"floors": v0, "log": log, "names_train": tr, "names_val": val, "glot_rel_fallback": [trb.fallback, trb.drawn]}, indent=1))
+    if a.glot_rel:
+        print("glot_rel reference baseline fallback (fewer than", MIN_VOICED, "voiced frames)", trb.fallback, "of", trb.drawn, flush=True)
     return 0
 
 
