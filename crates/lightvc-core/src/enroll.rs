@@ -58,13 +58,13 @@ const SR: usize = 48000;
 const NFFT: usize = 2048;
 const A: usize = NFFT / 2;
 const NB: usize = NFFT / 2 + 1;
-const K_PI: f64 = 3.1415926535897932384;
+const K_PI: f64 = std::f64::consts::PI;
 const K_SAFE: f64 = 0.000000000001;
 const K_EPS: f64 = 0.00000000000000022204460492503131;
 const K_DEFAULT_F0: f64 = 500.0;
 const Q1: f64 = -0.15;
 
-struct Randn {
+pub(crate) struct Randn {
     x: u32,
     y: u32,
     z: u32,
@@ -72,7 +72,7 @@ struct Randn {
 }
 
 impl Randn {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self { x: 123456789, y: 362436069, z: 521288629, w: 88675123 }
     }
 
@@ -85,7 +85,7 @@ impl Randn {
         self.w
     }
 
-    fn next(&mut self) -> f64 {
+    pub(crate) fn next(&mut self) -> f64 {
         let mut tmp = self.step() >> 4;
         for _ in 0..11 {
             tmp = tmp.wrapping_add(self.step() >> 4);
@@ -156,7 +156,7 @@ fn linear_smoothing(p: &[f64], width: f64) -> Vec<f64> {
 }
 
 /// CheapTrick の 1 フレーム(位置 pos 秒・f0 Hz)→ パワー包絡 [NB]。
-fn cheaptrick_frame(x: &[f64], f0_in: f64, pos: f64, rn: &mut Randn, re: &mut [f64], im: &mut [f64]) -> Vec<f64> {
+pub(crate) fn cheaptrick_frame(x: &[f64], f0_in: f64, pos: f64, rn: &mut Randn, re: &mut [f64], im: &mut [f64]) -> Vec<f64> {
     let f0_floor = 3.0 * SR as f64 / (NFFT as f64 - 3.0);
     let f0 = if f0_in <= f0_floor { K_DEFAULT_F0 } else { f0_in };
     let hwl = mround(1.5 * SR as f64 / f0) as i64;

@@ -5,10 +5,8 @@
 
 pub mod engine;
 pub mod resample;
-pub mod ringbuf;
 pub mod stream;
 
 pub use engine::{AudioBuffers, AudioEngine};
-pub use resample::{RateConv, Resampler};
-pub use ringbuf::AudioRingBuffer;
+pub use resample::RateConv;
 pub use stream::{DeviceInfo, DuplexStream};

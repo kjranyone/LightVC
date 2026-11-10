@@ -267,7 +267,6 @@ pub fn causal_f0(x: &[f32]) -> (Vec<f32>, Vec<f32>) {
         .map(|f| (0..t).map(|i| (re[f][i] * re[f][i] + im[f][i] * im[f][i]).sqrt()).collect())
         .collect();
     let binhz = SR / NFFT_A as f32;
-    let ncand = F0_CAND_BITS.len();
     let cand: Vec<f32> = F0_CAND_BITS.iter().map(|&b| f32::from_bits(b as u32)).collect();
 
     let take = |f: f32, ti: usize| -> f32 {
@@ -443,7 +442,6 @@ impl Default for FrontState {
 
 impl FrontState {
     pub fn new() -> Self {
-        let ncand = ((F0_MAX / F0_MIN).log2() * 1200.0 / 10.0) as usize + 1;
         Self {
             w: hann(NFFT_A),
             f0_hist: Vec::new(),

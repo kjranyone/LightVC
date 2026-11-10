@@ -1,21 +1,25 @@
 //! Tab 1: Offline voice conversion.
-//! Source WAV + Reference WAV → Convert → Preview playback.
+//! Source WAV + 目標の声の参照 → SnvStream(48 kHz・240 サンプル)→ Preview playback / Save.
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use eframe::egui;
+use lightvc_core::snv_stream::SnvStream;
 
-use crate::app::AppState;
+use crate::app::{AppState, RtControl};
 use crate::audio_playback::{self, AudioPlayer};
 use crate::file_pick::FilePick;
+
+const SR: u32 = 48_000;
+const SEMITONES: [(f32, &str); 4] = [(0.0, "+0"), (5.0, "+5"), (7.0, "+7"), (12.0, "+12")];
 
 #[derive(Default)]
 pub struct OfflineState {
     pub source_path: String,
     pub reference_path: String,
-    #[allow(dead_code)]
-    pub output_path: String,
     pub converting: bool,
+    /// 変換の出力(48 kHz・入力と時刻を揃えた)
     pub converted_samples: Option<Vec<f32>>,
     pub player: Option<AudioPlayer>,
     pub source_preview: Option<AudioPlayer>,
@@ -23,11 +27,6 @@ pub struct OfflineState {
     /// One picker per potential target — avoids a shared mutable flag.
     pub source_pick: FilePick,
     pub reference_pick: FilePick,
-    /// Prosody controls ([07-2]). Applied in run_offline_conversion.
-    pub prosody_mode: lightvc_core::converter::ProsodyMode,
-    pub prosody_blend: f32,
-    /// Flow-matching velocity scale (conversion strength).
-    pub velocity_scale: f32,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -42,7 +41,11 @@ pub fn render(
     icon_speaker: &egui::TextureHandle,
     icon_mic: &egui::TextureHandle,
 ) {
-    let has_converter = state.lock().unwrap().converter_weights.is_some();
+    let (has_operator, semitones_before) = {
+        let s = state.lock().unwrap();
+        (!s.settings.operator.is_empty(), s.settings.semitones)
+    };
+    let mut semitones = semitones_before;
 
     ui.vertical_centered(|ui| {
         egui::Frame::NONE.show(ui, |ui| {
@@ -104,7 +107,7 @@ pub fn render(
                         crate::theme::path_text_edit(
                             ui,
                             &mut offline.reference_path,
-                            "target voice reference",
+                            "target voice reference (20 s+)",
                         );
                     });
                     ui.add_space(crate::theme::space::SMALL + 2.0);
@@ -157,82 +160,16 @@ pub fn render(
 
             ui.add_space(crate::theme::space::LARGE);
 
-            // --- Prosody controls ([07-2]) ---
+            // --- Pitch (固定の半音・Realtime と共通) ---
             crate::theme::info_card(ui, |ui| {
-                crate::theme::subheading(ui, "Prosody");
                 ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new("Mode")
-                            .size(12.0)
-                            .color(crate::theme::colors::TEXT_DIM),
-                    );
-                    egui::ComboBox::from_id_salt("offline_prosody_mode")
-                        .selected_text(format!("{:?}", offline.prosody_mode))
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut offline.prosody_mode,
-                                lightvc_core::converter::ProsodyMode::ImitateTarget,
-                                "Imitate target",
-                            );
-                            ui.selectable_value(
-                                &mut offline.prosody_mode,
-                                lightvc_core::converter::ProsodyMode::PreserveSource,
-                                "Preserve source",
-                            );
-                            ui.selectable_value(
-                                &mut offline.prosody_mode,
-                                lightvc_core::converter::ProsodyMode::Blend,
-                                "Blend",
-                            );
-                            ui.selectable_value(
-                                &mut offline.prosody_mode,
-                                lightvc_core::converter::ProsodyMode::FlattenPrivacy,
-                                "Flatten (privacy)",
-                            );
-                        });
-                });
-                ui.add_space(crate::theme::space::TIGHT);
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new("Blend")
-                            .size(12.0)
-                            .color(crate::theme::colors::TEXT_DIM),
-                    );
-                    ui.add_enabled_ui(
-                        offline.prosody_mode == lightvc_core::converter::ProsodyMode::Blend,
-                        |ui| {
-                            ui.add(
-                                egui::Slider::new(&mut offline.prosody_blend, 0.0..=1.0)
-                                    .text("source <-> target")
-                                    .fixed_decimals(2),
-                            );
-                        },
-                    );
-                });
-            });
-
-            ui.add_space(crate::theme::space::MEDIUM);
-
-            // --- Conversion strength slider ---
-            crate::theme::info_card(ui, |ui| {
-                crate::theme::subheading(ui, "Conversion Strength");
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::Slider::new(&mut offline.velocity_scale, 0.0..=2.0)
-                            .text("velocity scale")
-                            .fixed_decimals(2),
-                    );
-                    ui.label(
-                        egui::RichText::new(if offline.velocity_scale < 0.9 {
-                            "<-- mild"
-                        } else if offline.velocity_scale > 1.1 {
-                            "strong -->"
-                        } else {
-                            "default"
-                        })
-                        .size(10.0)
-                        .color(crate::theme::colors::TEXT_MUTED),
-                    );
+                    crate::theme::subheading(ui, "Pitch");
+                    ui.add_space(crate::theme::space::SMALL);
+                    for (k, name) in SEMITONES {
+                        if crate::theme::pill_button(ui, name, semitones == k) {
+                            semitones = k;
+                        }
+                    }
                 });
             });
 
@@ -241,7 +178,7 @@ pub fn render(
             // --- Convert CTA ---
             let can_convert = !offline.source_path.is_empty()
                 && !offline.reference_path.is_empty()
-                && has_converter
+                && has_operator
                 && !offline.converting;
 
             ui.horizontal_centered(|ui| {
@@ -271,16 +208,15 @@ pub fn render(
                         {
                             let mut s = state.lock().unwrap();
                             s.offline_result = None;
+                            s.error = None;
+                            s.status = "Converting...".to_string();
                         }
                         offline.converting = true;
                         let st = state.clone();
-                        let src = offline.source_path.clone();
-                        let refp = offline.reference_path.clone();
-                        let pm = offline.prosody_mode;
-                        let pb = offline.prosody_blend;
-                        let vs = offline.velocity_scale;
+                        let src = PathBuf::from(&offline.source_path);
+                        let refp = PathBuf::from(&offline.reference_path);
                         std::thread::spawn(move || {
-                            run_offline_conversion(st, &src, &refp, pm, pb, vs);
+                            run_offline_conversion(st, src, refp);
                         });
                     }
                 });
@@ -304,9 +240,9 @@ pub fn render(
                         crate::theme::subheading(ui, "Output");
                         ui.label(
                             egui::RichText::new(format!(
-                                "{} samples ({:.1}s)",
+                                "{} samples ({:.1}s, 48 kHz)",
                                 samples.len(),
-                                samples.len() as f32 / 44100.0
+                                samples.len() as f32 / SR as f32
                             ))
                             .size(12.0)
                             .color(crate::theme::colors::TEXT_DIM),
@@ -327,24 +263,25 @@ pub fn render(
                                         p.stop();
                                     }
                                 } else {
-                                    offline.player = AudioPlayer::play(samples.clone()).ok();
+                                    let wav44 = audio_playback::resample_linear(samples, SR);
+                                    offline.player = AudioPlayer::play(wav44).ok();
                                 }
                             }
                             ui.add_space(crate::theme::space::SMALL);
-                            if crate::theme::icon_button(ui, icon_speaker, "Save As...", true) {
-                                if let Some(path) = rfd::FileDialog::new().save_file() {
-                                    let _ = audio_playback::save_wav_mono(&path, samples, 44100);
-                                }
+                            if crate::theme::icon_button(ui, icon_speaker, "Save As...", true)
+                                && let Some(path) = rfd::FileDialog::new().save_file()
+                            {
+                                let _ = audio_playback::save_wav_mono(&path, samples, SR);
                             }
                         });
                     });
                 });
             }
 
-            if !has_converter {
+            if !has_operator {
                 ui.add_space(crate::theme::space::MEDIUM);
                 ui.label(
-                    egui::RichText::new("No converter loaded. Set model in Realtime tab.")
+                    egui::RichText::new("No operator enrollment. Add operator WAV in the Realtime tab.")
                         .size(12.0)
                         .color(crate::theme::colors::ERROR),
                 );
@@ -352,18 +289,22 @@ pub fn render(
         });
     }); // vertical_centered
 
+    if semitones != semitones_before {
+        let mut s = state.lock().unwrap();
+        s.settings.semitones = semitones;
+        if let Some(ref tx) = s.rt_control_tx {
+            let _ = tx.send(RtControl::SetSemitones(semitones));
+        }
+    }
+
     // Check conversion status and pick up result
     {
-        let s = state.lock().unwrap();
-        if offline.converting {
-            if s.status.starts_with("Converted:") || s.error.is_some() {
-                offline.converting = false;
-            }
+        let mut s = state.lock().unwrap();
+        if offline.converting && (s.status.starts_with("Converted:") || s.error.is_some()) {
+            offline.converting = false;
         }
-        // Pick up completed result. Unconditional replace so a fresh
-        // conversion always wins over stale UI state ([F3]).
-        if s.offline_result.is_some() {
-            offline.converted_samples = s.offline_result.clone();
+        if let Some(r) = s.offline_result.take() {
+            offline.converted_samples = Some(r);
         }
     }
 
@@ -385,58 +326,42 @@ fn play_audio(path_str: &str) -> Option<AudioPlayer> {
     None
 }
 
-fn run_offline_conversion(
-    state: Arc<Mutex<AppState>>,
-    source_path: &str,
-    reference_path: &str,
-    prosody_mode: lightvc_core::converter::ProsodyMode,
-    prosody_blend: f32,
-    velocity_scale: f32,
-) {
-    {
-        let mut s = state.lock().unwrap();
-        s.status = "Converting...".to_string();
-        s.error = None;
+/// 240 サンプルずつ流し、経路の遅れ(LATENCY_SAMPLES)を落として入力と時刻を揃える。
+fn convert(stream: &mut SnvStream, x: &[f32]) -> Vec<f32> {
+    const HOP: usize = SnvStream::BLOCK;
+    let lat = SnvStream::LATENCY_SAMPLES;
+    let n = (x.len() + lat).div_ceil(HOP);
+    let mut xin = x.to_vec();
+    xin.resize(n * HOP, 0.0);
+    let mut y = vec![0f32; n * HOP];
+    for (xi, yi) in xin.chunks_exact(HOP).zip(y.chunks_exact_mut(HOP)) {
+        stream.process_block(xi, yi);
     }
+    y.drain(..lat);
+    y.truncate(x.len());
+    let pk = y.iter().fold(0f32, |a, v| a.max(v.abs()));
+    if pk > 0.99 {
+        y.iter_mut().for_each(|v| *v *= 0.99 / pk);
+    }
+    y
+}
 
+fn run_offline_conversion(state: Arc<Mutex<AppState>>, source: PathBuf, reference: PathBuf) {
+    let cfg = state.lock().unwrap().settings.clone();
     let result = (|| -> anyhow::Result<Vec<f32>> {
-        let pipeline = {
-            let s = state.lock().unwrap();
-            s.pipeline
-                .clone()
-                .ok_or_else(|| anyhow::anyhow!("Pipeline not initialized"))?
-        };
-
-        let (src_wav, src_sr) = audio_playback::load_wav_mono(std::path::Path::new(source_path))?;
-        let (ref_wav, ref_sr) =
-            audio_playback::load_wav_mono(std::path::Path::new(reference_path))?;
-        let src_44k = audio_playback::resample_linear(&src_wav, src_sr);
-        let ref_44k = audio_playback::resample_linear(&ref_wav, ref_sr);
-        let src_padded = lightvc_core::codec::pad_to_hop(src_44k);
-        let ref_padded = lightvc_core::codec::pad_to_hop(ref_44k);
-
-        let mut p = pipeline.lock().unwrap();
-        p.reset();
-        p.set_target(&ref_padded)?;
-        p.set_prosody(prosody_mode, prosody_blend as f64);
-        p.set_velocity_scale(velocity_scale as f64);
-
-        // [06-10]: Use process_full for exact offline conversion (no chunk
-        // boundary artifacts, no last-chunk zero-padding). This matches
-        // cli.rs --mode full and achieves Python parity (wave_corr > 0.997).
-        let output = p.process_full(&src_padded)?;
-        Ok(output)
+        let mut stream = crate::app::build_stream(&cfg, &[reference])?;
+        let x = crate::app::load_48k(&source)?;
+        Ok(convert(&mut stream, &x))
     })();
 
+    let mut s = state.lock().unwrap();
     match result {
         Ok(samples) => {
-            let mut s = state.lock().unwrap();
             s.status = format!("Converted: {} samples", samples.len());
             s.error = None;
             s.offline_result = Some(samples);
         }
         Err(e) => {
-            let mut s = state.lock().unwrap();
             s.error = Some(format!("Conversion failed: {e}"));
             s.status = "Error".to_string();
         }

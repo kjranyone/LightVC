@@ -134,21 +134,19 @@ fn attn_scalar(q: &[f32], k: &[f32], v: &[f32], m: usize, dk: usize, sc: &mut [f
 #[target_feature(enable = "avx2,fma")]
 unsafe fn exp256(x: std::arch::x86_64::__m256) -> std::arch::x86_64::__m256 {
     use std::arch::x86_64::*;
-    unsafe {
-        let x = _mm256_max_ps(_mm256_min_ps(x, _mm256_set1_ps(88.0)), _mm256_set1_ps(-87.0));
-        let n = _mm256_round_ps(_mm256_mul_ps(x, _mm256_set1_ps(std::f32::consts::LOG2_E)), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
-        let r = _mm256_fnmadd_ps(n, _mm256_set1_ps(0.693_145_75), x);
-        let r = _mm256_fnmadd_ps(n, _mm256_set1_ps(1.428_606_8e-6), r);
-        let mut p = _mm256_set1_ps(1.987_569_1e-4);
-        p = _mm256_fmadd_ps(p, r, _mm256_set1_ps(1.398_199_9e-3));
-        p = _mm256_fmadd_ps(p, r, _mm256_set1_ps(8.333_452e-3));
-        p = _mm256_fmadd_ps(p, r, _mm256_set1_ps(4.166_579_6e-2));
-        p = _mm256_fmadd_ps(p, r, _mm256_set1_ps(0.166_666_66));
-        p = _mm256_fmadd_ps(p, r, _mm256_set1_ps(0.5));
-        p = _mm256_fmadd_ps(p, _mm256_mul_ps(r, r), _mm256_add_ps(r, _mm256_set1_ps(1.0)));
-        let e = _mm256_slli_epi32(_mm256_add_epi32(_mm256_cvtps_epi32(n), _mm256_set1_epi32(127)), 23);
-        _mm256_mul_ps(p, _mm256_castsi256_ps(e))
-    }
+    let x = _mm256_max_ps(_mm256_min_ps(x, _mm256_set1_ps(88.0)), _mm256_set1_ps(-87.0));
+    let n = _mm256_round_ps(_mm256_mul_ps(x, _mm256_set1_ps(std::f32::consts::LOG2_E)), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+    let r = _mm256_fnmadd_ps(n, _mm256_set1_ps(0.693_145_75), x);
+    let r = _mm256_fnmadd_ps(n, _mm256_set1_ps(1.428_606_8e-6), r);
+    let mut p = _mm256_set1_ps(1.987_569_1e-4);
+    p = _mm256_fmadd_ps(p, r, _mm256_set1_ps(1.398_199_9e-3));
+    p = _mm256_fmadd_ps(p, r, _mm256_set1_ps(8.333_452e-3));
+    p = _mm256_fmadd_ps(p, r, _mm256_set1_ps(4.166_579_6e-2));
+    p = _mm256_fmadd_ps(p, r, _mm256_set1_ps(0.166_666_66));
+    p = _mm256_fmadd_ps(p, r, _mm256_set1_ps(0.5));
+    p = _mm256_fmadd_ps(p, _mm256_mul_ps(r, r), _mm256_add_ps(r, _mm256_set1_ps(1.0)));
+    let e = _mm256_slli_epi32(_mm256_add_epi32(_mm256_cvtps_epi32(n), _mm256_set1_epi32(127)), 23);
+    _mm256_mul_ps(p, _mm256_castsi256_ps(e))
 }
 
 /// dk = 32 の 1 頭の注意(鍵・値 [m][32])。

@@ -23,7 +23,7 @@ fn main() -> anyhow::Result<()> {
         "install" => install()?,
         "clean" => clean()?,
         "package" => package()?,
-        "help" | _ => print_help(),
+        _ => print_help(),
     }
     Ok(())
 }
@@ -63,7 +63,7 @@ fn build_release() -> anyhow::Result<()> {
 
 /// G0-15: 配布 zip と sha256 を作る。
 ///
-/// ⚠ 同梱するのは**バンドル・モデル・NOTICE・README・遅延台帳**のみ。
+/// ⚠ 同梱するのは**バンドル・CLI・モデル(SnvStream の書き出し)・NOTICE・README**のみ。
 /// ASIO SDK はプロプライエタリで再配布禁止なので絶対に入れない（`CLAUDE.md`）。
 fn package() -> anyhow::Result<()> {
     bundle()?;
@@ -79,7 +79,7 @@ fn package() -> anyhow::Result<()> {
     copy_tree(&out, &stage)?;
 
     // モデルと配布に要る書類。**無ければ落とす**（黙って欠いた zip を出さない）。
-    // CLI 本体（README が案内する `lightvc-app v2f` の実体）
+    // CLI 本体（`lightvc-app snv` / `realtime-snv` / `gui`）
     let app = if cfg!(target_os = "windows") { "lightvc-app.exe" } else { "lightvc-app" };
     let app_src = target_dir().join(app);
     if !app_src.exists() {
@@ -88,26 +88,25 @@ fn package() -> anyhow::Result<()> {
     fs::copy(&app_src, stage.join(app))?;
 
     let mut manifest = String::from("# LightVC 配布内容\n\n| ファイル | sha256 |\n|---|---|\n");
-    // ⚠ models/ を丸ごと入れない——旧世代の重み（converter/DAC 系 1.3 GB）が
-    //   同居している。**出荷する物を明示列挙**（欠品は fail-closed のまま）。
-    for rel in ["models/v2f.bin", "models/v2f_v2f_prior_20260819_013905.json",
-                "models/mel_fb_1024_80.bin", "models/mel2lin_W.bin",
-                // バ美声変換段 (lightvc-app vc): E + voice cartridge (G)
-                "models/e1.bin", "models/e1.json",
-                "models/g1.bin", "models/g1.json",
-                "NOTICE", "README.md", "results/z0/latency_decision.md"] {
+    // SnvStream の部品の書き出し(manifest.json + weights.bin。fixture は試験用なので入れない)。
+    // **出荷する物を明示列挙**（欠品は fail-closed のまま）。
+    for (rel, dst) in [
+        ("results/pfront_export/manifest.json", "models/pfront_export/manifest.json"),
+        ("results/pfront_export/weights.bin", "models/pfront_export/weights.bin"),
+        ("results/p_model_export/manifest.json", "models/p_model_export/manifest.json"),
+        ("results/p_model_export/weights.bin", "models/p_model_export/weights.bin"),
+        ("results/rvoc3hi/export_330k/manifest.json", "models/rvoc3hi/manifest.json"),
+        ("results/rvoc3hi/export_330k/weights.bin", "models/rvoc3hi/weights.bin"),
+        ("NOTICE", "NOTICE"),
+        ("README.md", "README.md"),
+    ] {
         let src = root.join(rel);
         if !src.exists() {
             anyhow::bail!("配布物が無い: {rel}（G0-15 は欠品のまま zip を作らない）");
         }
-        let dst = if rel.starts_with("models/") {
-            let d = stage.join("models");
-            fs::create_dir_all(&d)?;
-            d.join(Path::new(rel).file_name().unwrap())
-        } else {
-            stage.join(Path::new(rel).file_name().unwrap())
-        };
-        if src.is_dir() { copy_tree(&src, &dst)?; } else { fs::copy(&src, &dst)?; }
+        let dst = stage.join(dst);
+        fs::create_dir_all(dst.parent().unwrap())?;
+        fs::copy(&src, &dst)?;
     }
     for e in walk(&stage)? {
         let rel = e.strip_prefix(&stage)?.to_string_lossy().replace('\\', "/");

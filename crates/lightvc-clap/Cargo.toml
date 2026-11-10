@@ -11,10 +11,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 lightvc-core = { path = "../lightvc-core" }
-candle-core.workspace = true
 anyhow.workspace = true
-serde.workspace = true
-serde_json = "1.0"
+hound.workspace = true
 crossbeam-channel.workspace = true
 rtrb.workspace = true
 rubato = "3.0"
@@ -27,7 +25,6 @@ clap-wrapper = "0.3"
 default = ["vst3"]
 vst3 = ["clap-wrapper/vst3"]
 auv2 = ["clap-wrapper/auv2"]
-cuda = ["lightvc-core/cuda"]
 
 [build-dependencies]
 clap-wrapper = "0.3"

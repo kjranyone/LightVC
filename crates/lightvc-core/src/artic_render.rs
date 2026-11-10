@@ -56,7 +56,6 @@ struct Synth {
     nim: Vec<f64>,
     gre: Vec<f64>,
     gim: Vec<f64>,
-    s_: Vec<f64>,
     amp: Vec<f64>,
 }
 
@@ -76,7 +75,6 @@ impl Synth {
             nim: vec![0.0; 2 * N],
             gre: vec![0.0; 2 * N],
             gim: vec![0.0; 2 * N],
-            s_: vec![0.0; NB],
             amp: vec![0.0; NB],
         }
     }

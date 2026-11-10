@@ -47,3 +47,96 @@ pub fn recv_spin<T>(rx: &std::sync::mpsc::Receiver<T>) -> Result<T, std::sync::m
     }
     rx.recv()
 }
+
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
+use std::sync::Arc;
+
+struct TeamShared {
+    epoch: AtomicUsize,
+    done: AtomicUsize,
+    job: AtomicPtr<()>,
+    stop: AtomicBool,
+}
+
+/// 同じ仕事を n 個のスレッドで分けて回す(呼び出しのスレッド = 0 番・残りは P コアに常駐し LVC_SPIN_US 回し待ちしてから寝る)。
+pub struct Team {
+    sh: Arc<TeamShared>,
+    n: usize,
+    hs: Vec<std::thread::JoinHandle<()>>,
+}
+
+type Job<'a> = &'a (dyn Fn(usize) + Sync);
+
+impl Team {
+    pub fn new(n: usize) -> Self {
+        let sh = Arc::new(TeamShared { epoch: AtomicUsize::new(0), done: AtomicUsize::new(0), job: AtomicPtr::new(std::ptr::null_mut()), stop: AtomicBool::new(false) });
+        let hs = (1..n.max(1))
+            .map(|rank| {
+                let sh = sh.clone();
+                std::thread::spawn(move || {
+                    pin_current_to_perf();
+                    let us = spin_us();
+                    let mut seen = 0usize;
+                    loop {
+                        let t0 = std::time::Instant::now();
+                        let mut i = 0u32;
+                        loop {
+                            let g = sh.epoch.load(Ordering::Acquire);
+                            if g != seen {
+                                seen = g;
+                                break;
+                            }
+                            i = i.wrapping_add(1);
+                            if i.is_multiple_of(64) && t0.elapsed().as_micros() as u64 >= us {
+                                std::thread::park_timeout(std::time::Duration::from_micros(500));
+                            } else {
+                                std::hint::spin_loop();
+                            }
+                        }
+                        if sh.stop.load(Ordering::Acquire) {
+                            return;
+                        }
+                        let f = unsafe { &*(sh.job.load(Ordering::Acquire) as *const Job) };
+                        f(rank);
+                        sh.done.fetch_add(1, Ordering::AcqRel);
+                    }
+                })
+            })
+            .collect();
+        Self { sh, n: n.max(1), hs }
+    }
+
+    pub fn size(&self) -> usize {
+        self.n
+    }
+
+    /// f(0..n) を並べて回し、全部が終わってから戻る。
+    pub fn run(&self, f: Job) {
+        if self.n == 1 {
+            f(0);
+            return;
+        }
+        let fp: *const Job = &f;
+        self.sh.job.store(fp as *mut (), Ordering::Release);
+        self.sh.done.store(0, Ordering::Release);
+        self.sh.epoch.fetch_add(1, Ordering::AcqRel);
+        for h in &self.hs {
+            h.thread().unpark();
+        }
+        f(0);
+        while self.sh.done.load(Ordering::Acquire) < self.n - 1 {
+            std::hint::spin_loop();
+        }
+    }
+}
+
+impl Drop for Team {
+    fn drop(&mut self) {
+        self.sh.stop.store(true, Ordering::Release);
+        self.sh.epoch.fetch_add(1, Ordering::AcqRel);
+        for h in self.hs.drain(..) {
+            h.thread().unpark();
+            let _ = h.join();
+        }
+    }
+}

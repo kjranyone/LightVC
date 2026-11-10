@@ -93,18 +93,6 @@ const CO_BLK: usize = 4;
 /// AVX2 版が 1 回で埋める周波数幅（2 タイル ＝ 16 float）。
 const F_STEP: usize = 16;
 
-fn pad_freq(inp: &Ten, pf: usize) -> Ten {
-    let fp = inp.f + 2 * pf;
-    let mut o = Ten::zeros(inp.c, inp.t, fp);
-    for c in 0..inp.c {
-        for t in 0..inp.t {
-            let src = inp.at(c, t);
-            o.at_mut(c, t)[pf..pf + inp.f].copy_from_slice(src);
-        }
-    }
-    o
-}
-
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
 #[allow(clippy::too_many_arguments)]

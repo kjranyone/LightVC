@@ -2,12 +2,17 @@
 //!
 //! Tab 1: Offline conversion (file → convert → save)
 //! Tab 2: Real-time conversion (mic → VC → speaker)
-//! Tab 3: Voice catalog (zero-shot reference management)
+//! Tab 3: Voice catalog (target voice references)
+//!
+//! 変換は paper_snv の製品経路 `lightvc_core::snv_stream::SnvStream`(前段 v3 → E / C → rvoc3hi・48 kHz・240 サンプル)。
+//! 登録 = 操作者の普通の発話(計 30 秒程度)と目標の声の参照(計 20 秒以上)。
 
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use eframe::egui;
+use lightvc_core::snv_stream::SnvStream;
 
 /// Real-time metrics from inference thread.
 #[derive(Clone, Debug, Default)]
@@ -16,22 +21,11 @@ pub struct RtMetrics {
     pub output_rms: f32,
     pub latency_ms: f32,
     pub rtf: f32,
-    /// True when the audio device was lost ([07-4]). The UI should stop
-    /// and return to the device-selection screen.
+    /// True when the audio device was lost. The UI should stop and return to
+    /// the device-selection screen.
     pub disconnected: bool,
-    /// Capture overrun count since start ([07-4]).
     pub overrun: u64,
-    /// Playback underrun count since start ([07-4]).
     pub underrun: u64,
-    /// Current effective mode ([F5]). May differ from the user-selected
-    /// mode when auto-degradation kicked in.
-    pub current_mode: lightvc_core::converter::LatencyMode,
-    /// True when the mode was auto-downgraded due to underruns ([F5]).
-    pub auto_degraded: bool,
-    /// Algorithmic latency of the current chunk (ms). Exposed separately so
-    /// the Latency card can render the E2E breakdown; the fixed buffer/resample
-    /// terms are derived UI-side from the selected buffer size.
-    pub algo_ms: f32,
 }
 
 /// Control messages from UI to real-time inference thread.
@@ -41,48 +35,55 @@ pub enum RtControl {
         output_idx: Option<usize>,
     },
     Stop,
-    SetMode(lightvc_core::converter::LatencyMode),
-    SetProsody {
-        mode: lightvc_core::converter::ProsodyMode,
-        blend: f64,
-    },
-    SetVelocityScale(f64),
     Bypass(bool),
-    LoadReference(Vec<f32>),
-    /// Not yet sent from UI; the receiver in `inference_loop` calls
-    /// `B1Streaming::set_timbre`. Pending a timbre-file load button.
-    #[allow(dead_code)]
-    SetB1Timbre(candle_core::Tensor),
-    SetB1Tau(f64),
-    SetWetDry(f32),
-    /// Mute the output (silence) while keeping the stream armed. Distinct from
-    /// Bypass (which passes the dry signal through).
+    /// Mute the output (silence) while keeping the stream armed.
     Mute(bool),
     /// Fixed capture/playback buffer size in frames. Applied to the next
     /// engine Start; the UI re-arms a running stream so it takes effect.
     SetBufferSize(u32),
+    /// 固定の半音(運用 = 0 / 5 / 7 / 12)。
+    SetSemitones(f32),
 }
 
-/// Type alias for the shared pipeline slot.
-pub type PipelineSlot = Arc<Mutex<Option<Arc<Mutex<lightvc_core::Backend>>>>>;
+/// Hot-swappable conversion engine shared with the inference thread.
+pub type EngineSlot = Arc<Mutex<Option<SnvStream>>>;
+
+/// SnvStream の部品の書き出し(training/export_{pfront,snv_model,rvoc}.py)と登録。
+#[derive(Clone)]
+pub struct SnvSettings {
+    pub front: String,
+    pub model: String,
+    pub voc: String,
+    /// 操作者の登録(自分の普通の発話の WAV・複数可)
+    pub operator: Vec<PathBuf>,
+    pub threads: usize,
+    pub semitones: f32,
+}
+
+impl Default for SnvSettings {
+    fn default() -> Self {
+        Self {
+            front: "results/pfront_export".into(),
+            model: "results/p_model_export".into(),
+            voc: "results/rvoc3hi/export_330k".into(),
+            operator: Vec::new(),
+            threads: 4,
+            semitones: 0.0,
+        }
+    }
+}
 
 /// Application-wide shared state.
 pub struct AppState {
-    pub dac_weights: std::path::PathBuf,
-    pub converter_weights: Option<std::path::PathBuf>,
-    pub converter_config: Option<std::path::PathBuf>,
-    pub pipeline: Option<Arc<Mutex<lightvc_core::Backend>>>,
-    /// Shared hot-swappable pipeline slot. The inference thread reads this
-    /// every loop iteration so a converter loaded after thread start is
-    /// picked up without restarting the thread ([F2]).
-    pub pipeline_slot: PipelineSlot,
+    pub engine: EngineSlot,
+    pub model_loaded: bool,
+    pub loading: bool,
+    pub settings: SnvSettings,
     pub voices: Vec<VoiceEntry>,
     pub selected_voice: Option<usize>,
     pub error: Option<String>,
     pub status: String,
-    // Offline conversion result
     pub offline_result: Option<Vec<f32>>,
-    // Real-time communication
     pub rt_control_tx: Option<Sender<RtControl>>,
     pub rt_metrics_rx: Option<Receiver<RtMetrics>>,
     pub rt_initialized: bool,
@@ -99,6 +100,28 @@ pub struct VoiceEntry {
     pub path: std::path::PathBuf,
 }
 
+/// WAV を読み、48 kHz のモノラルにする。
+pub fn load_48k(path: &Path) -> anyhow::Result<Vec<f32>> {
+    let (x, sr) = crate::audio_playback::load_wav_mono(path)?;
+    crate::cli::resample_to_48k(&x, sr)
+}
+
+/// 設定と目標の参照から SnvStream を組む(読み込み + 登録)。
+pub fn build_stream(cfg: &SnvSettings, target: &[PathBuf]) -> anyhow::Result<SnvStream> {
+    anyhow::ensure!(!cfg.operator.is_empty(), "操作者の登録の WAV がありません(Realtime タブの Operator)");
+    anyhow::ensure!(!target.is_empty(), "目標の声がありません(Voices で選ぶ)");
+    let mut s = SnvStream::load(Path::new(&cfg.front), Path::new(&cfg.model), Path::new(&cfg.voc))?;
+    if cfg.threads > 1 {
+        s.enable_parallel(cfg.threads);
+    }
+    s.set_semitones(cfg.semitones);
+    let op = cfg.operator.iter().map(|p| load_48k(p)).collect::<anyhow::Result<Vec<_>>>()?;
+    s.enroll_operator(&op.iter().map(|x| x.as_slice()).collect::<Vec<_>>())?;
+    let tg = target.iter().map(|p| load_48k(p)).collect::<anyhow::Result<Vec<_>>>()?;
+    s.enroll_target(&tg.iter().map(|x| x.as_slice()).collect::<Vec<_>>())?;
+    Ok(s)
+}
+
 #[derive(PartialEq, Copy, Clone)]
 enum Tab {
     Offline,
@@ -113,51 +136,30 @@ pub struct LightVcApp {
     catalog: crate::voice_catalog::CatalogState,
     rt_running: bool,
     rt_bypass: bool,
-    rt_mode: lightvc_core::converter::LatencyMode,
-    rt_prosody_mode: lightvc_core::converter::ProsodyMode,
-    rt_prosody_blend: f32,
-    rt_velocity_scale: f32,
     /// Demo mode for screenshot capture (None = normal operation).
     demo: bool,
     rt_metrics: RtMetrics,
-    conv_path_buf: String,
-    /// Inline-editable converter config (field-by-field, no JSON file).
-    rt_config: lightvc_core::converter::ConverterConfig,
-    /// File picker for the Realtime converter field.
-    rt_converter_pick: crate::file_pick::FilePick,
+    /// File picker for the operator enrollment WAVs.
+    operator_pick: crate::file_pick::FilePick,
     /// File pickers for the Catalog add/import actions.
     catalog_add_pick: crate::file_pick::FilePick,
     catalog_import_pick: crate::file_pick::FilePick,
     asset_cache: crate::assets::AssetCache,
     splash_frames: u32, // 0 = showing splash, >0 = finished
     settings_open: bool,
-    // B1 adapter UI state
-    b1_adapter_path: String,
-    b1_quantizer_path: String,
-    b1_timbre_path: String,
-    b1_tau: f32,
-    wet_dry: f32,
-    // FreeVocoder resynth UI state (mic → mel → freeC vocoder → out)
-    freevoc_weights: String,
-    freevoc_mel_basis: String,
-    freevoc_k: usize,
-    // バ美声 VC (v2f チェーン) UI state
-    vc_dir: String,
-    vc_shift: f32,
     /// Output mute (Transport). Silences the wet signal without unarming.
     rt_muted: bool,
-    /// Selected fixed buffer size in frames (128/256/512/1024). 256 ≈ paravo.
+    /// Selected fixed buffer size in frames (128/256/512/1024).
     rt_buffer_frames: u32,
 }
 
 impl LightVcApp {
-    pub fn new(dac_weights: std::path::PathBuf) -> Self {
+    pub fn new() -> Self {
         let state = Arc::new(Mutex::new(AppState {
-            dac_weights,
-            converter_weights: None,
-            converter_config: None,
-            pipeline: None,
-            pipeline_slot: Arc::new(Mutex::new(None)),
+            engine: Arc::new(Mutex::new(None)),
+            model_loaded: false,
+            loading: false,
+            settings: SnvSettings::default(),
             voices: Vec::new(),
             selected_voice: None,
             error: None,
@@ -173,102 +175,54 @@ impl LightVcApp {
         Self {
             state,
             current_tab: Tab::Offline,
-            offline: crate::offline_tab::OfflineState {
-                prosody_blend: 0.5,
-                velocity_scale: 1.0,
-                ..Default::default()
-            },
+            offline: Default::default(),
             catalog: Default::default(),
             rt_running: false,
             rt_bypass: false,
-            rt_mode: lightvc_core::converter::LatencyMode::Balanced,
-            rt_prosody_mode: lightvc_core::converter::ProsodyMode::default(),
-            rt_prosody_blend: 0.5,
-            rt_velocity_scale: 1.0,
+            demo: false,
             rt_metrics: RtMetrics::default(),
-            conv_path_buf: String::new(),
-            rt_config: lightvc_core::converter::ConverterConfig::default(),
-            rt_converter_pick: Default::default(),
+            operator_pick: Default::default(),
             catalog_add_pick: Default::default(),
             catalog_import_pick: Default::default(),
             asset_cache: Default::default(),
             splash_frames: 0,
             settings_open: false,
-            demo: false,
-            b1_adapter_path: "models/utte_adapter_b1.safetensors".into(),
-            b1_quantizer_path: "models/dac_quantizer.safetensors".into(),
-            b1_timbre_path: String::new(),
-            b1_tau: 5.0,
-            wet_dry: 1.0,
-            freevoc_weights: std::env::var("LIGHTVC_FREEC_WEIGHTS")
-                .unwrap_or_else(|_| "models/freeC.safetensors".into()),
-            freevoc_mel_basis: std::env::var("LIGHTVC_MEL_BASIS")
-                .unwrap_or_else(|_| "models/mel_basis_44k_2048_128.safetensors".into()),
-            freevoc_k: 4,
-            vc_dir: "models".to_string(),
-            vc_shift: 15.0,
             rt_muted: false,
             rt_buffer_frames: 256,
         }
     }
 
     /// Enable demo mode for screenshot capture. Injects mock data so all
-    /// three tabs render fully without a model or audio devices. The user
-    /// switches tabs inside the app.
+    /// three tabs render fully without a model or audio devices.
     pub fn enable_demo(&mut self) {
         self.demo = true;
-        // Skip the splash animation so the screenshot is immediate.
         self.splash_frames = 60;
-        // Pretend a converter is loaded so tabs show their full UI.
         {
             let mut s = self.state.lock().unwrap();
-            s.converter_weights = Some(std::path::PathBuf::from("models/converter.safetensors"));
-            s.converter_config = Some(std::path::PathBuf::from("configs/phase_c.yaml"));
-            // Register sample voices for the Catalog tab.
+            s.model_loaded = true;
+            s.settings.operator = vec!["samples/operator.wav".into()];
             s.voices = vec![
-                crate::app::VoiceEntry {
-                    name: "Venus (warm)".into(),
-                    path: "samples/venus.wav".into(),
-                },
-                crate::app::VoiceEntry {
-                    name: "Mars (bright)".into(),
-                    path: "samples/mars.wav".into(),
-                },
-                crate::app::VoiceEntry {
-                    name: "Lyra (soft)".into(),
-                    path: "samples/lyra.wav".into(),
-                },
+                VoiceEntry { name: "Venus (warm)".into(), path: "samples/venus.wav".into() },
+                VoiceEntry { name: "Mars (bright)".into(), path: "samples/mars.wav".into() },
+                VoiceEntry { name: "Lyra (soft)".into(), path: "samples/lyra.wav".into() },
             ];
             s.selected_voice = Some(0);
             s.status = "Demo mode".into();
         }
-        // Offline tab mock data.
         self.offline.source_path = "samples/source_male.wav".into();
         self.offline.reference_path = "samples/venus.wav".into();
-        self.offline.prosody_mode = lightvc_core::converter::ProsodyMode::Blend;
-        self.offline.prosody_blend = 0.4;
-        self.offline.velocity_scale = 1.0;
-        self.offline.converted_samples = Some(vec![0.0; 44_100]);
-        // Realtime tab mock data.
+        self.offline.converted_samples = Some(vec![0.0; 48_000]);
         self.rt_running = true;
         self.rt_bypass = false;
-        self.rt_mode = lightvc_core::converter::LatencyMode::Balanced;
-        self.rt_prosody_mode = lightvc_core::converter::ProsodyMode::ImitateTarget;
-        self.rt_prosody_blend = 0.5;
-        self.rt_velocity_scale = 1.0;
         self.rt_metrics = RtMetrics {
             input_rms: 0.18,
             output_rms: 0.12,
-            latency_ms: 46.0,
+            latency_ms: 31.0,
             rtf: 0.34,
             disconnected: false,
             overrun: 0,
             underrun: 2,
-            current_mode: lightvc_core::converter::LatencyMode::Balanced,
-            auto_degraded: false,
-            algo_ms: 20.0,
         };
-        // Initial tab: Realtime (most informative for screenshots).
         self.current_tab = Tab::Realtime;
     }
 
@@ -277,185 +231,49 @@ impl LightVcApp {
         if s.rt_initialized {
             return;
         }
-
         let (control_tx, control_rx) = unbounded();
         let (metrics_tx, metrics_rx) = unbounded();
-        // Share the pipeline slot itself (Arc<Mutex<Option<Arc<Mutex<…>>>>>)
-        // so that load_converter_static can swap it in after the thread is
-        // already running. Previously the thread captured a clone of the
-        // Option at spawn time, so a converter loaded later was invisible.
-        let pipeline_slot = s.pipeline_slot.clone();
-
+        let engine = s.engine.clone();
         s.rt_control_tx = Some(control_tx);
         s.rt_metrics_rx = Some(metrics_rx);
         s.rt_initialized = true;
-
         drop(s);
-
-        // Spawn the inference thread even without a converter — it will
-        // run in bypass mode, allowing the audio path to be tested.
+        // The inference thread runs even without an engine (bypass), so the
+        // audio path can be tested before the model is loaded.
         std::thread::spawn(move || {
-            crate::realtime_tab::inference_loop(pipeline_slot, control_rx, metrics_tx);
+            crate::realtime_tab::inference_loop(engine, control_rx, metrics_tx);
         });
     }
 
-    fn load_converter_static(
-        state: &Arc<Mutex<AppState>>,
-        conv_path: &str,
-        conv_config: lightvc_core::converter::ConverterConfig,
-    ) {
-        let dac_path = state.lock().unwrap().dac_weights.clone();
-        let result = (|| -> anyhow::Result<()> {
-            let device = candle_core::Device::Cpu;
-            let dac_config = lightvc_core::DacConfig::default();
-
-            let vb = lightvc_core::weights::load_varbuilder(
-                std::path::Path::new(conv_path),
-                candle_core::DType::F32,
-                &device,
-            )?;
-            let converter = lightvc_core::converter::AnyConverter::new(conv_config, vb)?;
-
-            let pipeline = lightvc_core::pipeline::VcPipeline::new(
-                &dac_path,
-                &dac_config,
-                converter,
-                lightvc_core::converter::LatencyMode::Balanced,
-                device,
-            )?;
-
+    /// 選んだ目標の声で SnvStream を組み直し、組めたら差し替える(重い処理は別の糸で・音は止めない)。
+    pub fn load_engine_static(state: &Arc<Mutex<AppState>>) {
+        let (cfg, target, slot) = {
             let mut s = state.lock().unwrap();
-            let pipeline_arc = Arc::new(Mutex::new(lightvc_core::Backend::Legacy(pipeline)));
-            s.pipeline = Some(pipeline_arc.clone());
-            *s.pipeline_slot.lock().unwrap() = Some(pipeline_arc);
-            s.converter_weights = Some(std::path::PathBuf::from(conv_path));
-            s.status = "Converter loaded".to_string();
+            if s.loading {
+                return;
+            }
+            let target: Vec<PathBuf> = s.selected_voice.and_then(|i| s.voices.get(i)).map(|v| vec![v.path.clone()]).unwrap_or_default();
+            s.loading = true;
+            s.status = "Loading model and enrolling...".to_string();
             s.error = None;
-            Ok(())
-        })();
-
-        if let Err(e) = result {
-            let mut s = state.lock().unwrap();
-            s.error = Some(format!("Load failed: {e}"));
-        }
-    }
-
-    fn load_b1_static(
-        state: &Arc<Mutex<AppState>>,
-        dac_path: &str,
-        quantizer_path: &str,
-        adapter_path: &str,
-        timbre_path: &str,
-    ) {
-        let result = (|| -> anyhow::Result<()> {
-            let device = candle_core::Device::Cpu;
-
-            let timbre = {
-                let vb = lightvc_core::weights::load_varbuilder(
-                    std::path::Path::new(timbre_path),
-                    candle_core::DType::F32,
-                    &device,
-                )?;
-                vb.get((1, 192), "timbre")?
-            };
-
-            let mut b1 = lightvc_core::b1_pipeline::B1Streaming::new(
-                std::path::Path::new(dac_path),
-                std::path::Path::new(quantizer_path),
-                std::path::Path::new(adapter_path),
-                lightvc_core::streaming::ChunkMode::Balanced,
-                device,
-            )?;
-            b1.set_timbre(timbre);
-
-            let mut s = state.lock().unwrap();
-            let arc = Arc::new(Mutex::new(lightvc_core::Backend::B1(b1)));
-            s.pipeline = Some(arc.clone());
-            *s.pipeline_slot.lock().unwrap() = Some(arc);
-            s.status = "B1 adapter loaded".to_string();
-            s.error = None;
-            Ok(())
-        })();
-
-        if let Err(e) = result {
-            let mut s = state.lock().unwrap();
-            s.error = Some(format!("B1 load failed: {e}"));
-        }
-    }
-
-    /// Load the FreeVocoder resynthesis backend (mic → mel → freeC vocoder →
-    /// out). `voc_path` = freeC vocoder weights, `mel_basis_path` = librosa
-    /// slaney mel filterbank (`mel_basis` key). `k` = mel frames per chunk.
-    fn load_freevoc_static(
-        state: &Arc<Mutex<AppState>>,
-        voc_path: &str,
-        mel_basis_path: &str,
-        k: usize,
-    ) {
-        let result = (|| -> anyhow::Result<()> {
-            let device = candle_core::Device::Cpu;
-            let resynth = lightvc_core::free_resynth::FreeResynth::new(
-                std::path::Path::new(voc_path),
-                std::path::Path::new(mel_basis_path),
-                k,
-                device,
-            )?;
-
-            let mut s = state.lock().unwrap();
-            let arc = Arc::new(Mutex::new(lightvc_core::Backend::FreeVoc(resynth)));
-            s.pipeline = Some(arc.clone());
-            *s.pipeline_slot.lock().unwrap() = Some(arc);
-            s.status = "FreeVocoder resynthesis loaded".to_string();
-            s.error = None;
-            Ok(())
-        })();
-
-        if let Err(e) = result {
-            let mut s = state.lock().unwrap();
-            s.error = Some(format!("FreeVoc load failed: {e}"));
-        }
-    }
-
-    /// バ美声 VC backend をロード (mic → front → E → G → v2f)。
-    /// `dir` に v2f.bin / e1.bin / g1.bin / mel_fb_1024_80.bin / mel2lin_W.bin。
-    /// E/G は f16 (proxy 同値確認済み・RTF 2 倍)。
-    fn load_vc_static(state: &Arc<Mutex<AppState>>, dir: &str, shift: f32) {
-        let result = (|| -> anyhow::Result<()> {
-            use lightvc_core::eg::{Eg1d, Eg1dH};
-            use lightvc_core::v2f_infer::{V2fEngine, V2fStream};
-            use lightvc_core::vc_stream::{EgAny, VcStream};
-            let d = std::path::Path::new(dir);
-            let rdf = |p: &std::path::Path| -> anyhow::Result<Vec<f32>> {
-                Ok(std::fs::read(p)
-                    .map_err(|e| anyhow::anyhow!("{}: {e}", p.display()))?
-                    .chunks_exact(4)
-                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                    .collect())
-            };
-            let e = Eg1d::from_flat(&rdf(&d.join("e1.bin"))?, 80, 768, 256, 8);
-            let g = Eg1d::from_flat(&rdf(&d.join("g1.bin"))?, 770, 80, 256, 6);
-            let eng = std::sync::Arc::new(
-                V2fEngine::load(&d.join("v2f.bin"), &d.join("mel_fb_1024_80.bin"),
-                                &d.join("mel2lin_W.bin"), 24, 8)
-                    .map_err(|e| anyhow::anyhow!("v2f weights: {e}"))?);
-            let fb = rdf(&d.join("mel_fb_1024_80.bin"))?;
-            let v = V2fStream::with_threads(eng, 2);
-            let vc = VcStream::new_any(
-                EgAny::F16(std::sync::Arc::new(Eg1dH::from_net(&e))),
-                EgAny::F16(std::sync::Arc::new(Eg1dH::from_net(&g))),
-                v, fb, shift);
-            let mut s = state.lock().unwrap();
-            let arc = Arc::new(Mutex::new(lightvc_core::Backend::Vc(vc)));
-            s.pipeline = Some(arc.clone());
-            *s.pipeline_slot.lock().unwrap() = Some(arc);
-            s.status = format!("バ美声 VC loaded (shift {shift:+.0} st)");
-            s.error = None;
-            Ok(())
-        })();
-        if let Err(e) = result {
-            let mut s = state.lock().unwrap();
-            s.error = Some(format!("VC load failed: {e}"));
-        }
+            (s.settings.clone(), target, s.engine.clone())
+        };
+        let st = state.clone();
+        std::thread::spawn(move || {
+            let t0 = std::time::Instant::now();
+            let r = build_stream(&cfg, &target);
+            let mut s = st.lock().unwrap();
+            s.loading = false;
+            match r {
+                Ok(engine) => {
+                    let old = slot.lock().unwrap().replace(engine);
+                    drop(old);
+                    s.model_loaded = true;
+                    s.status = format!("Model loaded・enrolled in {:.1} s", t0.elapsed().as_secs_f64());
+                }
+                Err(e) => s.error = Some(format!("Load failed: {e}")),
+            }
+        });
     }
 
     fn send_control(state: &Arc<Mutex<AppState>>, ctrl: RtControl) {
@@ -463,6 +281,12 @@ impl LightVcApp {
         if let Some(ref tx) = s.rt_control_tx {
             let _ = tx.send(ctrl);
         }
+    }
+}
+
+impl Default for LightVcApp {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -706,48 +530,28 @@ impl LightVcApp {
                 });
             }
             Tab::Realtime => {
-                // Receive metrics
+                let mut disconnected = false;
                 {
                     let s = self.state.lock().unwrap();
                     if let Some(ref rx) = s.rt_metrics_rx {
                         while let Ok(m) = rx.try_recv() {
-                            // [07-4] device disconnection: the inference thread
-                            // already tore down its streams; reflect that in the UI.
-                            if m.disconnected {
-                                self.rt_running = false;
-                                self.state.lock().unwrap().status =
-                                    "Audio device disconnected".to_string();
-                            }
-                            // [F5] sync auto-degraded mode to the knob.
-                            self.rt_mode = m.current_mode;
+                            disconnected |= m.disconnected;
                             self.rt_metrics = m;
                         }
                     }
                 }
+                if disconnected {
+                    self.rt_running = false;
+                    self.state.lock().unwrap().status = "Audio device disconnected".to_string();
+                }
 
                 let state = self.state.clone();
-                let mut conv_path = std::mem::take(&mut self.conv_path_buf);
-                let mut rt_config = self.rt_config.clone();
                 let mut rt_running = self.rt_running;
                 let mut rt_bypass = self.rt_bypass;
-                let mut rt_mode = self.rt_mode;
-                let mut rt_prosody_mode = self.rt_prosody_mode;
-                let mut rt_prosody_blend = self.rt_prosody_blend;
-                let mut rt_velocity_scale = self.rt_velocity_scale;
-                let mut b1_adapter_path = self.b1_adapter_path.clone();
-                let mut b1_quantizer_path = self.b1_quantizer_path.clone();
-                let mut b1_timbre_path = self.b1_timbre_path.clone();
-                let mut b1_tau = self.b1_tau;
-                let mut wet_dry = self.wet_dry;
-                let mut vc_dir = self.vc_dir.clone();
-                let mut vc_shift = self.vc_shift;
-                let mut freevoc_weights = self.freevoc_weights.clone();
-                let mut freevoc_mel_basis = self.freevoc_mel_basis.clone();
-                let mut freevoc_k = self.freevoc_k;
                 let mut rt_muted = self.rt_muted;
                 let mut rt_buffer_frames = self.rt_buffer_frames;
                 let metrics = self.rt_metrics.clone();
-                let converter_pick = self.rt_converter_pick.clone();
+                let operator_pick = self.operator_pick.clone();
 
                 egui::CentralPanel::default().show(ctx, |ui| {
                     egui::ScrollArea::vertical()
@@ -756,156 +560,23 @@ impl LightVcApp {
                             crate::realtime_tab::render(
                                 ui,
                                 ctx,
-                                &converter_pick,
+                                &operator_pick,
                                 &state,
-                                &mut conv_path,
-                                &mut rt_config,
                                 &mut rt_running,
                                 &mut rt_bypass,
-                                &mut rt_mode,
-                                &mut rt_prosody_mode,
-                                &mut rt_prosody_blend,
-                                &mut rt_velocity_scale,
                                 &mut rt_muted,
                                 &mut rt_buffer_frames,
                                 &metrics,
-                                |c, cfg| Self::load_converter_static(&state, c, cfg.clone()),
+                                || Self::load_engine_static(&state),
                                 || Self::ensure_rt_thread_static(&state),
                                 |ctrl| Self::send_control(&state, ctrl),
                                 &mut self.asset_cache,
                             );
-
-                            ui.separator();
-                            ui.collapsing("B1 Adapter (UTTE)", |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label("Adapter:");
-                                    ui.text_edit_singleline(&mut b1_adapter_path);
-                                });
-                                ui.horizontal(|ui| {
-                                    ui.label("Quantizer:");
-                                    ui.text_edit_singleline(&mut b1_quantizer_path);
-                                });
-                                ui.horizontal(|ui| {
-                                    ui.label("Timbre:");
-                                    ui.text_edit_singleline(&mut b1_timbre_path);
-                                });
-
-                                let dac_path = state
-                                    .lock()
-                                    .unwrap()
-                                    .dac_weights
-                                    .to_string_lossy()
-                                    .to_string();
-                                let load_enabled = !b1_timbre_path.is_empty();
-                                ui.add_enabled_ui(load_enabled, |ui| {
-                                    if ui.button("Load B1 Adapter").clicked() {
-                                        Self::load_b1_static(
-                                            &state,
-                                            &dac_path,
-                                            &b1_quantizer_path,
-                                            &b1_adapter_path,
-                                            &b1_timbre_path,
-                                        );
-                                    }
-                                });
-
-                                ui.horizontal(|ui| {
-                                    ui.label("Tau:");
-                                    if ui
-                                        .add(egui::Slider::new(&mut b1_tau, 0.1..=10.0).text(""))
-                                        .changed()
-                                    {
-                                        Self::send_control(
-                                            &state,
-                                            RtControl::SetB1Tau(b1_tau as f64),
-                                        );
-                                    }
-                                });
-                                ui.horizontal(|ui| {
-                                    ui.label("Wet/Dry:");
-                                    if ui
-                                        .add(egui::Slider::new(&mut wet_dry, 0.0..=1.0).text(""))
-                                        .changed()
-                                    {
-                                        Self::send_control(&state, RtControl::SetWetDry(wet_dry));
-                                    }
-                                });
-
-                                let is_b1 = state
-                                    .lock()
-                                    .unwrap()
-                                    .pipeline
-                                    .as_ref()
-                                    .map(|p| p.lock().map(|p| p.is_b1()).unwrap_or(false))
-                                    .unwrap_or(false);
-                                if is_b1 {
-                                    ui.colored_label(egui::Color32::GREEN, "● B1 adapter active");
-                                }
-                            });
-
-                            ui.separator();
-                            ui.collapsing("バ美声 VC (v2f)", |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label("Models dir:");
-                                    ui.text_edit_singleline(&mut vc_dir);
-                                });
-                                ui.horizontal(|ui| {
-                                    ui.label("Pitch shift (st):");
-                                    ui.add(egui::Slider::new(&mut vc_shift, 0.0..=24.0));
-                                });
-                                if ui.button("Load バ美声 VC").clicked() {
-                                    Self::load_vc_static(&state, &vc_dir, vc_shift);
-                                }
-                            });
-
-                            ui.separator();
-                            ui.collapsing("FreeVocoder Resynth", |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label("Weights:");
-                                    ui.text_edit_singleline(&mut freevoc_weights);
-                                });
-                                ui.horizontal(|ui| {
-                                    ui.label("Mel basis:");
-                                    ui.text_edit_singleline(&mut freevoc_mel_basis);
-                                });
-                                ui.horizontal(|ui| {
-                                    ui.label("K frames:");
-                                    ui.add(egui::Slider::new(&mut freevoc_k, 1..=7));
-                                });
-                                let load_enabled =
-                                    !freevoc_weights.is_empty() && !freevoc_mel_basis.is_empty();
-                                ui.add_enabled_ui(load_enabled, |ui| {
-                                    if ui.button("Load FreeVoc Resynth").clicked() {
-                                        Self::load_freevoc_static(
-                                            &state,
-                                            &freevoc_weights,
-                                            &freevoc_mel_basis,
-                                            freevoc_k,
-                                        );
-                                    }
-                                });
-                            });
                         });
                 });
 
-                self.vc_dir = vc_dir;
-                self.vc_shift = vc_shift;
-                self.conv_path_buf = conv_path;
-                self.rt_config = rt_config;
                 self.rt_running = rt_running;
                 self.rt_bypass = rt_bypass;
-                self.rt_mode = rt_mode;
-                self.rt_prosody_mode = rt_prosody_mode;
-                self.rt_prosody_blend = rt_prosody_blend;
-                self.rt_velocity_scale = rt_velocity_scale;
-                self.b1_adapter_path = b1_adapter_path;
-                self.b1_quantizer_path = b1_quantizer_path;
-                self.b1_timbre_path = b1_timbre_path;
-                self.b1_tau = b1_tau;
-                self.wet_dry = wet_dry;
-                self.freevoc_weights = freevoc_weights;
-                self.freevoc_mel_basis = freevoc_mel_basis;
-                self.freevoc_k = freevoc_k;
                 self.rt_muted = rt_muted;
                 self.rt_buffer_frames = rt_buffer_frames;
             }
@@ -934,20 +605,17 @@ impl LightVcApp {
                                 &trash,
                                 &empty,
                                 |idx| {
-                                    // Load the selected voice as the Realtime reference.
-                                    let mut s = state.lock().unwrap();
-                                    if let Some(voice) = s.voices.get(idx).cloned() {
-                                        s.selected_voice = Some(idx);
-                                        if let Ok((wav, sr)) =
-                                            crate::audio_playback::load_wav_mono(&voice.path)
-                                        {
-                                            let wav44 =
-                                                crate::audio_playback::resample_linear(&wav, sr);
-                                            Self::send_control(
-                                                &state,
-                                                RtControl::LoadReference(wav44),
-                                            );
+                                    // Use the selected voice as the target. If a model is
+                                    // already loaded, rebuild the engine with the new target.
+                                    let reload = {
+                                        let mut s = state.lock().unwrap();
+                                        if s.voices.get(idx).is_some() {
+                                            s.selected_voice = Some(idx);
                                         }
+                                        s.model_loaded && !s.settings.operator.is_empty()
+                                    };
+                                    if reload {
+                                        Self::load_engine_static(&state);
                                     }
                                 },
                             );
@@ -957,10 +625,11 @@ impl LightVcApp {
             }
         }
 
-        // Only request continuous repaint during realtime mode, or while a
-        // Catalog preview is playing (so the Stop button reverts to Play on
-        // natural finish).
+        // Only request continuous repaint during realtime mode, while loading,
+        // or while a Catalog preview is playing.
+        let loading = self.state.lock().unwrap().loading;
         if self.current_tab == Tab::Realtime
+            || loading
             || (self.current_tab == Tab::Catalog && self.catalog.playing_voice.is_some())
         {
             ctx.request_repaint();

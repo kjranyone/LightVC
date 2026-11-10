@@ -1,10 +1,9 @@
 //! LightVC desktop application.
 //!
 //! Subcommands:
-//!   - `roundtrip`: Validate DAC encode/decode on a WAV file
-//!   - `convert`:   Apply converter to a WAV file (offline)
-//!   - `resynth`:   FreeVocoder resynthesis (WAV → mel → freeC vocoder → WAV)
-//!   - `gui`:       Launch the desktop GUI (3 tabs: offline/realtime/catalog)
+//!   - `snv`:          paper_snv の製品経路のオフライン変換(WAV 48 kHz → WAV)
+//!   - `realtime-snv`: 同じ経路のリアルタイム変換(マイク → スピーカー)
+//!   - `gui`:          Launch the desktop GUI (3 tabs: offline/realtime/voices)
 
 mod app;
 mod assets;
@@ -23,16 +22,8 @@ fn main() -> anyhow::Result<()> {
     lightvc_core::affinity::pin_current_to_perf();
     let args = cli::Cli::parse();
     let result = match args.command {
-        cli::Command::Roundtrip(cmd) => cli::run_roundtrip(cmd),
-        cli::Command::Convert(cmd) => cli::run_convert(cmd),
-        cli::Command::ConvertB1(cmd) => cli::run_convert_b1(cmd),
-        cli::Command::Resynth(cmd) => cli::run_resynth(cmd),
-        cli::Command::V2f(cmd) => cli::run_v2f(cmd),
-        cli::Command::Vc(cmd) => cli::run_vc(cmd),
-        cli::Command::RealtimeDdsp(cmd) => cli::run_realtime_ddsp(cmd),
-        cli::Command::Artic(cmd) => cli::run_artic(cmd),
-        cli::Command::RealtimeArtic(cmd) => cli::run_realtime_artic(cmd),
-        cli::Command::ArticEnroll(cmd) => cli::run_artic_enroll(cmd),
+        cli::Command::Snv(cmd) => cli::run_snv(cmd),
+        cli::Command::RealtimeSnv(cmd) => cli::run_realtime_snv(cmd),
         cli::Command::Gui(cmd) => cli::run_gui(cmd),
     };
     // Explicit exit to avoid hang on mmap/safetensors drop on Windows
