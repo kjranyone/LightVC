@@ -1,0 +1,47 @@
+# 2026-11-08T02:34:21Z 段 I9 判定後(results/snv_i9/verdict.yaml)の中間 snap
+results/snv_i9_aug/step10k.pt  232144183 B  中間 snap(最終の判定は last.pt)
+results/snv_i9_ctl/step10k.pt  232144183 B  中間 snap(最終の判定は last.pt)
+# 2026-11-08T02:45:45Z 段 I10 の煙(本番の入口・200 step・動作確認のみ)
+results/snv_i10_smoke_e/last.pt  232125561 B  煙
+results/snv_i10_smoke_e/split.json  5420 B  煙
+results/snv_i10_smoke_e/train_log.json  926 B  煙
+results/snv_i10_smoke_c/last.pt  232125561 B  煙
+results/snv_i10_smoke_c/split.json  5420 B  煙
+results/snv_i10_smoke_c/train_log.json  917 B  煙
+results/snv_i10_smoke_e.train.log  2269 B  煙
+results/snv_i10_smoke_c.train.log  2297 B  煙
+
+# 2026-11-08T11:54:55Z 段 I10 の判定の後(results/snv_i10/verdict.yaml)・途中の保存(last.pt は全て残す・rec_10k.json の数値は残る)
+results/snv_i10_c_ctl/step10k.pt  232144311 B  途中の保存
+results/snv_i10_c_pr/step10k.pt  232144311 B  途中の保存
+results/snv_i10_e_rec/step10k.pt  232144311 B  途中の保存
+
+# 2026-11-08T17:55:22Z 段 I12 の煙(本番の入口・200 step・動作確認のみ)
+results/snv_i12_smoke_vr2/train_log.json  924 B  煙
+results/snv_i12_smoke_vr2/split.json  5420 B  煙
+results/snv_i12_smoke_vr2/last.pt  232125689 B  煙
+results/snv_i12_smoke_r2/train_log.json  923 B  煙
+results/snv_i12_smoke_r2/split.json  5420 B  煙
+results/snv_i12_smoke_r2/last.pt  232125689 B  煙
+results/snv_i12_smoke_vr2.train.log  2301 B  煙
+results/snv_i12_smoke_r2.train.log  2301 B  煙
+
+# 2026-11-08T20:34:05Z 段 I12 の判定の後(H12_bgm_none + H12_voice_none・負けの腕は last だけ残す・途中の規則の記録は results/snv_i12/content_10k_*.json と text_10k.json に残る)
+results/snv_i12_e_vr2/step10k.pt  232144439 B  途中の写し
+results/snv_i12_e_r2/step10k.pt  232144439 B  途中の写し
+
+# 2026-11-08T21:03:17Z 段 I13 の煙(本番の入口・200 step・組み合わせと内容の探りの経路の確認のみ)
+results/snv_i13_smoke_l13/train_log.json  923 B  煙
+results/snv_i13_smoke_l13/split.json  5420 B  煙
+results/snv_i13_smoke_l13/last.pt  232125945 B  煙
+results/snv_i13_smoke_l16/train_log.json  924 B  煙
+results/snv_i13_smoke_l16/split.json  5420 B  煙
+results/snv_i13_smoke_l16/last.pt  232125945 B  煙
+results/snv_i13_smoke_combo/split.json  5420 B  煙
+results/snv_i13_smoke_combo/last.pt  232121913 B  煙
+results/snv_i13_smoke_l13.train.log  2472 B  煙
+results/snv_i13_smoke_l16.train.log  2445 B  煙
+results/snv_i13/smoke_content.json  840 B  煙
+results/snv_i13/smoke_content.log  2132 B  煙
+results/snv_i13/smoke_combo.log  88 B  煙
+results/snv_i13/smoke_lift.log  20 B  煙

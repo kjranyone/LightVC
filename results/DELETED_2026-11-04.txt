@@ -3,3 +3,63 @@ results/diag_snv_a7_c_smoke/ (last.pt 36 MB, norm.npz, train_log.json)
 results/diag_snv_a7_x_smoke/ (last.pt 35 MB, norm.npz, train_log.json)
 results/diag_snv_a7_c_smoke.log
 results/diag_snv_a7_x_smoke.log
+# 2026-11-04T10:42:19Z A8 の煙テスト(train_snv_a4.py --mode x --glot_rel --steps 300 + snv_a8_eval.py dev1 / test smoke)。経路の確認だけ・結果は書いていない(ログは scratchpad)
+results/diag_snv_a8_x_smoke/ (last.pt 35 MB, norm.npz, train_log.json)
+# 2026-11-04T11:32:17Z A9 の煙テスト(train_snv_a4.py --mode x --glot_dims cpp,hf,mod,flat --steps 300 + snv_a8_eval.py a9 dev1 / test smoke)。経路の確認だけ・結果は書いていない(ログは scratchpad)
+results/diag_snv_a9_x_smoke/ (last.pt 35 MB, norm.npz, train_log.json)
+# 2026-11-04T11:32:17Z A8 の鎖が作った空のディレクトリ(段 2 は途中信号で起動せず)
+results/diag_snv_a8_x_gan/ (空)
+
+## 2026-11-04T16:20:47Z snv_p0b 煙テスト(P0b の経路の確認・smoke 引数)
+results/snv_p0b/wav/R__uirou_0__ORI.wav
+results/snv_p0b/wav/R__uirou_0__PQ0.wav
+results/snv_p0b/wav/R__uirou_0__PQP.wav
+results/snv_p0b/wav/R__uirou_0__TCH.wav
+results/snv_p0b/wav/T__pf000_3__ORI.wav
+results/snv_p0b/wav/T__pf000_3__PQ0.wav
+results/snv_p0b/wav/T__pf000_3__PQP.wav
+results/snv_p0b/wav/T__pf000_3__TCH.wav
+(p0b_smoke.json は判定の前に削除済み)
+
+## 2026-11-04T16:55:18Z snv_p0d_smoke(P0d の経路の確認・30 step)
+results/snv_p0d_smoke/last.pt
+results/snv_p0d_smoke/snap/ema_0k.pt
+results/snv_p0d_smoke/train.jsonl
+
+## 2026-11-04T17:22:31Z snv_p1 の煙テスト(train_snv_p1 n / wj × 200 step・snv_p1_eval dev / test smoke)
+results/snv_p1_n_smoke/last.pt
+results/snv_p1_n_smoke/split.json
+results/snv_p1_n_smoke/train_log.json
+results/snv_p1/wav_smoke/snv_p1_n_smoke__uirou_0__pf000__k0.wav
+results/snv_p1/wav_smoke/snv_p1_n_smoke__uirou_0__pf000__k7.wav
+results/snv_p1/wav_smoke/snv_p1_n_smoke__uirou_0__pf001__k0.wav
+results/snv_p1/wav_smoke/snv_p1_n_smoke__uirou_0__pf001__k7.wav
+results/snv_p1/wav_smoke/snv_p1_wj_smoke__uirou_0__pf000__k0.wav
+results/snv_p1/wav_smoke/snv_p1_wj_smoke__uirou_0__pf000__k7.wav
+results/snv_p1/wav_smoke/snv_p1_wj_smoke__uirou_0__pf001__k0.wav
+results/snv_p1/wav_smoke/snv_p1_wj_smoke__uirou_0__pf001__k7.wav
+results/snv_p1_wj_smoke/last.pt
+results/snv_p1_wj_smoke/split.json
+results/snv_p1_wj_smoke/train_log.json
+results/snv_p1/smoke_dev_n_smoke_wj_smoke.json
+results/snv_p1/smoke_test_n_smoke_wj_smoke.json
+## 2026-11-04T21:43:46Z P0d の中断した初回起動の残り(部分の特徴 325 声・誤った組で起動して止めた・0 step・空のログ)
+results/snv_p0d_rvoc/train.jsonl
+results/snv_p0d_rvoc/train.log
+## 2026-11-04T21:54:29Z snv_p1c_wc_smoke(P1c の wc の経路の確認・200 step・J2 の読み込みと判定器の圧の勾配)
+results/snv_p1c_wc_smoke/last.pt
+results/snv_p1c_wc_smoke/split.json
+results/snv_p1c_wc_smoke/train_log.json
+## 2026-11-04T22:35:18Z snv_p1c_judge3 の初版(生の Y の単位で一律の ε 0.05 の PGD・学習が崩れた = 閉じた組 0.002・EER 0.458・損失 5.75 で停滞)。数値は results/snv_p1c/prereg.yaml amendment_2 に記録・同じ tag で σ_d の単位に直して学び直す
+results/snv_p1c_judge3/judge.pt
+results/snv_p1c_judge3/judge.json
+## 2026-11-04T23:34:53Z snv_p0d_rvoc の煙テストの測定と途中の snap(判定 none・最後の EMA と last.pt は残す)
+results/snv_p0d_rvoc/p0d_ema_5k_p1val_smoke.json
+results/snv_p0d_rvoc/measure_smoke.log
+results/snv_p0d_rvoc/snap/ema_2k.pt
+## 2026-11-04T23:43:26Z snv_p2_cpc_smoke(P2 の CPC の経路の確認・200 step・40 声)と関門 NNC の煙テストの出力
+results/snv_p2_cpc_smoke/last.pt
+results/snv_p2_cpc_smoke/sig.npy
+results/snv_p2/nnc_snv_p2_cpc_smoke.json
+## 2026-11-04T23:55:24Z snv_p1c_wc の last.pt(step10k.pt と同じ中身・判定の記録は step10k.pt を指す)
+results/snv_p1c_wc/last.pt

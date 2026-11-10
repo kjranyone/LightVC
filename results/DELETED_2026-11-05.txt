@@ -1,0 +1,47 @@
+## 2026-11-05T00:01:07Z snv_p2b_cpc_smoke(P2b の乱しの経路の確認・200 step)
+results/snv_p2b_cpc_smoke/last.pt
+results/snv_p2b_cpc_smoke/sig.npy
+## 2026-11-05T00:32:24Z snv_p2_cpc5k(P2 の 5k の重みの写し・途中の NNC の記録 nnc_snv_p2_cpc5k.json だけ残す)
+results/snv_p2_cpc5k/last.pt
+## 2026-11-05T00:35:49Z snv_p2 の kNN 型の変換の診断(参照のフレームを検索して引く = オーナー 10-07 の規則「診断でも設計逸脱・提案も実行もしない」に反して起動した。源 1 本の途中で止め、出力を消す・数値は設計の根拠に使わない)
+results/snv_p2/diag_knn_convert.log
+training/snv_diag/p2_knn_convert.py
+## 2026-11-05T00:38:34Z snv_p1_eval.py の書き換え(P3 の演奏)の検算の出力(P1 n 20k の dev M_k7 = 0.0361 で以前と一致)
+results/snv_p1/dev_n-step20k.json
+## 2026-11-05T00:39:41Z snv_p3_smoke(P3 の経路の確認・200 step・dev の評価 smoke)
+results/snv_p3_smoke/last.pt
+results/snv_p3_smoke/split.json
+results/snv_p3_smoke/train_log.json
+results/snv_p1/smoke_dev_snv_p3_smoke.json
+2026-11-05T03:12:55Z smoke(P2d の動作確認・記録 = 不変性の損失 0.717 → 0.054・k1 の当たり 0.24 対 --aug だけの 0.31 @200 step)
+  results/snv_p2d_smoke/(last.pt, sig.npy)
+  results/snv_p2b_smoke/(last.pt, sig.npy)
+2026-11-05T04:21:49Z smoke(P2e の動作確認・記録 = 単体検査 PASS(勾配反転 −λ・識別器の因果)・200 step で話者の当たり 0.03〜0.12・InfoNCE k1 0.23)
+  results/snv_p2e_smoke/(last.pt, sig.npy)
+2026-11-05T04:24:34Z 負け腕の重複の snap(P2d・H_P2d_none・last.pt と同じ 15000 step・重みが一致することを確認)
+  results/snv_p2d_cpc/step15k.pt
+2026-11-05T05:09:31Z smoke(P4 の動作確認・記録 = 200 step: self 0.037・rend 0.047・cyc 0.081・検証の前向きの距離 0.110・検証の循環 0.075)
+  results/snv_p4_smoke/(last.pt, split.json, train_log.json)
+2026-11-05T08:50:11Z 負け腕の中間 snap(P3e・H_P3e_none・途中信号は results/snv_p3e/mid20k.yaml と ff_20k.json・dev_snv_p3e_x-step20k.json に記録済み・last.pt は P6a で使うので残す)
+  results/snv_p3e_x/step20k.pt
+2026-11-05T09:07:01Z smoke(P7 の動作確認・記録 = 200 step: self 0.235・rend 0.233・検証 L1 0.259(自明 0.2645)・注意の最大 0.0014・実効 1648 フレーム・0.157 s/step・System の入口で 10 s の変換が有限・ログ results/snv_p7/smoke.log)
+  results/snv_p7_smoke/(last.pt, split.json, train_log.json)
+2026-11-05T10:04:52Z 負け腕の重複 snap(P7・H_P7_none・20k の途中信号 A で停止・step20k.pt は last.pt と同じ 20000 step)
+  results/snv_p7_q/step20k.pt
+2026-11-05T10:25:54Z smoke(P8 の動作確認・記録 = 200 step: self 0.240・rend 0.263・検証 L1 0.267(自明 0.2645)・0.235 s/step・PlayW の単体の検査 PASS(探りの wst と一致・登録の統計のずれ 0.13%)・System の入口で 10 s の変換が有限・ログ results/snv_p8/smoke.log)
+  results/snv_p8_smoke/(last.pt, split.json, train_log.json)
+2026-11-05T13:15:03Z 中間 snap(P8・H_P8_partial・途中信号は results/snv_p8/mid20k.yaml・ff_20k.json・snv_p1/dev_snv_p8_wst-step20k.json に記録済み・last.pt を残す)
+  results/snv_p8_wst/step20k.pt
+2026-11-05T13:37:07Z smoke(P10 の動作確認・記録 = 40 声 200 step: 白くした座標の InfoNCE 2.857 → 2.567・正解率 k1 0.20 → 0.34・0.265 s/step・物差し D の入口(c_P10=smoke)で w_c_P10@long 本人の率 0.233・D_CER 0.328・判定に使わない・ログ results/snv_p10/smoke.log)
+  results/snv_p10_smoke/(last.pt, sig.npy)
+  results/snv_p10/smoke_draw.json
+2026-11-05T14:21:23Z smoke(P11 の動作確認・記録 = 200 step: NLL 28.6・KL 114.9 nat/フレーム(β 0.04)・検証 L1 0.158(自明 0.2645)・0.247 s/step・System の入口で 10 s の変換が有限・ログ results/snv_p11/smoke.log)
+  results/snv_p11_smoke/(last.pt, split.json, train_log.json)
+2026-11-05T15:49:30Z 負け腕の重複 snap(P11・H_P11_none・20k の途中信号 A で停止・step20k.pt は last.pt と同じ 20000 step)
+  results/snv_p11_r/step20k.pt
+2026-11-05T15:58:49Z smoke(P12 の動作確認・記録 = 200 step: NLL 43.6・KL 88.3(β 0.04)・検証 L1 0.178・別の声の θ で 0.219・0.065 s/step・System の入口で当てはめ 5.8 s / 声・10 s の変換が有限・ログ results/snv_p12/smoke.log)
+  results/snv_p12_smoke/(last.pt, split.json, train_log.json)
+2026-11-05T17:03:12Z smoke(P13 の動作確認・記録 = 200 step: self 0.147・組の MMD 0.272 → 0.084(学習)/ 0.144(検証の組)・検証 L1 0.167・0.335 s/step・出荷ゲート PASS・System の入口で 10 s の変換が有限・ログ results/snv_p13/smoke.log)
+  results/snv_p13_smoke/(last.pt, split.json, train_log.json)
+2026-11-05T19:00:40Z smoke(P14 の動作確認・記録 = 40 声 200 step・組 9: 袋の MMD 0.070 → 0.049・正解率 k1 0.99・0.10 s/step・ログ results/snv_p14/smoke.log)
+  results/snv_p14_smoke/(last.pt, sig.npy)

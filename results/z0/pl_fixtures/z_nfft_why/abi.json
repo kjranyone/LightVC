@@ -1,9 +1,0 @@
-{
- "synthesis": {
-  "n_fft": 512,
-  "hop": 128
- },
- "mel_analysis": {
-  "hop": 256
- }
-}

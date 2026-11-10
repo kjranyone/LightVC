@@ -1,0 +1,27 @@
+2026-11-06T04:11:21Z smoke(段 T の train_snv_t.py の動作確認・d_tpl K4 300 step・8.8 s・判定に使わない)
+  results/snv_t/d_tpl_K4.json
+2026-11-06T04:15:24Z 段 T の較正前の世界での出力(amendment_2・判定に使わない・oracle e 0.496 / a_det K4 e 0.824 / a_det K1 e 0.834 を prereg に記録)
+  results/snv_t/(oracle_K4.json, a_det_K4.json, a_det_K1.json, log_oracle_K4.txt, log_a_det_K4.txt, log_a_det_K1.txt, log_b_vae_K4.txt)
+2026-11-06T05:37:37Z smoke(T5 の CPU の入口の確認・d_tpl K8 r1 200 step・判定に使わない)
+  results/snv_t5_smoke/(d_tpl_K8_r1.json)
+2026-11-06T05:50:58Z T5 の CPU の走行(1000 step で停止・結果なし・GPU でやり直す)
+  results/snv_t5/log_*.txt(6 本)
+2026-11-06T06:03:09Z smoke(段 I の CPU の入口の確認・40 声 bs 4 200 step・3.0 s/step・束の共有の割合 0.75・共有の内容 37(声の中央値 11)・型の最長 300・検証 L1 0.166・判定に使わない・ログ results/snv_i/smoke_cpu.log)
+  results/snv_i_smoke/(last.pt, split.json, train_log.json)
+2026-11-06T12:19:55Z smoke(段 I の煙テストの失敗の残り・GPU のメモリ不足で 0 step・split.json だけ)
+  results/snv_i_smoke/
+2026-11-06T12:25:53Z smoke(段 I の煙テストの失敗の残り・2 回目・GPU のメモリ不足で 0 step)
+  results/snv_i_smoke/
+2026-11-06T12:33:46Z smoke(段 I の煙テストの失敗の残り・3 回目・逆伝播で断片化のメモリ不足)
+  results/snv_i_smoke/
+2026-11-06T12:41:55Z smoke(段 I の本番の入口・200 step・ログ results/snv_i/smoke.log・System の変換 ok)
+  results/snv_i_smoke/
+2026-11-06T17:12:31Z smoke(段 I のやり直しの本番の入口・移動平均の型・200 step・GPU・ログ results/snv_i2_smoke.log・System の変換 ok)・CPU の煙は 1 step が重く途中で止めた(results/snv_i/smoke_ema_cpu.log)
+  results/snv_i_smoke_ema/
+2026-11-06T20:06:24Z smoke(M5 の判別器の経路の確認・束 4・200 step・GPU・T8 と並走)
+  results/snv_i_smoke_crit/
+2026-11-06T21:00:43Z smoke(段 I3 の本番の入口・判別器 λ 1・束 16・200 step・GPU・ログ results/snv_i3/smoke.log・System の変換 ok)
+  results/snv_i3_smoke/
+2026-11-06T21:38:22Z 負け腕の重複(last.pt = step10k.pt と md5 が同じ・判定は step10k.pt で記録済み)
+  results/snv_i_m3/last.pt
+  results/snv_i2_m3e/last.pt

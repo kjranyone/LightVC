@@ -1,0 +1,19 @@
+2026-11-07T02:14:03Z smoke(diag_snv_a1x の入口・200 step・40 声)
+  results/diag_snv_a1x_smoke/
+2026-11-07T02:17:47Z smoke(段 I4 の固い共有の経路・束 4・200 step・GPU・A1 の diag と並走)
+  results/snv_i4_smoke/
+2026-11-07T02:58:25Z smoke(段 I4 の本番の入口・固い共有 + 判別器 λ 3・束 16・200 step・GPU・ログ results/snv_i4/smoke.log・System の変換 ok)
+  results/snv_i4_smoke/
+2026-11-07T04:50:35Z smoke(段 I5 の本番の入口・学習の残差なしの固い共有 + 明示の演技・束 16・200 step・GPU・ログ results/snv_i5/smoke.log・System の変換 ok)
+  results/snv_i5_smoke/
+2026-11-07T10:27Z results/snv_i5/content_probe_smoke.json(i5_content_probe の煙 n=2・本番 content_probe.json に置き換え済み)
+2026-11-07T10:31Z results/snv_t11_smoke/(T11 の煙 f_share_K8_u120_c0.5_band0.1_ste_w0 の 1200 step・動作確認だけ)
+2026-11-07T11:17Z results/snv_i6_smoke/(段 I6 の煙 200 step・帯の対応の動作確認だけ)
+2026-11-07T13:07Z results/snv_t12_smoke/(T12 の煙 gste side2 g8 の 1200 step・動作確認だけ)
+2026-11-07T13:15Z results/snv_i7_smoke/(M10 の実データの煙 200 step・動作確認だけ)
+2026-11-07T15:37:16Z results/snv_t14_smoke/ (T14 の gloo の煙 1,100 step・動作確認のみ)
+2026-11-07T16:04:50Z results/snv_t15_smoke/ (T15 の推論の E の回帰の煙 1,100 step・動作確認のみ)
+2026-11-07T16:10:59Z results/snv_i8_smoke/ (M13 の実データの煙 200 step + 内容の探り n=2・動作確認のみ)
+2026-11-07T23:22:29Z results/snv_i8_m13/step10k_G.pt (G を Es に置いた派生の ckpt 200 MB・D(G) の測定 draw_10k_G*.json の後・判定 results/snv_i8/verdict.yaml の後・step10k.pt から作り直せる)
+2026-11-07T23:22:29Z results/snv_i8_m13/step20k.pt (段 I8 の中間 snap 232 MB・20k の途中信号 ff_20k.json / dev_snv_i8_m13-step20k.json の後・判定の後・負けの腕は best + last だけ残す)
+2026-11-07T23:25:09Z results/snv_i9_smoke/ + results/snv_i9_smoke.train.log (段 I9 の推論の E だけの学習の煙 200 step・乱しあり・物差しの読み込みの確認だけ)
