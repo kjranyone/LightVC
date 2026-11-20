@@ -37,6 +37,7 @@ target参照 → voice / style / texture ──┤
 | [RESEARCH.md](RESEARCH.md) | 確認済みの到達点、証拠の所在、未解決の問い |
 | [synth_nam_vc.md](synth_nam_vc.md) | **本線(2026-11-01 リセット)**: 構音の構造のアナログモデリング・低遅延で実現できるモデリングがフロンティア（PROPOSED rev1） |
 | [paper_snv.md](paper_snv.md) | **本線の論文・研究の正本(2026-11-06〜・PROPOSED)**。オーナー方針(11-06)「では論文からのみ学習／評価を行うこと」: 演奏と回路の境界は内容で条件づけた共有でだけ決まる(命題 1 = 自己の reamp では変換が決まらない・命題 2 = 内容の条件付き分布の共有で決まる)。以後の学習は本稿 §6 の管路(段 T 合成の世界での立証 → 段 D データ → 段 I Irodori の全量 → 段 P 製品)の段としてだけ走らせる |
+| [windows_handoff.md](windows_handoff.md) | K3G の製品の経路を Windows の実機で確かめるための引き継ぎ(重みの置き場所・確かめる順・間に合わないときの手) |
 | [renderer.md](renderer.md) | rvoc系出力部(製品の候補の描画器 rvoc3hi)の設計（PROPOSED・耳記録はリセット前で撤回） |
 | [kansei_control.md](kansei_control.md) | 官能評価、萌えのパラメタ化、再生側UX（PROPOSED） |
 | [design_laws.md](design_laws.md) | 設計三層則と起動前検査L/I/C（規範・全学習腕必須） |
