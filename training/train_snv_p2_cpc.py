@@ -23,6 +23,28 @@ c と z を共有の線形で D 次元へ射影して、登録の有声のフレ
 --pair λ(P14)= 同じ文を別の声が読んだ組(E1 の学習の声・train_snv_p13.text_pairs)の、全長の発話の文脈 c の有声のフレームの袋の MMD²(train_snv_p13.mmd2)を λ 倍で足す。
 CPC(同じ発話の中の負例)には声を持つ得が無く、再現の損失も無い = 袋の差の罰に逆らう力が無い。演奏 = 凍結した c そのもの(平均も引かない)。
     cd training && uv run --no-sync python train_snv_p2_cpc.py --tag snv_p14_pcpc --aug --pair 1.0 --init results/snv_p2b_cpc/last.pt --steps 20000 --prereg results/snv_p14/prereg.yaml
+--xview(段 P24 step b・paper_snv §5 M30)= 視点を 1 つ足す: 同じ発話の擬似の操作者の版(data/snv_p_feat_x16 = WORLD の高さと声道の長さの下げ + 録音の鎖 v2・フレームは元の音と揃っている)に
+同じ伸縮・傾きの乱しを掛けた入力の文脈 c から、加工しない入力の未来 z を当てる InfoNCE を、元と乱しの 2 つと平均する。当てる先は加工しない音のまま(加工は入力側だけ)。
+    cd training && uv run --no-sync python train_snv_p2_cpc.py --tag snv_p24_xcpc --aug --xview --prereg results/snv_p24/prereg.yaml
+--rview(段 P25 step b・paper_snv §5 M31)= さらに視点を 1 つ: 同じ発話の「本物の非音声の音源を足した版」(data/snv_p_feat_rec2・M18 の入力 = 本物の雑音と歌の無い音楽・残響・音量。版 k0 / k1 を試料ごとに半々)に
+同じ伸縮・傾きの乱しを掛けた入力の文脈 c から、加工しない入力の未来 z を当てる InfoNCE を足す(--xview と組む = 4 視点の平均)。
+    cd training && uv run --no-sync python train_snv_p2_cpc.py --tag snv_p25_xrcpc --aug --xview --rview --prereg results/snv_p25/prereg.yaml
+--dview(段 P30・paper_snv §5 M33)= 視点を 1 つ足す: 段 D の、同じ文を別の声が読んだ発話の組(data/snv_p_feat_dalign = snv_p30_align.py の DTW の時刻の対応)。
+声 A の発話(伸縮・傾きの乱しを掛ける)の文脈 c から、声 B の発話の加工しない z の「対応する位置の未来」を当てる InfoNCE(負例は B の同じ窓の別の時刻・正例から D_GAP フレーム以上離す)を、元・乱し・擬似の操作者の 3 つと平均する。
+当てる先は B の加工しない音の z(音響の回帰の対にしない・対応は正例の位置にだけ使う)。--xview と組む。
+    cd training && uv run --no-sync python train_snv_p2_cpc.py --tag snv_p30_dcpc --aug --xview --dview --prereg results/snv_p30/prereg.yaml
+--rdir <dir>(段 P57 step b・paper_snv §5 M42)= --rview の版の置き場を替える(既定 data/snv_p_feat_rec2)。data/snv_p_feat_fr57 = 族の混ぜを研究の形の前段に通した特徴(snv_p57_feat.py・k0 = Irodori の声・k1 = 擬似の操作者の版)。
+--dview と --rview を組むと 5 視点(元・乱し・擬似の操作者・別の声・前段を通った入力)の平均。
+    cd training && uv run --no-sync python train_snv_p2_cpc.py --tag snv_p57_rcpc --aug --xview --dview --rview --rdir data/snv_p_feat_fr57 --prereg results/snv_p57/prereg.yaml
+--vsel f / q(段 P70・paper_snv 系 2x・診断)= 学習の声を選ぶ: f = 男声(em*)を全て除く / q = 男声と同じ数の女声を乱数(種 70)で除く(数を揃えた対照)。全ての視点(元・擬似の操作者・別の声の組)に同じ選びが掛かる。
+    cd training && uv run --no-sync python train_snv_p2_cpc.py --tag diag_snv_p70_fcpc --aug --xview --dview --vsel f --prereg results/snv_p70/prereg.yaml
+--jview g(段 P86・paper_snv 系 2x (xviii))= 視点を 1 つ足す: 伸縮・傾きの乱しを掛けた入力の包絡(c0〜c24)に、フレームと次元ごとに独立な正規の雑音を足す。
+係数ごとの標準偏差 = results/snv_p85/jitter_shape.json の s(本物の男声の崩れる源の、包絡のフレームごとの余分な揺れの見積もり)× 発話ごとの倍率 U(0, g)。
+その文脈 c から、加工しない入力の未来 z を当てる InfoNCE を他の視点と平均する(--xview と組む)。当てる先は加工しない音のまま。
+--seed n = 重みの初めの値・束の並び・乱しの乱数の種(渡さないと、これまでどおり束と乱しは 0・重みは種なし)。
+--ctc λ(段 P81・paper_snv 系 2x (xvii))= 補助の損失: 普通の発話の全長(伸縮・傾きの乱しを掛ける)の文脈 c を 4 フレームずつ平均して(50 fps)2 層の頭を置き、台詞の音素の列(results/snv_p81/phones.json = 合成の台詞の文を辞書の G2P に通したもの)を CTC で当てる(1 歩に N_CTC 本)。
+音素の無い発声には掛けない。頭は符号に入れない(演奏は c のまま・推論で使わない)。
+    cd training && uv run --no-sync python train_snv_p2_cpc.py --tag diag_snv_p81_ccpc --aug --xview --dview --ctc 0.5 --init results/snv_p30_dcpc/last.pt --steps 10000 --prereg results/snv_p81/prereg.yaml
     cd training && uv run --no-sync python train_snv_p2_cpc.py --tag snv_p10_wcpc --aug --white 64 --init results/snv_p2b_cpc/last.pt --steps 20000 --prereg results/snv_p10/prereg.yaml
 """
 from __future__ import annotations
@@ -30,6 +52,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import random
 import time
 from pathlib import Path
@@ -42,6 +65,8 @@ import torch.nn.functional as F
 import train_snv_p1 as T
 
 ROOT = Path(__file__).resolve().parent.parent
+XFEAT = ROOT / os.environ.get("SNV_XFEAT", "data/snv_p_feat_x16")
+RFEAT = ROOT / "data/snv_p_feat_rec2"
 D_IN = 30
 CH = 256
 KS = (1, 2, 4, 8, 12, 16, 24)
@@ -50,6 +75,13 @@ CROP = 512
 MIN_GAP = 5
 ENR = 600
 N_PAIR = 4
+N_CTC = 8
+CTC_POOL = 4
+DALIGN = ROOT / "data/snv_p_feat_dalign/align.npz"
+D_BS = 16
+D_LB = 768
+D_GAP = 12
+D_PAD = 48
 MMD_FR = 256
 N_ENR = 2
 SHRINK = 0.1
@@ -111,6 +143,59 @@ def info_nce(z: torch.Tensor, c: torch.Tensor, m: torch.Tensor, W: nn.ModuleList
     return torch.stack(losses).mean(), accs
 
 
+def info_nce_x(zb: torch.Tensor, ca: torch.Tensor, ma: torch.Tensor, nb: torch.Tensor, jb: torch.Tensor, W: nn.ModuleList, g: torch.Generator) -> tuple[torch.Tensor, list[float]]:
+    B, C, L = ca.shape
+    zt, ct = zb.transpose(1, 2), ca.transpose(1, 2)
+    losses, accs = [], []
+    for k, Wk in zip(KS, W):
+        n = L - k
+        sc = Wk(ct[:, :n]) @ zt.transpose(1, 2) / math.sqrt(C)
+        tp = jb[:, k:]
+        valid = ((ma[:, :n] * ma[:, k:]) > 0) & (tp >= 0) & (tp < nb[:, None])
+        span = (nb - 2 * D_GAP).clamp(min=1)[:, None, None]
+        off = D_GAP + (torch.rand(B, n, N_NEG, generator=g, device=ca.device) * span).long().clamp(max=int(zb.shape[2]))
+        pos = tp.clamp(min=0)[..., None]
+        idx = torch.cat([pos, (pos + off) % nb[:, None, None]], 2)
+        lv = torch.gather(sc, 2, idx)[valid]
+        losses.append(F.cross_entropy(lv, torch.zeros(len(lv), dtype=torch.long, device=ca.device)))
+        accs.append(float((lv.argmax(1) == 0).float().mean()))
+    return torch.stack(losses).mean(), accs
+
+
+def load_d(names: list[str]) -> tuple[dict, list[tuple], dict]:
+    tr = set(names)
+    al = np.load(DALIGN)
+    keys = [tuple(k.split("|")) for k in al.files]
+    keys = [k for k in keys if k[0] in tr and k[2] in tr]
+    need = sorted({(k[0], k[1]) for k in keys} | {(k[2], k[3]) for k in keys})
+    us = {}
+    for v, s in need:
+        u = T.load_utt(T.FEAT / "d" / v / f"{s}.npz")
+        us[(v, s)] = np.concatenate([u["y"], u["v"][None]], 0)
+    return us, keys, {k: al["|".join(k)].astype(np.int64) for k in keys}
+
+
+def d_batch(us: dict, keys: list[tuple], al: dict, bs: int, rng: random.Random) -> tuple:
+    XA = np.zeros((bs, T.D_Y + 1, CROP), np.float32)
+    XB = np.zeros((bs, T.D_Y + 1, D_LB), np.float32)
+    MA = np.zeros((bs, CROP), np.float32)
+    JB = np.full((bs, CROP), -1, np.int64)
+    NB = np.ones(bs, np.int64)
+    for i in range(bs):
+        k = keys[rng.randrange(len(keys))]
+        a, b, j = us[(k[0], k[1])], us[(k[2], k[3])], al[k]
+        L = min(a.shape[1], len(j))
+        s = rng.randint(0, max(0, L - CROP))
+        n = min(CROP, L - s)
+        b0 = max(0, int(j[s]) - D_PAD)
+        nb = min(D_LB, b.shape[1] - b0)
+        XA[i, :, :n], MA[i, :n] = a[:, s:s + n], 1.0
+        XB[i, :, :nb], NB[i] = b[:, b0:b0 + nb], nb
+        jj = j[s:s + n] - b0
+        JB[i, :n] = np.where((jj >= 0) & (jj < nb), jj, -1)
+    return torch.from_numpy(XA), torch.from_numpy(MA), torch.from_numpy(XB), torch.from_numpy(NB), torch.from_numpy(JB)
+
+
 def load(names: list[str], sig: np.ndarray | None = None) -> tuple[list[np.ndarray], np.ndarray, list[int]]:
     us, lab = [], []
     for i, v in enumerate(names):
@@ -121,8 +206,10 @@ def load(names: list[str], sig: np.ndarray | None = None) -> tuple[list[np.ndarr
     return [np.concatenate([u["y"], u["v"][None]], 0) for u in us], sig, lab
 
 
-def batch(ys: list[np.ndarray], bs: int, rng: random.Random, lab: list[int] | None = None, js: list | None = None) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def batch(ys: list[np.ndarray], bs: int, rng: random.Random, lab: list[int] | None = None, js: list | None = None, xs2: list[np.ndarray] | None = None, xs3: tuple | None = None) -> tuple:
     X = np.zeros((bs, T.D_Y + 1, CROP), np.float32)
+    X2 = np.zeros((bs, T.D_Y + 1, CROP), np.float32)
+    X3 = np.zeros((bs, T.D_Y + 1, CROP), np.float32)
     M = np.zeros((bs, CROP), np.float32)
     S = np.zeros(bs, np.int64)
     for i in range(bs):
@@ -131,11 +218,25 @@ def batch(ys: list[np.ndarray], bs: int, rng: random.Random, lab: list[int] | No
             js.append(j)
         x = ys[j]
         S[i] = lab[j] if lab is not None else 0
-        L = x.shape[1]
+        x3 = xs3[rng.randrange(len(xs3))][j] if xs3 is not None else None
+        L = min([x.shape[1]] + ([xs2[j].shape[1]] if xs2 is not None else []) + ([x3.shape[1]] if x3 is not None else []))
         s = rng.randint(0, max(0, L - CROP))
         n = min(CROP, L - s)
         X[i, :, :n], M[i, :n] = x[:, s:s + n], 1.0
-    return torch.from_numpy(X), torch.from_numpy(M), torch.from_numpy(S)
+        if xs2 is not None:
+            X2[i, :, :n] = xs2[j][:, s:s + n]
+        if x3 is not None:
+            X3[i, :, :n] = x3[:, s:s + n]
+    out = (torch.from_numpy(X), torch.from_numpy(M), torch.from_numpy(S))
+    return out + ((torch.from_numpy(X2),) if xs2 is not None else ()) + ((torch.from_numpy(X3),) if xs3 is not None else ())
+
+
+def load_x(names: list[str], root: Path = XFEAT, suffix: str = "") -> list[np.ndarray]:
+    us = []
+    for v in names:
+        for p in sorted((T.FEAT / "e1" / v).glob("t*.npz")) + sorted((T.FEAT / "e1nv" / v).glob("*.npz")):
+            us.append(T.load_utt(root / p.parent.parent.name / v / f"{p.stem}{suffix}.npz"))
+    return [np.concatenate([u["y"], u["v"][None]], 0) for u in us]
 
 
 class GradRev(torch.autograd.Function):
@@ -322,19 +423,48 @@ def main() -> int:
     ap.add_argument("--white", type=int, default=0)
     ap.add_argument("--pair", type=float, default=0.0)
     ap.add_argument("--init", default="")
+    ap.add_argument("--xview", action="store_true")
+    ap.add_argument("--rview", action="store_true")
+    ap.add_argument("--dview", action="store_true")
+    ap.add_argument("--rdir", default="data/snv_p_feat_rec2")
+    ap.add_argument("--vsel", default="", choices=("", "f", "q"))
+    ap.add_argument("--ctc", type=float, default=0.0)
+    ap.add_argument("--jview", type=float, default=0.0)
+    ap.add_argument("--seed", type=int, default=None)
+    ap.add_argument("--jshape", default="results/snv_p85/jitter_shape.json")
+    ap.add_argument("--phones", default="results/snv_p81/phones.json")
     a = ap.parse_args()
     out = ROOT / "results" / a.tag
     out.mkdir(parents=True, exist_ok=True)
     if not a.smoke and not (ROOT / a.prereg).exists():
         print(f"{a.prereg} が無い: 起動しない", flush=True)
         return 1
-    print("prereg", ROOT / a.prereg, "aug", a.aug, "inv", a.inv, "alpha", (a.amin, a.amax), "eq", a.eq, "spk", a.spk, flush=True)
+    print("prereg", ROOT / a.prereg, "aug", a.aug, "inv", a.inv, "alpha", (a.amin, a.amax), "eq", a.eq, "spk", a.spk, "xview", a.xview, flush=True)
+    assert not a.xview or (a.aug and not a.white and a.inv == 0), "--xview は --aug と組む(--white・--inv とは組まない)"
+    assert not a.rview or a.xview, "--rview は --xview と組む"
+    assert not a.dview or a.xview, "--dview は --xview と組む"
     unit_test()
     split = json.loads((ROOT / "results/snv_p1_n/split.json").read_text())
     tr = split["train"][:40] if a.smoke else split["train"][:: a.subset]
+    if a.vsel:
+        males = [v for v in tr if v.startswith("em")]
+        drop = set(males) if a.vsel == "f" else set(random.Random(70).sample([v for v in tr if v.startswith("ef")], len(males)))
+        tr = [v for v in tr if v not in drop]
+        print("vsel", a.vsel, "除いた声", len(drop), "残り 女 / 男", sum(v.startswith("ef") for v in tr), sum(v.startswith("em") for v in tr), flush=True)
     xs, sig, lab = load(tr)
+    xx = load_x(tr) if a.xview else None
+    if xx is not None:
+        assert len(xx) == len(xs) and max(abs(p.shape[1] - q.shape[1]) for p, q in zip(xs, xx)) <= 2, "擬似の操作者の版の発話が元と揃っていない"
+        print("xview utts", len(xx), flush=True)
+    xr = tuple(load_x(tr, ROOT / a.rdir, f"_k{k}") for k in (0, 1)) if a.rview else None
+    if xr is not None:
+        assert all(len(q) == len(xs) and max(abs(p.shape[1] - r.shape[1]) for p, r in zip(xs, q)) <= 2 for q in xr), "本物の非音声の音源を足した版の発話が元と揃っていない"
+        print("rview", a.rdir, "utts", len(xr[0]), "× 版 2", flush=True)
+    dd = load_d(tr) if a.dview else None
+    if dd is not None:
+        print("dview utts", len(dd[0]), "組", len(dd[1]), flush=True)
     norm_of: dict = {}
-    if a.white or a.pair > 0:
+    if a.white or a.pair > 0 or a.ctc > 0:
         k = 0
         for i, v in enumerate(tr):
             nn_ = len(sorted((T.FEAT / "e1" / v).glob("t*.npz")))
@@ -350,9 +480,22 @@ def main() -> int:
         print("pairs", len(pidx), flush=True)
     print(f"voices {len(tr)} utts {len(xs)} frames {sum(x.shape[1] for x in xs)}", flush=True)
     dev = "cuda"
+    cidx: list = []
+    if a.ctc > 0:
+        ph = json.loads((ROOT / a.phones).read_text())
+        for i, v in enumerate(tr):
+            for t, y in ph["labels"][v].items():
+                if int(t[1:]) < len(norm_of[i]) and 0 < len(y) * 2 * CTC_POOL <= xs[norm_of[i][int(t[1:])]].shape[1]:
+                    cidx.append((norm_of[i][int(t[1:])], y))
+        chead = nn.Sequential(nn.Linear(CH, CH), nn.ReLU(), nn.Linear(CH, len(ph["vocab"]) + 1)).to(dev)
+        print("ctc utts", len(cidx), "vocab", len(ph["vocab"]), flush=True)
     sig_t = torch.from_numpy(sig).to(dev)
     Ms, tv = torch.from_numpy(warp_mats(a.amin, a.amax)).to(dev), torch.from_numpy(tilt_vec()).to(dev)
     eqb = torch.from_numpy(eq_basis()).to(dev)
+    jit = torch.tensor(json.loads((ROOT / a.jshape).read_text())["s"], dtype=torch.float32, device=dev) if a.jview > 0 else None
+    accj: list = []
+    if a.seed is not None:
+        torch.manual_seed(a.seed)
     m = CPC().to(dev)
     if a.init:
         st0 = torch.load(ROOT / a.init, map_location="cpu", weights_only=False)
@@ -362,17 +505,17 @@ def main() -> int:
         print("init", a.init, "step", st0.get("step"), flush=True)
     wh = WHead(a.white).to(dev) if a.white else None
     adv = SpkAdv(len(tr)).to(dev)
-    params = list(m.parameters()) + (list(adv.parameters()) if a.spk > 0 else []) + (list(wh.parameters()) if wh is not None else [])
+    params = list(m.parameters()) + (list(adv.parameters()) if a.spk > 0 else []) + (list(wh.parameters()) if wh is not None else []) + (list(chead.parameters()) if a.ctc > 0 else [])
     opt = torch.optim.AdamW(params, lr=2e-4, weight_decay=1e-4)
     steps = 200 if a.smoke else a.steps
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1.0, s / 1000) * 0.5 * (1 + math.cos(math.pi * min(s, steps) / steps)))
-    rng, g = random.Random(0), torch.Generator(device=dev).manual_seed(0)
+    rng, g = random.Random(a.seed or 0), torch.Generator(device=dev).manual_seed(a.seed or 0)
     np.save(out / "sig.npy", sig)
     t0 = time.time()
     for step in range(1, steps + 1):
         jb: list = []
-        X, M, S = batch(xs, a.bs, rng, lab, jb)
-        X, M, S = X.to(dev), M.to(dev), S.to(dev)
+        bt = batch(xs, a.bs, rng, lab, jb, xx, xr)
+        X, M, S = bt[0].to(dev), bt[1].to(dev), bt[2].to(dev)
         li = torch.zeros((), device=dev)
         if wh is not None:
             picks = [rng.sample([k for k in norm_of[sp] if k != j], N_ENR) for sp, j in zip(S.tolist(), jb)]
@@ -412,7 +555,29 @@ def main() -> int:
         elif a.aug:
             _, ca = m.encode(x_torch(augment(X, Ms, tv, g), sig_t))
             la, accs = info_nce(z, ca, M, m.W, g)
-            loss = 0.5 * (loss + la)
+            if a.xview:
+                _, cx = m.encode(x_torch(augment(bt[3].to(dev), Ms, tv, g), sig_t))
+                lx, accx = info_nce(z, cx, M, m.W, g)
+                views = [loss, la, lx]
+                if a.dview:
+                    XA, MA, XB, NB, JB = (q.to(dev) for q in d_batch(*dd, D_BS, rng))
+                    zb, _ = m.encode(x_torch(XB, sig_t))
+                    _, cd = m.encode(x_torch(augment(XA, Ms, tv, g), sig_t))
+                    ld, accd = info_nce_x(zb, cd, MA, NB, JB, m.W, g)
+                    views.append(ld)
+                if a.rview:
+                    _, cr = m.encode(x_torch(augment(bt[4].to(dev), Ms, tv, g), sig_t))
+                    lr_, accr = info_nce(z, cr, M, m.W, g)
+                    views.append(lr_)
+                if a.jview > 0:
+                    XJ = augment(X, Ms, tv, g).clone()
+                    XJ[:, :25] = XJ[:, :25] + jit[None, :, None] * (a.jview * torch.rand(X.shape[0], 1, 1, generator=g, device=dev)) * torch.randn(X.shape[0], 25, X.shape[2], generator=g, device=dev)
+                    _, cj = m.encode(x_torch(XJ, sig_t))
+                    lj, accj = info_nce(z, cj, M, m.W, g)
+                    views.append(lj)
+                loss = sum(views) / len(views)
+            else:
+                loss = 0.5 * (loss + la)
         lp = torch.zeros((), device=dev)
         if a.pair > 0:
             sel = [j for pr in rng.sample(pidx, N_PAIR) for j in pr]
@@ -433,6 +598,17 @@ def main() -> int:
                 out_.append(P13.mmd2(bags[0], bags[1]))
             lp = torch.stack(out_).mean()
             loss = loss + a.pair * lp
+        lc = torch.zeros((), device=dev)
+        if a.ctc > 0:
+            sel = rng.sample(cidx, N_CTC)
+            Lc = max(xs[j].shape[1] for j, _ in sel)
+            XC = torch.zeros(len(sel), T.D_Y + 1, Lc)
+            for i, (j, _) in enumerate(sel):
+                XC[i, :, :xs[j].shape[1]] = torch.from_numpy(xs[j])
+            _, cc = m.encode(x_torch(augment(XC.to(dev), Ms, tv, g), sig_t))
+            lp_ = F.log_softmax(chead(F.avg_pool1d(cc, CTC_POOL).transpose(1, 2)), -1).transpose(0, 1)
+            lc = F.ctc_loss(lp_, torch.cat([torch.tensor(y) for _, y in sel]).to(dev), torch.tensor([xs[j].shape[1] // CTC_POOL for j, _ in sel]), torch.tensor([len(y) for _, y in sel]), blank=0, zero_infinity=True)
+            loss = loss + a.ctc * lc
         sacc = 0.0
         if a.spk > 0:
             ls, sacc = spk_loss(adv, c, M, S, a.spk * min(1.0, step / 5000))
@@ -445,11 +621,12 @@ def main() -> int:
         opt.step()
         sched.step()
         if step % 500 == 0 or a.smoke and step % 50 == 0:
-            print(f"step {step} loss {float(loss):.3f} inv {float(li):.3f} pair {float(lp):.4f} spk_acc {sacc:.3f} acc " + " ".join(f"k{k}:{x:.2f}" for k, x in zip(KS, accs)) + f" {(time.time() - t0) / step:.3f}s/step", flush=True)
+            print(f"step {step} loss {float(loss):.3f} inv {float(li):.3f} pair {float(lp):.4f} ctc {float(lc):.3f} spk_acc {sacc:.3f} acc " + " ".join(f"k{k}:{x:.2f}" for k, x in zip(KS, accs)) + (" xacc " + " ".join(f"k{k}:{x:.2f}" for k, x in zip(KS, accx)) if a.xview else "") + (" racc " + " ".join(f"k{k}:{x:.2f}" for k, x in zip(KS, accr)) if a.rview else "") + (" dacc " + " ".join(f"k{k}:{x:.2f}" for k, x in zip(KS, accd)) if a.dview else "") + (" jacc " + " ".join(f"k{k}:{x:.2f}" for k, x in zip(KS, accj)) if a.jview > 0 else "")
+                  + f" {(time.time() - t0) / step:.3f}s/step", flush=True)
         if step % 5000 == 0 or step == steps:
-            extra = ({"adv": adv.state_dict()} if a.spk > 0 else {}) | ({"white": wh.state_dict(), "dw": a.white} if wh is not None else {})
+            extra = ({"adv": adv.state_dict()} if a.spk > 0 else {}) | ({"white": wh.state_dict(), "dw": a.white} if wh is not None else {}) | ({"ctc": chead.state_dict(), "ctc_w": a.ctc} if a.ctc > 0 else {})
             torch.save({"cpc": m.state_dict(), "sig": sig, "step": step} | extra, out / "last.pt")
-            if step == steps // 2:
+            if step == steps // 2 or a.xview and step % 10000 == 0 and step < steps:
                 torch.save({"cpc": m.state_dict(), "sig": sig, "step": step} | extra, out / f"step{step // 1000}k.pt")
     return 0
 

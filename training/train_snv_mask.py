@@ -11,6 +11,9 @@ features は門が開いたフレームだけ重みを掛け、有声と高さ�
 cfg の hyst = [on, off](paper_snv rev39・段 I24)= 門の確率が 0.5 以上で on フレーム続いたら開き、0.5 未満で off フレーム続いたら閉じる(因果の持続の事前)。
 重みの網に dec = "myin" を付けると(paper_snv §9 O13・段 I19 の後の切り分け)、有声と高さを snv_p0_front.f0_track_myin(YIN の低い帯の区間とスペクトルに重みを掛けてから候補を作る・重みが全て 1 のフレームは元のまま)で決める。
 --target ratio_nf(paper_snv rev36 の候補): 比の当てる先で床を声の側に数える = |S + F|² / (|S + F|² + |N − F|²)(F = 族の床・操作者の録音の一部として外さない)。features は ratio と同じ。
+--dil d1,d2,…(段 P50): 重みの網の因果の畳み込みの膨らみの並び(既定 train_snv_sep.DIL = 受容野 257 フレーム)。--crop N: 学習の切り出しのフレーム数(既定 800 = 4 s・検証の束は 800 のまま)。
+--band λ(paper_snv rev91 §5 M35・段 P37 step b): 損失に、前段 v3 の包絡の mel の帯ごとの、重みを通したパワーの比の対数の誤差 |log(g_θ + 1e-4) − log(g* + 1e-4)|(g = (重み ⊙ P)·fb / P·fb・g* は理想の比の重み)の平均を λ 倍で足す = 符号の入力(対数の包絡)の誤差に揃えた項。
+--eval_only <ckpt>: 保存した重みの網を同じ検証の束で測って終わる(l1w・帯の誤差 lb・足された音と声の残り)。
 """
 from __future__ import annotations
 
@@ -37,11 +40,11 @@ B0 = 3.0
 
 
 class MaskNet(nn.Module):
-    def __init__(self, ch: int = 256, b0: float = B0, nb: int = NB) -> None:
+    def __init__(self, ch: int = 256, b0: float = B0, nb: int = NB, dil: tuple = SEP.DIL) -> None:
         super().__init__()
         self.front = SEP.Front()
         self.inp = nn.Conv1d(SEP.D_IN, ch, 1)
-        self.blocks = nn.ModuleList([SEP.Block(ch, d) for d in SEP.DIL])
+        self.blocks = nn.ModuleList([SEP.Block(ch, d) for d in dil])
         self.ln = nn.LayerNorm(ch)
         self.head = nn.Conv1d(ch, nb, 1)
         with torch.no_grad():
@@ -62,14 +65,29 @@ def power(w: torch.Tensor) -> torch.Tensor:
     return torch.fft.rfft(fr * win, n=SEP.NFFT).abs().pow(2)
 
 
-def loss_fn(logit: torch.Tensor, b: dict) -> tuple[torch.Tensor, dict]:
+BAND_EPS = 1e-4
+_FB: dict = {}
+
+
+def band_err(m: torch.Tensor, irm: torch.Tensor, px: torch.Tensor) -> torch.Tensor:
+    if px.device not in _FB:
+        _FB[px.device] = torch.from_numpy(PA._np_consts()[0]).float().to(px.device)
+    fb = _FB[px.device]
+    den = px @ fb.T + 1e-12
+    return (torch.log((m * px) @ fb.T / den + BAND_EPS) - torch.log((irm * px) @ fb.T / den + BAND_EPS)).abs()
+
+
+def loss_fn(logit: torch.Tensor, b: dict, band: float = 0.0) -> tuple[torch.Tensor, dict]:
     m = torch.sigmoid(logit).transpose(1, 2)
     ps, pn, px = power(b["s"]), power(b["n"]), power(b["x"])
     irm = ps / (ps + pn + 1e-10)
     w = (px + 1e-10) ** 0.3
     w = w / w.mean(dim=(1, 2), keepdim=True)
     l = (w * (m - irm).abs()).mean()
-    return l, {"l1w": float(l)}
+    if band <= 0.0:
+        return l, {"l1w": float(l)}
+    lb = band_err(m, irm, px).mean()
+    return l + band * lb, {"l1w": float(l), "lb": float(lb)}
 
 
 def loss_det(logit: torch.Tensor, b: dict) -> tuple[torch.Tensor, dict]:
@@ -104,12 +122,14 @@ class Gated(nn.Module):
         self.kind = "gate"
         self.dec = None
         self.hyst = None
+        self.thr = 0.5
+        self.gamma = 1.0
 
 
-def hysteresis(p: torch.Tensor, on: int, off: int) -> torch.Tensor:
+def hysteresis(p: torch.Tensor, on: int, off: int, thr: float = 0.5) -> torch.Tensor:
     out = torch.zeros(len(p), dtype=torch.bool)
     state, c_on, c_off = False, 0, 0
-    for t, v in enumerate((p >= 0.5).tolist()):
+    for t, v in enumerate((p >= thr).tolist()):
         c_on, c_off = (c_on + 1, 0) if v else (0, c_off + 1)
         if not state and c_on >= on:
             state = True
@@ -131,11 +151,13 @@ def features(M: nn.Module, x: np.ndarray, dev: str) -> dict:
     if getattr(M, "kind", "ratio") == "gate":
         xin = xt[None].to(dev)
         p = torch.sigmoid(M.gate(xin)[0, 0].double()).cpu()[:Tn]
-        op = hysteresis(p, *M.hyst) if M.hyst else p >= 0.5
+        op = hysteresis(p, *M.hyst, M.thr) if M.hyst else p >= M.thr
         mm = torch.sigmoid(M.mask(xin)[0].double()).transpose(0, 1).cpu()[:Tn].sqrt()
+        if M.gamma != 1.0:
+            mm = mm.pow(M.gamma)
         m = torch.where(op[:, None], mm, torch.ones_like(mm))
         u = features_with_mask(x, m, P.f0_track_myin(xt, m)[0] if M.dec == "myin" else None)
-        return u | {"gate_open": float(op.double().mean())}
+        return u | {"gate_open": float(op.double().mean()), "gate": op.numpy().astype(np.float32), "gate_p": p.numpy().astype(np.float32)}
     m = weight(M, M(xt[None].to(dev))[0].double()).transpose(0, 1).cpu()[:Tn]
     return features_with_mask(x, m, P.f0_track_myin(xt, m)[0] if getattr(M, "dec", None) == "myin" else None)
 
@@ -171,8 +193,10 @@ def load(path: Path, dev: str) -> nn.Module:
         out = Gated(G, load(ROOT / st["cfg"]["mask"], dev)).eval()
         out.dec = st["cfg"].get("dec")
         out.hyst = st["cfg"].get("hyst")
+        out.thr = float(st["cfg"].get("thr", 0.5))
+        out.gamma = float(st["cfg"].get("gamma", 1.0))
         return out
-    M = MaskNet(st["cfg"]["ch"]).to(dev).eval()
+    M = MaskNet(st["cfg"]["ch"], dil=tuple(st["cfg"].get("dil", SEP.DIL))).to(dev).eval()
     M.load_state_dict(st["M"])
     M.kind = st["cfg"].get("kind", "ratio")
     return M
@@ -211,6 +235,15 @@ def unit_tests() -> None:
         o, o2 = M2(z), M2(z2)
     assert float((o[..., :301] - o2[..., :301]).abs().max()) < 1e-5, "重みの網に先読みがある"
     assert float((o[..., 301:] - o2[..., 301:]).abs().max()) > 1e-6, "未来の書き換えで後ろが動かない(検査が無効)"
+    g = torch.Generator().manual_seed(0)
+    px, irm = torch.rand(2, 50, NB, generator=g) + 0.01, torch.rand(2, 50, NB, generator=g)
+    assert float(band_err(irm, irm, px).max()) == 0.0, "理想の重みで帯の誤差が 0 でない"
+    e1, e9 = float(band_err(torch.ones_like(irm), irm * 0.01, px).mean()), float(band_err(torch.full_like(irm, 0.1), irm * 0.01, px).mean())
+    assert e1 > e9 > 1.0, ("帯の誤差が深さの不足を罰しない", e1, e9)
+    zz = torch.zeros(2, NB, 50, requires_grad=True)
+    lf, _ = loss_fn(zz, {"s": torch.randn(2, 50 * H, generator=g) * 0.1, "n": torch.randn(2, 50 * H, generator=g) * 0.1, "x": torch.randn(2, 50 * H, generator=g) * 0.14}, 0.1)
+    lf.backward()
+    assert bool(torch.isfinite(zz.grad).all()) and float(zz.grad.abs().sum()) > 0, "帯の項の勾配"
     print("unit tests ok(重み 1 で前段 v3 と同じ・先読み 0)", flush=True)
 
 
@@ -230,12 +263,16 @@ def main() -> int:
     ap.add_argument("--target", default="ratio", choices=["ratio", "det", "ratio_nf", "gate"])
     ap.add_argument("--gate_mask", default="results/snv_i21_mask_nf/last.pt")
     ap.add_argument("--dec", default="myin")
+    ap.add_argument("--band", type=float, default=0.0)
+    ap.add_argument("--eval_only", default="")
+    ap.add_argument("--dil", default="")
+    ap.add_argument("--crop", type=int, default=SEP.CROP)
     a = ap.parse_args()
     det = a.target == "det"
     gate = a.target == "gate"
     parts = "ev" if a.target in ("det", "ratio_nf", "gate") else True
     split_nf = (lambda b: b | {"s": b["s"] + b["f"], "n": b["n"] - b["f"]}) if a.target == "ratio_nf" else (lambda b: b)
-    lossf = loss_gate if gate else loss_det if det else loss_fn
+    lossf = loss_gate if gate else loss_det if det else (lambda z, bb: loss_fn(z, bb, a.band))
     fam = SEP.FAMS[a.fam]
     out = ROOT / "results" / a.tag
     out.mkdir(parents=True, exist_ok=True)
@@ -246,20 +283,21 @@ def main() -> int:
     torch.manual_seed(a.seed)
     unit_tests()
     split = json.loads((ROOT / "results/snv_i8_m13/split.json").read_text())
-    tr, va = SEP.utterances(split["train"]), SEP.utterances(split["val"])
+    tr, va = SEP.utterances(split["train"], fast=bool(fam.get("fast"))), SEP.utterances(split["val"])
     bs_ = SEP.bg_split()
     (out / "split.json").write_text(json.dumps(split))
     (out / "bg_split.json").write_text(json.dumps(bs_, indent=0))
     ptr, pdv = SEP.make_pools(bs_, fam)
     print("fam", a.fam, fam, "utts train", len(tr), "val", len(va), "bg train", {k: len(v) for k, v in ptr.items()}, "dev", {k: len(v) for k, v in pdv.items()}, flush=True)
     dev = a.device
-    M = MaskNet(a.ch, -2.0, 1).to(dev) if gate else MaskNet(a.ch, -3.0 if det else B0).to(dev)
+    dil = tuple(int(v) for v in a.dil.split(",")) if a.dil else SEP.DIL
+    M = MaskNet(a.ch, -2.0, 1, dil).to(dev) if gate else MaskNet(a.ch, -3.0 if det else B0, NB, dil).to(dev)
     M.kind = a.target if det else "ratio"
-    print("mask params", sum(p.numel() for p in M.parameters()), "受容野", 1 + 2 * sum(SEP.DIL), "frames", flush=True)
+    print("mask params", sum(p.numel() for p in M.parameters()), "受容野", 1 + 2 * sum(dil), "frames", "切り出し", a.crop, "frames", flush=True)
     steps = 200 if a.smoke else a.steps
     opt = torch.optim.AdamW(M.parameters(), lr=a.lr, weight_decay=0.0)
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1.0, s / 500) * 0.5 * (1 + math.cos(math.pi * min(s, steps) / steps)))
-    dl = torch.utils.data.DataLoader(SEP.Mix(tr, ptr, a.seed, steps * a.bs, fam=fam, parts=parts), batch_size=a.bs, num_workers=a.workers, worker_init_fn=lambda i: torch.set_num_threads(1),
+    dl = torch.utils.data.DataLoader(SEP.Mix(tr, ptr, a.seed, steps * a.bs, fam=fam, parts=parts, crop=a.crop), batch_size=a.bs, num_workers=a.workers, worker_init_fn=lambda i: torch.set_num_threads(1),
                                      persistent_workers=a.workers > 0, prefetch_factor=4 if a.workers else None, drop_last=True)
     vspecs = SEP.val_specs(va, pdv, 8 if a.smoke else 24, fam)
     vbatches = list(torch.utils.data.DataLoader(SEP.Mix(va, pdv, 999, len(vspecs), vspecs, fam, parts=parts), batch_size=6, num_workers=2))
@@ -304,8 +342,9 @@ def main() -> int:
                     r["voice_lost"].append(float((d * ps[i]).sum() / (ps[i].sum() + 1e-10)))
                     r["fp_w"].append(float((d & ~lab[i]).float().mul(px[i]).sum() / (px[i].sum() + 1e-10)))
                     continue
-                r = rows.setdefault(c, {"l1w": [], "mask_mean": [], "noise_kept": [], "voice_kept": []})
+                r = rows.setdefault(c, {"l1w": [], "lb": [], "mask_mean": [], "noise_kept": [], "voice_kept": []})
                 r["l1w"].append(float((w[i] * (m[i] - irm[i]).abs()).sum() / w[i].sum()))
+                r["lb"].append(float(band_err(m[i], irm[i], px[i]).mean()))
                 r["mask_mean"].append(float(m[i].mean()))
                 e = m[i]
                 r["noise_kept"].append(float((e * pn[i]).sum() / (pn[i].sum() + 1e-10)))
@@ -313,6 +352,10 @@ def main() -> int:
         M.train()
         return {c: {kk: round(float(np.median(x)), 4) for kk, x in r.items()} for c, r in rows.items()}
 
+    if a.eval_only:
+        M.load_state_dict(torch.load(ROOT / a.eval_only, map_location="cpu", weights_only=False)["M"])
+        print("val", a.eval_only, json.dumps(evaluate()), flush=True)
+        return 0
     hist, t0, it = [], time.time(), iter(dl)
     M.train()
     for step in range(1, steps + 1):
@@ -329,7 +372,7 @@ def main() -> int:
             ev = evaluate()
             hist.append({"step": step, "val": ev})
             print("val", step, json.dumps(ev), flush=True)
-            st = {"M": M.state_dict(), "cfg": {"ch": a.ch, "dil": list(SEP.DIL), "nfft": SEP.NFFT, "hop": H, "fam": a.fam, "b0": -2.0 if gate else -3.0 if det else B0, "kind": "gate" if gate else "det" if det else "ratio", "target": a.target} | ({"mask": a.gate_mask, "dec": a.dec} if gate else {}), "step": step, "tag": a.tag, "prereg": a.prereg}
+            st = {"M": M.state_dict(), "cfg": {"ch": a.ch, "dil": list(dil), "crop": a.crop, "nfft": SEP.NFFT, "hop": H, "fam": a.fam, "b0": -2.0 if gate else -3.0 if det else B0, "band": a.band, "kind": "gate" if gate else "det" if det else "ratio", "target": a.target} | ({"mask": a.gate_mask, "dec": a.dec} if gate else {}), "step": step, "tag": a.tag, "prereg": a.prereg}
             torch.save(st, out / "last.pt.tmp")
             (out / "last.pt.tmp").replace(out / "last.pt")
             if step == 10000:

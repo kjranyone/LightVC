@@ -1,5 +1,5 @@
 """P 線(synth_nam_vc §8)の特徴: P0a の前段(snv_p0_front・48 kHz・200 fps・先読み 0)で f0・谷の値・包絡 25・周期性 4 を書き出す。
-組 = e1(data/snv_e1 の 600 声 × 10)・e1nv(data/snv_e1nv の 4,221)・d(data/snv_d = paper_snv 段 D の内容を共有するコーパス)・a0(results/snv_a0/wav = 目標と自己の評価)・n0r(results/snv_n0r/wav)・
+組 = e1(data/snv_e1 の 600 声 × 10)・e1nv(data/snv_e1nv の 4,221)・e1f(data/snv_e1f = 段 P55 の速く話す学習の声・名指しのときだけ)・d(data/snv_d = paper_snv 段 D の内容を共有するコーパス)・a0(results/snv_a0/wav = 目標と自己の評価)・n0r(results/snv_n0r/wav)・
 real(本物の男声 = 外郎売・namikawa の登録 30 s と 10 s の区間 = snv_a1_convert.segments・48 kHz へ)・vctk(VCTK の男声 6 人 × 2 の開発の入力)。
 出力 = data/snv_p_feat/{組}/{名}.npz(f0 [T]・ap [T]・env [25, T]・per [4, T]・float32)・real と vctk は wav も 48 kHz で置く。
     cd training && uv run --no-sync python snv_p_feat.py [組 ...]
@@ -34,6 +34,8 @@ def jobs_for(name: str) -> list:
         return [(f"e1/{p.parent.name}/{p.stem}", p) for p in sorted((ROOT / "data/snv_e1").glob("e*/t*.wav"))]
     if name == "e1nv":
         return [(f"e1nv/{p.parent.name}/{p.stem}", p) for p in sorted((ROOT / "data/snv_e1nv").glob("e*/*.wav"))]
+    if name == "e1f":
+        return [(f"e1f/{p.parent.name}/{p.stem}", p) for p in sorted((ROOT / "data/snv_e1f").glob("e*/t*.wav")) if ".tmp" not in p.name]
     if name == "d":
         return [(f"d/{p.parent.name}/{p.stem}", p) for p in sorted((ROOT / "data/snv_d").glob("e*/s*.wav"))]
     if name == "a0":

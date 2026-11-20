@@ -1,0 +1,29 @@
+
+# 2026-11-13T00:20:22Z 段 P41 の判定の記録の後(P41_same・results/snv_p41/prereg.yaml の result)。最終の門 results/snv_p41_gate/last.pt と測りに使った snv_p41_gate_t80 は残す
+results/snv_p41_gate/step10k.pt
+results/snv_p41_gate_t50/
+
+# 2026-11-13T00:22:00Z 段 P44 の煙(理想の重みの行の入口の確かめ・1 人)
+results/snv_p44/smoke_cv.json
+
+# 2026-11-13T00:49:05Z 段 P44 step b の煙(重みの混ぜの行の入口の確かめ・1 人)
+results/snv_p44/smoke_cv.json
+
+# 2026-11-13T01:43:36Z 段 P45 の煙(200 step の重み・門の保存に差し替え・本物の男声の物差しの入口で 1 人)
+results/snv_p45_mask_smoke/
+results/snv_p45_gate_smoke/
+results/snv_p45/smoke_cv.json
+
+# 2026-11-13T08:44:03Z 段 P47 の煙(幅 512 の 200 step の重み・門の保存に差し替えた形)。出荷の関門の台帳 results/snv_p47/ship・ship_rg は残す
+results/snv_p47_mask_smoke/
+results/snv_p47_gate_smoke/
+
+# 2026-11-13T16:33:26Z 段 P48 の煙(新しい条件と音楽の読み込みの入口の確かめ・1 人)
+results/snv_p48/smoke_cv.json
+
+# 2026-11-13T20:09:49Z 段 P50 の煙(膨らみ 10 段・8 s の切り出しの 200 step の重み)。出荷の関門の台帳 results/snv_p50/ship_rg は残す
+results/snv_p50_mask_smoke/
+# 段 P49 step a の冪の形(判定の記録の後・G_none)
+results/snv_p49_g050/
+results/snv_p49_g070/
+results/snv_p49_g150/

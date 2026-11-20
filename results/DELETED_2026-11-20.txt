@@ -1,0 +1,2 @@
+# 2026-11-20T00:32:07Z 段 P94 の CLI の煙の出力(判定は results/snv_p94/prereg.yaml の product_switch に記録済み)
+results/snv_p94/cli_smoke/out.wav

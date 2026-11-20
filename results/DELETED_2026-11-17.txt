@@ -1,0 +1,5 @@
+# 2026-11-17T12:09:34Z 古い動作確認のログ(どの資料からも参照なし・走行中のジョブは参照しない)
+results/snv_i2_smoke.log
+# 2026-11-17T14:29:04Z 段 P75 step a の煙(200 step・System で読んで変換まで確認済み・results/snv_p75/smoke_c.log は残す)
+results/snv_p75_c_smoke/
+2026-11-17T19:42:33Z results/snv_p75_c/step20k.pt results/snv_p75_c1/step20k.pt (段 P75 の判定を記録した後の中間の保存・last.pt は残す)

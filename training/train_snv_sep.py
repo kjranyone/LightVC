@@ -7,6 +7,9 @@
 損失 = L1(包絡 29・全フレーム)+ BCE(有声)+ L1(lf・元の音の有声のフレーム)。検証 = 検証の声 × 開発の背景(固定の種)・SN 比 20 / 10 / 0 / −5 dB と 0 dB + 伴奏だけの時間帯ごとに、包絡の L1・有声の一致・lf の誤差(セント)・伴奏だけのフレームの有声の誤り。
 features(D, x) = 推論(48 kHz の波形 → snv_p1_eval の発話の辞書)。
 --fam i18(paper_snv rev33 段 I18)= i15 の族 + FSD50K の開発の組の本物の手の音(data/snv_sep/fsd50k_dev_sources.json・透かし付き・投稿者で学習 8 割 / 検証 2 割)を操作者の音と手拍子の組に足す。
+--fam p38(paper_snv 段 P38)= i18 の族 + 声の側を確率 0.5 で擬似の操作者の版の波形(data/snv_p_wav_x16w = snv_p38_wav.py の §5 M29 と同じ音に snv_p38_wm.py で透かしを足し直したもの)に替える(e1・e1nv の発話。d は元のまま)。検証に x_s10・x_s0・x_lead0・x_clean(版の声)を足す。
+         + 混ぜた入力を確率 0.3 で MP3(32 kHz・48 kb/s・開発の組の録音の形式)に通して戻す(当てる先は通す前の成分から・検証に c_s0・c_clean)。
+--fam p55(paper_snv 段 P55・§5 M41)= p38 の族 + 学習の声の発話に速く話す声(data/snv_e1f = snv_e1f_gen.py・特徴 data/snv_p_feat/e1f・版 data/snv_p_wav_x16w/e1f)を足す(utterances の fast・検証の組は変えない)。
 --fam i15(paper_snv rev29 段 I15・M21)= 生成の痕跡に依らない族: 背景・床・操作者の音にも Irodori と同じ透かし(snv_sep_wm.py → data/snv_sep/wm)・入力の無音をデジタルの 0 にしない床(透かし付きの色つき雑音・発話の RMS の −70〜−30 dB)・
 確率 0.5 で帯域を 4〜20 kHz(対数一様)で切る・確率 0.4 で操作者の音(MUSAN の手や物の音 data/snv_sep/operator_sources.json と合成の手拍子・半々)を 1〜6 個、長さ 0.08〜1 s・発話の RMS に対して −15〜+10 dB で声と時間を重ねて足す。当てる先は元の音の前段の特徴のまま。
     cd training && uv run --no-sync python train_snv_sep.py --tag snv_i14_sep --prereg results/snv_i14/prereg.yaml [--fam i14|i15] [--steps 20000] [--bs 16] [--ch 256] [--smoke]
@@ -21,6 +24,7 @@ import zlib
 from pathlib import Path
 
 import numpy as np
+import scipy.fft as sfft
 import torch
 import torch.nn as nn
 import torch.nn.functional as F_
@@ -44,7 +48,7 @@ DIL = (1, 2, 4, 8, 16, 32, 64, 1)
 D_OUT = 31
 MUSAN = ROOT / "data/snv_p_feat_rec2/sources.json"
 FMA = ROOT / "data/snv_sep/fma_sources.json"
-WAVDIR = {"e1": ROOT / "data/snv_e1", "d": ROOT / "data/snv_d", "e1nv": ROOT / "data/snv_e1nv"}
+WAVDIR = {"e1": ROOT / "data/snv_e1", "d": ROOT / "data/snv_d", "e1nv": ROOT / "data/snv_e1nv", "e1f": ROOT / "data/snv_e1f"}
 SNR = {"music": (-10.0, 20.0), "noise": (-5.0, 30.0)}
 P_BG = (("none", 0.10), ("music", 0.55), ("noise", 0.35))
 P_FMA = 0.6
@@ -57,7 +61,34 @@ FLOOR_DB = (-70.0, -30.0)
 P_BAND, BAND_HZ = 0.5, (4000.0, 20000.0)
 P_OP, OP_N, OP_DB, OP_DUR, P_CLAP = 0.4, (1, 6), (-15.0, 10.0), (0.08, 1.0), 0.5
 FAMS = {"i14": {}, "i15": {"wm": True, "floor": True, "band": True, "op": True}, "i18": {"wm": True, "floor": True, "band": True, "op": True, "fsd": True},
-        "i22": {"wm": True, "floor": True, "band": True, "op": True, "fsd": True, "floor_db": (-70.0, -15.0)}}
+        "i22": {"wm": True, "floor": True, "band": True, "op": True, "fsd": True, "floor_db": (-70.0, -15.0)},
+        "p38": {"wm": True, "floor": True, "band": True, "op": True, "fsd": True, "xop": 0.5, "codec": 0.3},
+        "p41": {"wm": True, "floor": True, "band": True, "op": True, "fsd": True, "floor_db": (-70.0, -15.0), "xop": 0.5, "codec": 0.3},
+        "p52": {"wm": True, "floor": True, "band": True, "op": True, "fsd": True, "xop": 0.5, "codec": 0.3, "xdir": "data/snv_p_wav_x52w"},
+        "p55": {"wm": True, "floor": True, "band": True, "op": True, "fsd": True, "xop": 0.5, "codec": 0.3, "fast": True}}
+XWAV = ROOT / "data/snv_p_wav_x16w"
+
+
+def xop_wav(wav: Path, base: Path = XWAV) -> Path:
+    return base / wav.parent.parent.name.replace("snv_", "") / wav.parent.name / wav.name
+
+
+def codec_mp3(x: np.ndarray) -> np.ndarray:
+    import subprocess
+    import tempfile
+    import soundfile as sf
+    n = len(x)
+    with tempfile.TemporaryDirectory() as d:
+        sf.write(f"{d}/a.wav", np.clip(x, -1.0, 1.0), SR, subtype="PCM_16")
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{d}/a.wav", "-ar", "32000", "-ac", "1", "-c:a", "libmp3lame", "-b:a", "48k", f"{d}/a.mp3"], check=True)
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{d}/a.mp3", "-ar", str(SR), "-ac", "1", "-c:a", "pcm_f32le", f"{d}/b.wav"], check=True)
+        y = sf.read(f"{d}/b.wav", dtype="float64")[0]
+    N = 1 << int(np.ceil(np.log2(n + len(y))))
+    c = np.fft.irfft(np.fft.rfft(y, N) * np.conj(np.fft.rfft(lowpass(x.astype(np.float64), 10000.0), N)), N)
+    lags = np.concatenate([np.arange(0, 4801), np.arange(-4800, 0)])
+    lag = int(lags[np.argmax(c[lags])])
+    y = y[lag:] if lag >= 0 else np.concatenate([np.zeros(-lag), y])
+    return np.concatenate([y, np.zeros(max(0, n - len(y)))])[:n].astype(np.float32)
 FSD_DEV = ROOT / "data/snv_sep/fsd50k_dev_sources.json"
 
 
@@ -76,10 +107,10 @@ def bg_split() -> dict:
     return out
 
 
-def utterances(voices: list[str]) -> list[tuple[Path, Path]]:
+def utterances(voices: list[str], fast: bool = False) -> list[tuple[Path, Path]]:
     out = []
     for v in voices:
-        for kind, pat in (("e1", "t*.npz"), ("d", "s*.npz"), ("e1nv", "*.npz")):
+        for kind, pat in (("e1", "t*.npz"), ("d", "s*.npz"), ("e1nv", "*.npz")) + ((("e1f", "t*.npz"),) if fast else ()):
             for q in sorted((T.FEAT / kind / v).glob(pat)):
                 w = WAVDIR[kind] / v / f"{q.stem}.wav"
                 if w.exists():
@@ -142,7 +173,8 @@ def mix_parts(x: np.ndarray, rms: float, bg: str, src: str | None, snr: float, g
     if rev:
         h = rir(g)
         n = len(s)
-        z = np.fft.irfft(np.fft.rfft(s, n + len(h)) * np.fft.rfft(h, n + len(h)), n + len(h))[:n]
+        nf = sfft.next_fast_len(n + len(h), real=True)
+        z = sfft.irfft(sfft.rfft(s, nf) * sfft.rfft(h, nf), nf)[:n]
         s = z * (np.sqrt((s ** 2).mean()) / (np.sqrt((z ** 2).mean()) + 1e-12)) if (s ** 2).mean() > 0 else z
     ext = ext or {}
     nz = np.zeros_like(s)
@@ -179,8 +211,8 @@ def target(npz: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 
 class Mix(torch.utils.data.Dataset):
-    def __init__(self, utts: list, bgs: dict, seed: int, n: int, fixed: list | None = None, fam: dict | None = None, parts: bool = False) -> None:
-        self.utts, self.bgs, self.seed, self.n, self.fixed, self.fam, self.parts = utts, bgs, seed, n, fixed, fam or {}, parts
+    def __init__(self, utts: list, bgs: dict, seed: int, n: int, fixed: list | None = None, fam: dict | None = None, parts: bool = False, crop: int = CROP) -> None:
+        self.utts, self.bgs, self.seed, self.n, self.fixed, self.fam, self.parts, self.crop = utts, bgs, seed, n, fixed, fam or {}, parts, crop
 
     def ext(self, g: np.random.Generator, spec: dict | None) -> dict:
         fam, out = self.fam, {}
@@ -193,7 +225,7 @@ class Mix(torch.utils.data.Dataset):
             for _ in range(int(g.integers(OP_N[0], OP_N[1] + 1))):
                 pool = self.bgs["clap"] if g.random() < P_CLAP else self.bgs["op"]
                 dur = float(g.uniform(*OP_DUR))
-                ev.append((pool[int(g.integers(len(pool)))], dur, int(g.integers(0, CROP * H - int(dur * SR))), op_db if op_db is not None else float(g.uniform(*OP_DB))))
+                ev.append((pool[int(g.integers(len(pool)))], dur, int(g.integers(0, self.crop * H - int(dur * SR))), op_db if op_db is not None else float(g.uniform(*OP_DB))))
             out["events"] = ev
         band = spec.get("band_hz") if spec else None
         if fam.get("band") and (band is not None or (spec is None and g.random() < P_BAND)):
@@ -208,6 +240,9 @@ class Mix(torch.utils.data.Dataset):
         spec = self.fixed[i] if self.fixed is not None else None
         g = np.random.default_rng((self.seed, i))
         npz, wav = self.utts[spec["utt"] if spec else int(g.integers(len(self.utts)))]
+        xb = ROOT / self.fam["xdir"] if self.fam.get("xdir") else XWAV
+        if (spec.get("xop") if spec else (self.fam.get("xop") and g.random() < self.fam["xop"])) and xop_wav(wav, xb).exists():
+            wav = xop_wav(wav, xb)
         x = sf.read(str(wav), dtype="float32")[0]
         y, v, lf = target(npz)
         Tn = min(y.shape[1], len(x) // H)
@@ -218,13 +253,13 @@ class Mix(torch.utils.data.Dataset):
         else:
             pre = int(g.uniform(0, PAD_MAX) * SR / H) if g.random() < P_PAD else 0
             post = int(g.uniform(0, PAD_MAX) * SR / H) if g.random() < P_PAD else 0
-        post = max(post, CROP - (pre + Tn))
+        post = max(post, self.crop - (pre + Tn))
         xf = np.concatenate([np.zeros(pre * H, np.float32), x, np.zeros(post * H, np.float32)])
         padz = lambda a: np.concatenate([np.zeros(a.shape[:-1] + (pre,), a.dtype), a, np.zeros(a.shape[:-1] + (post,), a.dtype)], -1)
         yf, vf, lff = padz(y), padz(v), padz(lf)
         Tf = yf.shape[1]
-        st = spec["st"] if spec else int(g.integers(0, Tf - CROP + 1))
-        st = min(st, Tf - CROP)
+        st = spec["st"] if spec else int(g.integers(0, Tf - self.crop + 1))
+        st = min(st, Tf - self.crop)
         if spec:
             bg, snr, rev, gain = spec["bg"], spec["snr"], False, 0.0
             src = spec["src"]
@@ -243,10 +278,12 @@ class Mix(torch.utils.data.Dataset):
                 src = self.bgs["noise"][int(g.integers(len(self.bgs["noise"])))]
             snr = float(g.uniform(*SNR[bg])) if bg != "none" else 0.0
             rev, gain = bool(g.random() < P_REV), float(g.uniform(*GAIN))
-        xc = xf[st * H:(st + CROP) * H]
+        xc = xf[st * H:(st + self.crop) * H]
         xn, sc, nc, *ec = mix_parts(xc, rms, bg, src, snr, g, rev, gain, self.ext(g, spec), with_ev=self.parts == "ev")
-        out = {"x": torch.from_numpy(xn), "y": torch.from_numpy(yf[:, st:st + CROP].copy()), "v": torch.from_numpy(vf[st:st + CROP].copy()),
-               "lf": torch.from_numpy(lff[st:st + CROP].copy()), "snr": torch.tensor(snr if bg != "none" else 99.0), "pad": torch.from_numpy(np.r_[np.ones(pre), np.zeros(Tn), np.ones(post)][st:st + CROP].astype(np.float32))}
+        if spec.get("codec") if spec else (self.fam.get("codec") and g.random() < self.fam["codec"]):
+            xn = codec_mp3(xn)
+        out = {"x": torch.from_numpy(xn), "y": torch.from_numpy(yf[:, st:st + self.crop].copy()), "v": torch.from_numpy(vf[st:st + self.crop].copy()),
+               "lf": torch.from_numpy(lff[st:st + self.crop].copy()), "snr": torch.tensor(snr if bg != "none" else 99.0), "pad": torch.from_numpy(np.r_[np.ones(pre), np.zeros(Tn), np.ones(post)][st:st + self.crop].astype(np.float32))}
         return out | ({"s": torch.from_numpy(sc), "n": torch.from_numpy(nc)} if self.parts else {}) | ({"e": torch.from_numpy(ec[0]), "f": torch.from_numpy(ec[1]), "b": torch.from_numpy(ec[2]), "bt": torch.tensor(1.0 if bg == "music" else 0.0)} if ec else {})
 
 
@@ -354,6 +391,12 @@ def val_specs(utts: list, bgs: dict, n_utt: int, fam: dict | None = None) -> lis
             specs.append({"utt": int(ui), "cond": "lp8_s10", "bg": "music", "src": src, "snr": 10.0, "pre": 0, "post": 0, "st": 0, "band_hz": 8000.0, "floor_db": -60.0})
         if fam and fam.get("floor"):
             specs.append({"utt": int(ui), "cond": "fl35", "bg": "none", "src": src, "snr": 0.0, "pre": 0, "post": 0, "st": 0, "floor_db": -35.0})
+        if fam and fam.get("codec"):
+            for cond, snr in (("c_s0", 0.0), ("c_clean", 0.0)):
+                specs.append({"utt": int(ui), "cond": cond, "bg": "none" if cond == "c_clean" else "music", "src": src, "snr": snr, "pre": 0, "post": 0, "st": 0, "codec": True})
+        if fam and fam.get("xop") and xop_wav(utts[int(ui)][1], ROOT / fam["xdir"] if fam.get("xdir") else XWAV).exists():
+            for cond, snr, pad in (("x_s10", 10.0, 0), ("x_s0", 0.0, 0), ("x_lead0", 0.0, int(2.0 * SR / H)), ("x_clean", 0.0, 0)):
+                specs.append({"utt": int(ui), "cond": cond, "bg": "none" if cond == "x_clean" else "music", "src": src, "snr": snr, "pre": pad, "post": pad, "st": 0, "xop": True})
     return specs
 
 

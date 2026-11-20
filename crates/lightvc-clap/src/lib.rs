@@ -1,7 +1,7 @@
 //! LightVC VST3 Plugin
 //!
 //! Real-time voice conversion as a VST3 audio effect.
-//! 変換は paper_snv の製品経路 `SnvStream`(前段 v3 → E / C → rvoc3hi・48 kHz・240 サンプル)。
+//! 変換は paper_snv の製品経路 `SnvStream`(門と重みつきの前段 → K3G = 符号と回路の 3 組の平均 → rvoc3hi・48 kHz・240 サンプル・4 スレッドで実時間)。
 //! 登録 = 操作者の普通の発話の WAV と目標の声の参照の WAV(計 20 秒以上)。
 //! Uses nice-plug + nice-plug-egui.
 
@@ -96,7 +96,7 @@ impl Default for LightVcParams {
             voc_dir: Arc::new(Mutex::new(String::new())),
             operator_wavs: Arc::new(Mutex::new(String::new())),
             target_wavs: Arc::new(Mutex::new(String::new())),
-            threads: Arc::new(Mutex::new(2)),
+            threads: Arc::new(Mutex::new(4)),
             editor_state: EguiState::from_size(420, 560),
         }
     }

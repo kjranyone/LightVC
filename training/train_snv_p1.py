@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import random
 import time
 from pathlib import Path
@@ -28,7 +29,8 @@ import torch.nn.functional as F
 import pae as PA
 
 ROOT = Path(__file__).resolve().parent.parent
-FEAT = ROOT / "data/snv_p_feat"
+FEAT = ROOT / os.environ.get("SNV_FEAT", "data/snv_p_feat")
+ENVC = os.environ.get("SNV_ENVC", "")
 D_Y = 29
 D_X = 30
 D_A = 64
@@ -78,7 +80,17 @@ def load_utt(p: Path) -> dict:
     f0, env, per = d["f0"], d["env"], d["per"]
     s, n = voiced_mean(env, f0)
     lf = np.where(f0 > 0, np.log(np.maximum(f0, 1.0) / 200.0), 0.0).astype(np.float32)
-    return {"y": to_y(env, per, f0), "lf": lf, "v": (f0 > 0).astype(np.float32), "f0": f0.astype(np.float32), "vs": s.astype(np.float32), "vn": n}
+    out = {"y": to_y(env, per, f0), "lf": lf, "v": (f0 > 0).astype(np.float32), "f0": f0.astype(np.float32), "vs": s.astype(np.float32), "vn": n}
+    if ENVC:
+        q = Path(str(p).replace("data/snv_p_feat", "data/snv_p_feat_st", 1))
+        if q.exists():
+            out["yc"] = to_y(np.load(q)["env"], per, f0)
+    return out
+
+
+def code_y(u: dict) -> dict:
+    """段 P91: 符号が読む特徴の辞書(SNV_ENVC のとき、包絡を固定の窓の包絡 yc に替えたもの)。"""
+    return (u | {"y": u["yc"]}) if "yc" in u else u
 
 
 def load_corpus(nv: bool = True) -> dict:

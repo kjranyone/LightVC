@@ -58,9 +58,9 @@ pub fn run_gui(cmd: GuiCmd) -> Result<()> {
 /// paper_snv の製品経路の部品(training/export_{pfront,snv_model,rvoc}.py の出力)と登録の波形(48 kHz)。
 #[derive(Parser, Clone)]
 pub struct SnvModel {
-    #[arg(long, default_value = "results/pfront_export")]
+    #[arg(long, default_value = "results/snv_p45_gate_t80_export")]
     pub front: std::path::PathBuf,
-    #[arg(long, default_value = "results/p_model_export")]
+    #[arg(long, default_value = "results/snv_k3g16kv_export")]
     pub model: std::path::PathBuf,
     #[arg(long, default_value = "results/rvoc3hi/export_330k")]
     pub voc: std::path::PathBuf,

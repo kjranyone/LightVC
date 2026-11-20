@@ -25,6 +25,7 @@ rev12〜14(paper_snv 系 2g・2h・§5 M9・M10): --align band(対応を発話�
 --c_only <ckpt>(M15・rev21): 保存した M13 の G・推論の E・軌跡を凍結し、C だけを学ぶ(入力の値 = [軌跡, 明示の演技]・鍵 = 推論の E(参照)・保存の C から始める)。
 --c_pitch S(M15): C の高さの入力を発話ごとに一律 U[−S, S] 半音ずらす(確率 --p_pitch・有声のフレームだけ)。--c_rec p(M15): 確率 p で C の高さと有声を選んだ版から。当てる先は元の y。
 --rec_dir(M18・rev24): 録音の版の置き場(既定 data/snv_p_feat_rec = 合成の族・data/snv_p_feat_rec2 = 本物の非音声の音源の族)。--aug_lo / --aug_hi(M18): --e_aug の伸縮の域(既定 0.8 / 1.25)。
+--e_play wst(M28・rev42): --e_only の推論の E を snv_encw.EncW に替える(入力 = P8 の白くした演奏 = 凍結した --cpc の文脈を --pca で 32 次元 × 4 つの遅れに積み、その声の参照の 2 次の統計で白くしたもの・参照を読む注意なし)。
 --e_lift K(M19・rev25): --e_only の推論の E が読む全ての入力(発話と構造の参照)の包絡の c_K〜c24 を学習の入力の平均の定数(rec の版 400 本 + 元の音 130 本・seed 0・保存の lift_mean)に置き換える。当てる先と C の入力は元の音の全ての次数。
 rev5(paper_snv §5 M5・--critic λ): 共有の内容の発話で、型からのずれ r = μ_q − μ_w[τ](型は止めた値)から学習の声を当てる因果の判別器 Q を交互に学び(Adam lr 1e-3)、演奏の側の損失に −λ × Q のフレームの交差エントロピー(I(u; s | w) を直接下げる)。
     cd training && uv run --no-sync python train_snv_i.py --tag snv_i_m3 --prereg results/snv_i/prereg.yaml
@@ -657,6 +658,9 @@ def main() -> int:
     ap.add_argument("--aug_lo", type=float, default=0.8)
     ap.add_argument("--aug_hi", type=float, default=1.25)
     ap.add_argument("--e_lift", type=int, default=0)
+    ap.add_argument("--e_play", choices=["", "wst"], default="")
+    ap.add_argument("--cpc", default="results/snv_p2b_cpc/last.pt")
+    ap.add_argument("--pca", default="results/snv_p8b/pca_c_P2b.npy")
     a = ap.parse_args()
     set_rec_dir(a.rec_dir)
     assert a.tpl_est == "grad" or (a.share == "hard" and a.residual == "none"), "E の平均の軌跡(M9)は固い共有・残差なしだけ"
@@ -666,6 +670,7 @@ def main() -> int:
     assert not (a.e_only and a.c_only), "推論の E だけと C だけは別の腕"
     assert not a.e_rec or (a.e_only and a.rec > 0), "M16 は --e_only と --rec で"
     assert not a.e_lift or (a.e_only and 0 < a.e_lift < 25), "M19 は --e_only で(0 < K < 25)"
+    assert not a.e_play or (a.e_only and not a.e_lift), "M28 は --e_only で(--e_lift なし)"
     assert not (a.c_only or a.c_pitch or a.c_rec) or (a.student and a.c_only and (a.c_rec == 0 or a.rec > 0)), "M15 は M13 の保存から(--c_rec は --rec で)"
     out = ROOT / "results" / a.tag
     out.mkdir(parents=True, exist_ok=True)
@@ -688,6 +693,11 @@ def main() -> int:
         torch.set_num_threads(8)
     E, C = P11.EncS().to(dev), T.Circ().to(dev)
     E2 = P11.EncS().to(dev) if a.student else None
+    if a.e_play == "wst":
+        import snv_encw as EW
+        EW.unit_tests(ROOT / a.cpc, ROOT / a.pca)
+        E2 = EW.EncW(ROOT / a.cpc, ROOT / a.pca).to(dev)
+        print("推論の E = 白くした演奏 → 軌跡(M28)", a.cpc, a.pca, sum(q.numel() for q in E2.parameters() if q.requires_grad), "params", flush=True)
     Einf = E2 if E2 is not None else E
     logb = nn.Parameter(torch.full((T.D_Y,), math.log(P11.B_INIT), device=dev))
     shape = (max(1, len(ctr.cid)), int(ctr.tlen.max()) if len(ctr.tlen) else 2, T.D_A)
@@ -711,7 +721,7 @@ def main() -> int:
         with torch.no_grad():
             tpl.copy_(st0["tpl"].float().to(dev)), npos.copy_(st0["npos"].to(dev)), logb.copy_(st0["logb"].to(dev))
         E.requires_grad_(False), C.requires_grad_(False)
-        params = list(E2.parameters())
+        params = [q for q in E2.parameters() if q.requires_grad]
         print("推論の E だけを学ぶ(G・C・型は凍結)", a.e_only, "step", st0["step"], "声の乱し", a.e_aug, (a.aug_lo, a.aug_hi), "録音の乱し", a.e_rec, a.rec, a.p_clean, a.rec_dir, flush=True)
     lm = torch.from_numpy(lift_mean(tr)).float().to(dev) if a.e_lift else None
     ex = lambda y, v: P11.xin(P11.lift(y, a.e_lift, lm), v)
@@ -915,7 +925,8 @@ def main() -> int:
             print("eval", json.dumps({k: (round(v, 4) if isinstance(v, float) else v) for k, v in rec.items()}), flush=True)
             ck = {"Es": Einf.state_dict(), "Gs": E.state_dict() if E2 is not None else None, "student": a.student, "C": C.state_dict(), "logb": logb.detach().cpu(), "step": step, "tpl": tpl.detach().half().cpu(), "npos": npos.cpu(), "logsig": logsig.detach().cpu(), "tpl_mode": a.tpl, "critic": a.critic, "Q": Q.state_dict() if Q is not None else None,
                   "share": a.share, "residual": a.residual, "Er": Er.state_dict() if Er is not None else None, "tpl_est": a.tpl_est, "align": a.align, "band": a.band, "group": a.group, "e_only": a.e_only, "e_aug": a.e_aug,
-                  "rec": a.rec, "p_clean": a.p_clean, "e_rec": a.e_rec, "c_only": a.c_only, "c_pitch": a.c_pitch, "p_pitch": a.p_pitch, "c_rec": a.c_rec, "rec_dir": a.rec_dir, "aug_lo": a.aug_lo, "aug_hi": a.aug_hi, "e_lift": a.e_lift, "lift_mean": lm.cpu().tolist() if lm is not None else None}
+                  "rec": a.rec, "p_clean": a.p_clean, "e_rec": a.e_rec, "c_only": a.c_only, "c_pitch": a.c_pitch, "p_pitch": a.p_pitch, "c_rec": a.c_rec, "rec_dir": a.rec_dir, "aug_lo": a.aug_lo, "aug_hi": a.aug_hi, "e_lift": a.e_lift, "lift_mean": lm.cpu().tolist() if lm is not None else None,
+                  "e_play": a.e_play, "cpc": a.cpc if a.e_play else None, "pca": a.pca if a.e_play else None}
             torch.save(ck, out / "last.pt")
             if step == steps // 2:
                 torch.save(ck, out / f"step{step // 1000}k.pt")

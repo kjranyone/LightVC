@@ -1,0 +1,1 @@
+2026-11-16T18:14Z results/snv_p70/holdout_base_check.json (段 P70 step b の物差しの通しの確かめ・基準の系だけ・同じ値は holdout.json に在る)

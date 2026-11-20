@@ -63,8 +63,8 @@ pub struct SnvSettings {
 impl Default for SnvSettings {
     fn default() -> Self {
         Self {
-            front: "results/pfront_export".into(),
-            model: "results/p_model_export".into(),
+            front: "results/snv_p45_gate_t80_export".into(),
+            model: "results/snv_k3g16kv_export".into(),
             voc: "results/rvoc3hi/export_330k".into(),
             operator: Vec::new(),
             threads: 4,

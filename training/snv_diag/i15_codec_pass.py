@@ -1,6 +1,7 @@
 """段 I15 の起動の前の検査(paper_snv rev29・学習なし): 本物の声を Irodori の生成の経路の後段(Semantic-DACVAE の符号化と復号・SilentCipher の透かし)に通した音を作る。
 前段 D が「Irodori の生成の痕跡 = 声」と学んだかを、通した音と元の音で D の外れを比べて測る(snv_diag/i15_pre_probe.py mode=codec)。
-組 = VCTK の男声(data/snv_p_feat/vctk の 3 本おき)・JVNV(3 本おき)・試験の伴奏の無い 9 区間・検証の Irodori 16 本(対照)・jvnv_all = i10_jvnv_probe の源と登録(M1・M2 × 6 感情 × regular_01・02 = 24 本)・real_all = 試験の 12 区間と登録 2 本(i8_text_probe realdir= の材料)。
+組 = VCTK の男声(data/snv_p_feat/vctk の 3 本おき)・JVNV(3 本おき)・試験の伴奏の無い 9 区間・検証の Irodori 16 本(対照)・jvnv_all = i10_jvnv_probe の源と登録(M1・M2 × 6 感情 × regular_01・02 = 24 本)・real_all = 試験の 12 区間と登録 2 本(i8_text_probe realdir= の材料)・
+cv_dev = 開発の組(cv の devA の先頭 24 人の s0 と登録 e0〜e7・段 D5 の補足 4)。
 出力 = data/snv_i15_codec/{codec,codec_wm}/{組}/{名前}.wav(48 kHz)。
 bg = 段 I14 の前段 D の開発の組の背景(results/snv_i14_sep/bg_split.json の dev の音楽 24・雑音 24・8 s・RMS −26 dBFS)を、そのまま(bg)と SilentCipher の透かしだけを足して(bg_wm)書く = 透かしだけで D が声と読むかの検査の材料。
     cd ../../Irodori-TTS && HF_HUB_DISABLE_IMPLICIT_TOKEN=1 uv run --no-sync python ../LightVC/training/snv_diag/i15_codec_pass.py [bg] [groups vctk,jvnv,real_nonbgm,irodori_val,jvnv_all,real_all]
@@ -24,8 +25,14 @@ SR = 48000
 DEV = "cuda" if torch.cuda.is_available() else "cpu"
 
 
+def cv_dev(n: int = 24) -> list:
+    import json
+    man = json.loads((ROOT / "data/cv22_ja/dev_manifest.json").read_text())
+    return [(f"{s['speaker']}_{c['name']}", FEAT / "cv" / f"{s['speaker']}_{c['name']}.wav") for s in [x for x in man["speakers"] if x["split"] == "devA"][:n] for c in s["src"][:1] + s["enroll"]]
+
+
 def items() -> dict:
-    return {"vctk": [(p.stem, p.with_suffix(".wav")) for p in sorted((FEAT / "vctk").glob("*.npz"))[::3]],
+    return {"cv_dev": cv_dev(), "vctk": [(p.stem, p.with_suffix(".wav")) for p in sorted((FEAT / "vctk").glob("*.npz"))[::3]],
             "jvnv": [(p.stem, JV / p.stem.split("_")[0] / p.stem.split("_")[1] / "regular" / f"{p.stem}.wav") for p in sorted((FEAT / "jvnv").glob("*.npz"))[::3]],
             "real_nonbgm": [(n, FEAT / "real" / f"{n}.wav") for n in [f"uirou_{i}" for i in range(6)] + [f"namikawa_{i}" for i in (3, 4, 5)]],
             "irodori_val": [(f"{v}_t0{j}", ROOT / "data/snv_e1" / v / f"t0{j}.wav") for v in ("em594", "em595", "em596", "em597", "em598", "em599", "ef000", "ef016") for j in (0, 1)],

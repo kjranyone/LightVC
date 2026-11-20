@@ -56,12 +56,15 @@
   - `data/snv_e1nv` — 同じ 600 声の音素の無い発声 7 種（喘ぎ・悲鳴・吐息・息切れ・泣き声・笑い・混ざり・`training/snv_e1nv_gen.py`）
   - `data/snv_d` — 同じ声が同じ文を読み合う、内容を共有するコーパス（paper_snv 段 D・`training/snv_d_gen.py`）
   - 特徴は前段 v3 で `data/snv_p_feat`（`training/snv_p_feat.py`）。台詞の文は female-dataset の書き起こしから採る（露骨な性的表現を除く・`snv_e1_gen.text_pool`）。
+- **別の合成の生成器・合成のデータセットを学習データに足してよい**（オーナー判断 2026-11-16「別の合成データセットを使っても構いません」・`current/paper_snv.md` §9 O28）。許諾（コード・重み・生成物の利用）を確かめ、`NOTICE` と台帳に残す。本物の音声から学ばない・実在の人の音声を参照にしない・female-dataset の文を外のサービスへ送らない、は変わらない。足す生成器は論文の段で決める（今は未定）。
 - **入力側の乱しには本物の非音声の音源を使ってよい**（オーナー判断 2026-11-08「本物の非音声の音源を許可」）。条件は次のとおり。
   - 音声を含まず、許諾が明らかなものだけ（CC0 / CC BY / パブリックドメイン。NC・ND・SA は除く）。
   - 人の声は AudioSet の分類器（AST）で選別する（閾 0.02）。
   - 音源と選び方: MUSAN（`training/musan_sources.py`）・FMA（`training/fma_sources.py`）・FSD50K（`training/fsd50k_sources.py`。評価の組は評価だけ）。帰属は台帳に残す。
   - 当てる先は Irodori の元の音のまま。本物の音声と本物の部屋の応答の録音は、この例外に含めない。
 - **評価は本物の男声の入力**（外郎売・namikawa・VCTK の男声）。JVNV / JNV（CC BY-SA 4.0）は物差しの較正と評価の入力の側だけに使い、学習・目標にしない。
+  - 開発の組（2026-11-10〜）= Common Voice 22.0 ja（CC0）の男声 239 人（`data/cv22_ja`・`training/snv_dev_set.py`・devA は設計と途中信号・devB は候補の確認だけ）。評価の入力だけに使い、学習・目標にしない。話者の特定を試みない。
+  - 試験の 12 区間（外郎売・namikawa）は最終判定だけに使う（`current/paper_snv.md` §7）。成績表は `results/LEADERBOARD.md`（`training/snv_dev_eval.py`・`training/snv_leaderboard.py`）。
 - **female-dataset は公開しない**（オーナー判断 2026-11-10「female-datasetは公開しない」）。
   - 音声・書き起こし・話者の一覧を、コミット・配布物・公開の資料に含めない。
   - `NOTICE` では名前を出さず「非公開のデータ」と書く。
@@ -89,18 +92,18 @@ cargo build --release -p lightvc-app
 cargo build --release --features asio -p lightvc-app   # ASIO SDK は各自で用意する
 cargo run -p lightvc-xtask -- bundle    # CLAP / VST3 の bundle
 cargo run -p lightvc-xtask -- install
-cargo run -p lightvc-xtask -- package   # bundle + CLI + 3 つの重みの書き出し + NOTICE + README の zip（欠品なら失敗）
+cargo run -p lightvc-xtask -- package   # bundle + CLI + 3 つの重みの書き出し + NOTICE + ATTRIBUTION_SOURCES.md + README の zip（欠品なら失敗）
 ```
 
 ## Architecture Rules
 
 - **推論は全て Rust**（自作の実装・外部の推論ライブラリなし。Candle は 2026-11-10 に外した）— Pythonランタイム不要
-- **製品の経路 = paper_snv の段 P**。前段 v3（`p_front.rs`）→ 演奏の取り出し E / 回路 C（`p_model.rs`・`results/snv_p11_r`）→ 出力部 rvoc3hi（`rvoc.rs`）。
+- **製品の経路 = paper_snv の段 P93 の K3G**(2026-11-19・数値の関門・耳の関門・Rust の一致と実時間を通った)。門と重みつきの前段（`p_gate.rs`・`p_front.rs`・`results/snv_p45_gate_t80_export`）→ 符号と回路の 3 組の平均と錨（`k3g_model.rs`・`p30_model.rs`・`p_fixenv.rs`・`results/snv_k3g16kv_export` = 重みと注意の鍵と値を f16 で持つ）→ 出力部 rvoc3hi（`rvoc.rs`）。実時間には 4 スレッドが要る。それまでの製品の経路 = 前段 v3 → E / C（`p_model.rs`・`results/snv_p11_r`）。
   - これを `lightvc_core::snv_stream::SnvStream` が 48 kHz・240 サンプル（5 ms）単位で流す。GUI・CLAP / VST3・CLI は全てこれを使う。
-  - 研究の製品の候補（RESEARCH.md の c_pr・段 I の型）は Rust に移していない。
+  - 研究の候補（RESEARCH.md・成績表 `results/LEADERBOARD.md`・段 I の型）は、K3G を除いて Rust に移していない。
 - **学習は全て PyTorch (uv環境)** — Rustコードに依存しない
 - **PyTorch と Rust の名前は完全一致** — 書き出しの `manifest.json` の名前 = PyTorch の state_dict の名前 = Rust の読み込みの名前。
-  - 書き出しのスクリプト: `training/export_pfront.py`・`export_snv_model.py`・`export_rvoc.py`・`export_snv_stream.py`（端から端の一致の fixture）。
+  - 書き出しのスクリプト: `training/export_snv_gate.py`(門と重みつきの前段)・`export_snv_k3g.py`(K3G・`SNV_ENVC=1 SNV_WF16=1 SNV_KV16=1 … --out ../results/snv_k3g16kv_export` で製品の書き出し)・`export_rvoc.py`・`export_pfront.py`・`export_snv_model.py`・`export_snv_p30.py`・`export_snv_stream.py`（端から端の一致の fixture）。
   - 変更時は両方更新し、一致の試験（`cargo test`）を通す。
 - **VC teacher蒸留は禁止** — 別VCモデルの変換音声を target とする synthetic parallel distillation は使わない
 - **補助モデルは評価の物差し・参考値まで** — WavLM-SV/ECAPA/ASR 等は評価に使ってよい。推論時依存にしない。
@@ -131,7 +134,7 @@ cargo run -p lightvc-xtask -- package   # bundle + CLI + 3 つの重みの書き
 - **走行中の run が参照するパス（ckpt・キャッシュ・データ）を消さない**。整理前に `pgrep -f train` で走行中ジョブを確認する。
 - **例外**: RESEARCH.md・paper_snv.md が数値・パスで参照する証拠（耳軸測定・帰属 arm の wav/json）は削除しない。
 - **製品の書き出しを消さない**:
-  - `results/pfront_export`・`results/p_model_export`・`results/rvoc3hi/export_330k` は、配布物と GUI・CLI の既定が読む。
+  - `results/snv_p45_gate_t80_export`・`results/snv_k3g16kv_export`・`results/rvoc3hi/export_330k` は、配布物と GUI・CLI の既定が読む。`results/pfront_export`・`results/p_model_export`(それまでの製品)と `results/snv_k3g_export`・`results/snv_k3g16_export`(K3G の f32 と重みだけ f16・一致の試験)も消さない。
   - `results/snv_stream_export` は Rust の端から端の一致の試験が読む。
   - `results/snv_p11_r/last.pt` と `results/rvoc3hi/snap/ema_330k.pt` は書き出しの元。
 

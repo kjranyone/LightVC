@@ -307,6 +307,21 @@ def periodicity_from_power(P: torch.Tensor, f0: torch.Tensor) -> torch.Tensor:
     return torch.stack(out, -2).float()
 
 
+def fixed_env(x: np.ndarray, n: int, win_ms: float = 40.0) -> np.ndarray:
+    """段 P91: 固定の窓(ハン・左寄せ = フレーム t は (t + 1) H までの標本だけを見る)の STFT → mel の帯 → 対数 → DCT 25 の包絡。"""
+    fb, dct = PA._np_consts()
+    W = int(win_ms * 1e-3 * SR)
+    xp = np.concatenate([np.zeros(W), np.asarray(x, np.float64), np.zeros(max(0, (n + 1) * H - len(x)))])
+    w = np.hanning(W)
+    out = np.empty((25, n), np.float32)
+    for a in range(0, n, 256):
+        t = np.arange(a, min(a + 256, n))
+        idx = ((t + 1) * H)[:, None] + np.arange(W)[None]
+        amp = np.abs(np.fft.rfft(xp[idx] * w, PA.NFFT, axis=1))
+        out[:, t] = dct[:25] @ np.log(np.maximum(amp @ fb.T, 1e-5)).T
+    return out
+
+
 def causal_smooth(e: np.ndarray, w: float) -> np.ndarray:
     q = np.pad(e, ((0, 0), (2, 0)), mode="edge")
     return (w * q[:, :-2] + (1 - 2 * w) * q[:, 1:-1] + w * q[:, 2:]).astype(np.float32)

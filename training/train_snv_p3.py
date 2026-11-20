@@ -62,11 +62,19 @@ class Play(nn.Module):
 
 
 class PlayW(Play):
-    def __init__(self, ck: Path, pca: Path, k: int = 32, lags: tuple = (0, 8, 16, 24), shrink: float = 0.1) -> None:
+    def __init__(self, ck: Path, pca: Path, k: int = 32, lags: tuple = (0, 8, 16, 24), shrink: float = 0.1, cb: Path | None = None, xc0: bool = False) -> None:
         super().__init__(ck)
-        self.register_buffer("P", torch.from_numpy(np.ascontiguousarray(np.load(pca)[:, :k]).astype(np.float32)))
-        self.lags, self.shrink = lags, shrink
-        self.proj = nn.Linear(k * len(lags), T.D_A)
+        B = np.load(pca)
+        k = B.shape[1] if B.shape[1] < B.shape[0] else k
+        self.register_buffer("P", torch.from_numpy(np.ascontiguousarray(B[:, :k]).astype(np.float32)))
+        self.lags, self.shrink, self.xc0 = lags, shrink, xc0
+        self.proj = nn.Linear(k * len(lags) + int(xc0), T.D_A)
+        self.cb_s2 = None
+        if cb is not None:
+            import snv_cmn as CM
+            c, self.cb_s2 = CM.load(cb)
+            assert c.shape[1] == k * len(lags), (c.shape, k, lags)
+            self.register_buffer("cb", c)
 
     def stack(self, c: torch.Tensor, mu: torch.Tensor) -> torch.Tensor:
         s = torch.einsum("bct,ck->bkt", c - mu[..., None], self.P)
@@ -82,17 +90,85 @@ class PlayW(Play):
         tr = cov.diagonal(dim1=-2, dim2=-1).sum(-1) / D
         cov = (1 - self.shrink) * cov + self.shrink * tr[:, None, None] * torch.eye(D, dtype=cov.dtype, device=cov.device)
         e, q = torch.linalg.eigh(cov)
-        return mu, ((q / e.clamp(min=1e-8).sqrt()[:, None, :]) @ q.transpose(-1, -2)).float()
+        Wm = ((q / e.clamp(min=1e-8).sqrt()[:, None, :]) @ q.transpose(-1, -2)).float()
+        st: tuple = (mu, Wm)
+        if self.cb_s2 is not None:
+            import snv_cmn as CM
+            xe = torch.einsum("bij,bjt->bit", Wm, s.float()).transpose(1, 2)
+            st = (*st, CM.offsets(xe, w[:, 0], self.cb, self.cb_s2))
+        if self.xc0:
+            n = w[:, 0].sum(-1).clamp(min=1.0)
+            m0 = (y[:, 0] * w[:, 0]).sum(-1) / n
+            s0 = (((y[:, 0] - m0[:, None]) ** 2 * w[:, 0]).sum(-1) / n).sqrt().clamp(min=1e-3)
+            st = (*st, torch.stack([m0, s0], 1))
+        return st
 
     def white(self, y: torch.Tensor, v: torch.Tensor, st: tuple) -> torch.Tensor:
-        return torch.einsum("bij,bjt->bit", st[1], self.stack(self.ctx(y, v), st[0]))
+        x = torch.einsum("bij,bjt->bit", st[1], self.stack(self.ctx(y, v), st[0]))
+        if self.cb_s2 is None:
+            return x
+        import snv_cmn as CM
+        return CM.apply(x.transpose(1, 2), self.cb, self.cb_s2, st[2]).transpose(1, 2)
+
+    def feat(self, y: torch.Tensor, v: torch.Tensor, st: tuple) -> torch.Tensor:
+        x = self.white(y, v, st)
+        return torch.cat([x, (y[:, :1] - st[-1][:, :1, None]) / st[-1][:, 1:, None]], 1) if self.xc0 else x
 
     def forward(self, y: torch.Tensor, v: torch.Tensor, st: tuple) -> torch.Tensor:
-        return self.proj(self.white(y, v, st).transpose(1, 2)).transpose(1, 2)
+        return self.proj(self.feat(y, v, st).transpose(1, 2)).transpose(1, 2)
 
 
-def make_play(cpc: Path, play: str = "c", pca: Path | None = None) -> Play:
-    return PlayW(cpc, pca) if play == "wst" else Play(cpc)
+def make_play(cpc: Path, play: str = "c", pca: Path | None = None, lags: list | tuple | None = None, shrink: float | None = None, cb: Path | None = None, xc0: bool = False) -> Play:
+    if play != "wst":
+        return Play(cpc)
+    return PlayW(cpc, pca, lags=tuple(lags) if lags is not None else (0, 8, 16, 24), shrink=float(shrink) if shrink is not None else 0.1, cb=cb, xc0=xc0)
+
+
+def xc0_tests(ck: Path, pca: Path, lags: tuple, shrink: float, cb: Path | None) -> None:
+    Pl, P0 = make_play(ck, "wst", pca, lags, shrink, cb, True), make_play(ck, "wst", pca, lags, shrink, cb)
+    us = [T.load_utt(T.FEAT / f"e1/ef000/t0{j}.npz") for j in (0, 1, 2, 9)] if (T.FEAT / "e1/ef000").exists() else [T.load_utt(p) for p in sorted((T.FEAT / "e1").glob("*/t0*.npz"))[:4]]
+    with torch.no_grad():
+        ry = torch.from_numpy(np.concatenate([u["y"] for u in us[:3]], 1))[None]
+        rv = torch.from_numpy(np.concatenate([u["v"] for u in us[:3]]))[None]
+        rm = torch.ones(rv.shape, dtype=torch.bool)
+        y, v = torch.from_numpy(us[3]["y"])[None], torch.from_numpy(us[3]["v"])[None]
+        st, s0 = Pl.mean_of(ry, rv, rm), P0.mean_of(ry, rv, rm)
+        f, w = Pl.feat(y, v, st), P0.white(y, v, s0)
+        c0e = ry[0, 0][rv[0] > 0.5].numpy()
+        ref = (us[3]["y"][0] - c0e.mean()) / c0e.std()
+        assert f.shape[1] == w.shape[1] + 1 and torch.allclose(f[:, :-1], w, atol=1e-5), "明示の強さを足すと白くした符号が変わる"
+        assert np.allclose(f[0, -1].numpy(), ref, atol=1e-3), "明示の強さが登録の有声の c0 の標準化と一致しない"
+        ry2, y2 = ry.clone(), y.clone()
+        ry2[:, 0] += 0.7
+        y2[:, 0] += 0.7
+        assert torch.allclose(Pl.feat(y2, v, Pl.mean_of(ry2, rv, rm))[:, -1], f[:, -1], atol=1e-4), "明示の強さが音量の一律の差で変わる"
+        y3 = y.clone()
+        y3[..., 200:] = torch.randn_like(y3[..., 200:])
+        assert torch.allclose(Pl.feat(y3, v, st)[..., :200], f[..., :200], atol=1e-5), "明示の強さを足した演奏が因果でない"
+        assert Pl.proj.in_features == P0.proj.in_features + 1
+    print("xc0 tests ok(白くした符号は同じ・登録の有声の c0 の標準化と一致・音量の一律の差に不変・因果性)", flush=True)
+
+
+def cmn_tests(ck: Path, pca: Path, lags: tuple, shrink: float, cb: Path) -> None:
+    import snv_cmn as CM
+    CM.test()
+    Pl, P0 = make_play(ck, "wst", pca, lags, shrink, cb), make_play(ck, "wst", pca, lags, shrink)
+    us = [T.load_utt(T.FEAT / f"e1/ef000/t0{j}.npz") for j in (0, 1, 2, 9)] if (T.FEAT / "e1/ef000").exists() else [T.load_utt(p) for p in sorted((T.FEAT / "e1").glob("*/t0*.npz"))[:4]]
+    with torch.no_grad():
+        ry = torch.from_numpy(np.concatenate([u["y"] for u in us[:3]], 1))[None]
+        rv = torch.from_numpy(np.concatenate([u["v"] for u in us[:3]]))[None]
+        m = torch.ones(rv.shape, dtype=torch.bool)
+        st, s0 = Pl.mean_of(ry, rv, m), P0.mean_of(ry, rv, m)
+        assert len(st) == 3 and torch.allclose(st[1], s0[1], atol=1e-5)
+        xr = Pl.white(ry, rv, st).transpose(1, 2)
+        d0, d1 = float(st[2].norm()), float(CM.offsets(xr, rv, Pl.cb, Pl.cb_s2).norm())
+        assert d1 < 0.6 * d0, (d0, d1)
+        y, v = torch.from_numpy(us[3]["y"])[None], torch.from_numpy(us[3]["v"])[None]
+        a = Pl(y, v, st)
+        y2 = y.clone()
+        y2[..., 300:] = torch.randn_like(y2[..., 300:])
+        assert torch.allclose(a[..., :300], Pl(y2, v, st)[..., :300], atol=1e-5), "内容ごとの平均の正規化が因果でない"
+    print(f"cmn tests ok(登録の級ごとのずれ {d0:.3f} → 正規化の後 {d1:.3f}・白くする行列は同じ・因果性)", flush=True)
 
 
 def structure_of(Pl: Play, C: T.Circ, ry: torch.Tensor, rv: torch.Tensor, rmask: torch.Tensor, mu_c: torch.Tensor) -> dict:
@@ -132,9 +208,9 @@ def unit_tests(ck: Path) -> None:
     print("unit tests ok(演奏の因果性・CPC の凍結)", flush=True)
 
 
-def playw_tests(ck: Path, pca: Path) -> None:
+def playw_tests(ck: Path, pca: Path, lags: list | tuple | None = None, shrink: float | None = None) -> None:
     from snv_diag import p8a_draw_voice as DV
-    Pl = PlayW(ck, pca)
+    Pl = make_play(ck, "wst", pca, lags, shrink)
     us = [T.load_utt(T.FEAT / f"e1/ef000/t0{j}.npz") for j in (0, 1, 2, 9)] if (T.FEAT / "e1/ef000").exists() else [T.load_utt(p) for p in sorted((T.FEAT / "e1").glob("*/t0*.npz"))[:4]]
     tn = lambda u: (torch.from_numpy(u["y"])[None], torch.from_numpy(u["v"])[None])
     with torch.no_grad():
@@ -142,8 +218,8 @@ def playw_tests(ck: Path, pca: Path) -> None:
         vm = [u["v"] > 0 for u in us]
         mu = np.concatenate([c[m] for c, m in zip(cs[:3], vm[:3])]).mean(0)
         P = Pl.P.numpy()
-        stk = lambda c: DV.lagged((c - mu) @ P, DV.ST_LAGS)
-        W = DV.whiten(np.concatenate([stk(c)[m] for c, m in zip(cs[:3], vm[:3])]))
+        stk = lambda c: DV.lagged((c - mu) @ P, Pl.lags)
+        W = DV.whiten(np.concatenate([stk(c)[m] for c, m in zip(cs[:3], vm[:3])]), Pl.shrink)
         ref = stk(cs[3]) @ W
         st = (torch.from_numpy(mu)[None].float(), torch.from_numpy(W)[None].float())
         got = Pl.white(*tn(us[3]), st)[0].numpy().T

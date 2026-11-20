@@ -1,0 +1,15 @@
+# 2026-11-18T17:22:02Z スキル lightvc-colab の実機の試験の煙(Colab T4・動作確認のみ・値はスキルの SKILL.md に記録・どの資料からも参照なし)
+results/colab_smoke/ results/colab_smoke.train.log results/colab_smoke.colab.env.json results/colab_smoke.colab.exit results/colab_smoke.colab.launch.log
+results/colab_p3_smoke/ results/colab_p3_smoke.colab.env.json results/colab_p3_smoke.colab.exit results/colab_p3_smoke.colab.launch.log results/colab_p3_smoke.train.log 
+# 2026-11-18T19:49:37Z 段 P80(B_flat・判定は results/snv_p80/prereg.yaml に記録済み)の中間の snap と走行の後始末のログ
+results/diag_snv_p80_bt/step6k.pt
+results/diag_snv_p80.colab.exit
+results/diag_snv_p80.colab.launch.log
+results/diag_snv_p80.colab.watch.log
+results/diag_snv_p80_ct/step6k.pt
+# 2026-11-18T21:12:38Z 段 P83(N_flat・判定は results/snv_p83/prereg.yaml に記録済み)の中間の snap・測らなかった腕 n6・走行の後始末のログ
+results/diag_snv_p83.colab.exit
+results/diag_snv_p83.colab.launch.log
+results/diag_snv_p83.colab.watch.log
+results/diag_snv_p83_n3/step6k.pt
+results/diag_snv_p83_n6

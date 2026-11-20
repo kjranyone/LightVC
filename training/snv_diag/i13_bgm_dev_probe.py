@@ -17,7 +17,8 @@ hold(声の勝つビンを理想の判定で選び、手の音の勝つビンは
 +g<θ> を付けると(例 lk1+g0.1)、重みが声と読む 4 kHz より下のエネルギーの割合がθ未満のフレームを無声にする(声の無い時間の門・重み 1 で前段 v3 と同じ)。
 ld<θ>(段 I19 の後・lmask が判定の網)= 学んだ判定 ≥ θ のビンを外す。lkb<θ>(lmask が比の網)= 学んだ比 ≥ θ のビンだけ残す(2 値)。+u を付けると、乱れた音の前段 v3 が無声と判定したフレームだけで外す(有声のフレームは重み 1)。変種ごとに手の音のエネルギーの残り nk_db と声の残り vk_db(格子の上の和の比)を記録する。
 前と後に声の無い時間を足す条件(lead・claplead・oplead)では、出力の声の無い時間の大きさ pad_db(声の時間の出力の RMS に対する dB)と、出力を前段 v3 で解析した有声の率 pad_vfrac も記録する(雑音が声に化けたか)。
-    cd training && uv run --no-sync python snv_diag/i13_bgm_dev_probe.py snv_i13_e_l13 snv_i12_e_r2 snv_i10_c_pr [n=6] [conds=mus10,mus0,mus-5,lead0] [out=results/snv_i13/bgm_dev_probe.json]
+段 P48(paper_snv rev119)の訂正: 音楽は train_snv_sep.read_bg(学習の族と同じ)で読む。前の snv_rec_feat.real_bg は 48 kHz の音源(pool=dev の FMA)を発話の 1/3 の長さだけ読んで 3 回繰り返していた。前の記録を再現するときだけ music=loop。
+    cd training && uv run --no-sync python snv_diag/i13_bgm_dev_probe.py snv_i13_e_l13 snv_i12_e_r2 snv_i10_c_pr [n=6] [conds=mus10,mus0,mus-5,lead0] [music=loop] [out=results/snv_i13/bgm_dev_probe.json]
 """
 from __future__ import annotations
 
@@ -42,6 +43,7 @@ ROOT = EV.ROOT
 DEV = EV.DEV
 SR = P.SR
 LEAD, TAIL = 3.0, 2.0
+MUSIC_LOOP = False
 
 
 def utt_of(x: np.ndarray) -> dict:
@@ -58,7 +60,12 @@ def with_music(x: np.ndarray, src: str, seed: int, lead: bool, snr: float) -> tu
     rms = np.sqrt((x ** 2).mean())
     a, b = (int(LEAD * SR), int(TAIL * SR)) if lead else (0, 0)
     clean = np.concatenate([np.zeros(a), x, np.zeros(b)])
-    noisy = clean + RF.real_bg(len(clean), src, g) * rms * 10 ** (-snr / 20)
+    if MUSIC_LOOP:
+        bg = RF.real_bg(len(clean), src, g)
+    else:
+        import train_snv_sep as SEP
+        bg = SEP.read_bg(src, len(clean), g)
+    noisy = clean + bg * rms * 10 ** (-snr / 20)
     return clean, np.clip(noisy, -1.0, 1.0)
 
 
@@ -198,8 +205,10 @@ def parse(c: str) -> tuple[str, str, bool, float]:
 
 
 def main() -> int:
+    global MUSIC_LOOP
     opt = dict(x.split("=", 1) for x in sys.argv[1:] if "=" in x)
     tags = [x for x in sys.argv[1:] if "=" not in x]
+    MUSIC_LOOP = opt.get("music") == "loop"
     n = int(opt.get("n", 6))
     conds = [parse(c) for c in opt.get("conds", "mus10,mus0,mus-5,lead0").split(",")]
     evp = json.loads((ROOT / "data/snv_sep/fsd50k_eval_sources.json").read_text())["pools"] if any(k in ("clap", "op", "claplead", "oplead") for _, k, _, _ in conds) else {}
@@ -295,7 +304,7 @@ def main() -> int:
                         r |= pad_stats(np.asarray(w, np.float64), len(xs))
                     rows.append(r)
                     print(json.dumps(r, ensure_ascii=False), flush=True)
-    res: dict = {"tags": tags, "voices": voices, "conds": [c for c, _, _, _ in conds], "lead_s": LEAD, "tail_s": TAIL, "summary": {}}
+    res: dict = {"music_read": "loop" if MUSIC_LOOP else "full", "tags": tags, "voices": voices, "conds": [c for c, _, _, _ in conds], "lead_s": LEAD, "tail_s": TAIL, "summary": {}}
     for cond in dict.fromkeys(r["cond"] for r in rows):
         res["summary"][cond] = {}
         for s in tags + (["dcopy"] if dsep is not None else []):

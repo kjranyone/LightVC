@@ -1,0 +1,64 @@
+# 2026-11-11 段 P20 の煙(番地だけの回路・本番の入口・200 step・検査が済んだので当日中に削除)
+results/snv_p20_smoke/last.pt
+results/snv_p20_smoke/split.json
+results/snv_p20_smoke/train_log.json
+
+# 2026-11-11 段 P19 の途中の保存(20k の途中信号は results/snv_p19/mid20k.yaml に記録済み・last.pt = 40k を残す)
+results/snv_p19_x/step20k.pt
+
+# 2026-11-11 段 P21 の煙(内容ごとの平均の正規化 + 番地だけの回路・本番の入口・200 step・検査が済んだので当日中に削除)
+results/snv_p21_smoke/last.pt
+results/snv_p21_smoke/split.json
+results/snv_p21_smoke/train_log.json
+
+# 2026-11-11 段 P20 step b の途中の保存(途中信号を results/snv_p20/mid20k.yaml に記録済み・last.pt を残す)
+results/snv_p20_q/step20k.pt
+
+# 2026-11-11 段 P21 の途中の保存(途中信号を results/snv_p21/mid20k.yaml に記録済み・last.pt を残す)
+results/snv_p21_x/step20k.pt
+
+# 2026-11-11 段 P22 の物差しの煙(3 人・道具の動作確認だけ・判定に使わない・当日中に削除)
+results/snv_p22_smoke/srcid.json
+
+# 2026-11-11 段 P24 step b の煙(符号の学習の視点・本番の入口 200 step・途中信号の道具まで通した・当日中に削除)
+results/snv_p24_smoke/last.pt
+results/snv_p24_smoke/sig.npy
+results/snv_p24_smoke/nnc_smoke.json
+
+# 2026-11-11 段 P24 step c の C の腕の煙(新しい符号・本番の入口 200 step・保存を System で読んで変換まで・当日中に削除)
+results/snv_p24_smoke/last.pt
+results/snv_p24_smoke/split.json
+results/snv_p24_smoke/train_log.json
+results/snv_p24_smoke/conv.json
+
+# 2026-11-11 段 P24 の途中の保存(途中信号を results/snv_p24/mid.yaml・results/snv_p24c/mid20k.yaml に記録済み・last.pt を残す)
+results/snv_p24_c/step20k.pt
+results/snv_p24_xcpc/step10k.pt
+results/snv_p24_xcpc/step15k.pt
+results/snv_p24_xcpc/step20k.pt
+
+# 2026-11-11 段 P25 step b の煙(符号の学習の 4 視点・本番の入口 200 step・途中信号の道具まで通した・当日中に削除)
+results/snv_p25_smoke/last.pt
+results/snv_p25_smoke/sig.npy
+results/snv_p25_smoke/nnc_smoke.json
+
+# 2026-11-11 段 P25 step b の途中の保存(途中信号を results/snv_p25/mid.yaml に記録済み・last.pt を残す)
+results/snv_p25_xrcpc/step10k.pt
+results/snv_p25_xrcpc/step15k.pt
+results/snv_p25_xrcpc/step20k.pt
+
+## 2026-11-11T15:42:07Z 段 P26 の途中の重み(判定の記録後・results/snv_p26c/verdict.yaml と mid20k.yaml に値を残した)
+results/snv_p26_c1/step20k.pt  (32495037 bytes・snv_p26_c1 の 20k の途中の重み。last.pt は残す)
+
+## 2026-11-11T16:24:37Z 段 P27 の確かめの一時の出力(+hg の実装を直した後の同値の確かめ・値は results/snv_p27/land_self_hg.json と同じ 0.720 / 0.750)
+results/snv_p27/land_self_hg_check.json  (作ってすぐ消した一時のファイル)
+
+## 2026-11-11T16:46:55Z 段 P28 の煙(200 歩 + 評価 1 回・動作確認だけ・0.192 s/step・読みの広がりの項と記録が出ることを確認)
+results/snv_p28_smoke/  (last.pt・split.json・train_log.json)
+
+## 2026-11-11T17:24:07Z 段 P28 の修正 1 の煙(200 歩 + 評価 1 回・--marg_lo の入口の動作確認だけ)
+results/snv_p28_smoke/  (last.pt・split.json・train_log.json)
+results/snv_p30_smoke/last.pt  # 2026-11-11T19:58:42Z 段 P30 step b の煙(200 step・本番の入口・dacc k1 0.25 / k24 0.14・記録 results/snv_p30/smoke.log)
+results/snv_p30_smoke/sig.npy  # 同上
+results/snv_p28_c2/step20k.pt  # 2026-11-11T21:12:37Z 段 P28 の途中信号に使った保存(results/snv_p28c/mid20k.yaml)。判定 results/snv_p28c/verdict.yaml の後に削除・last.pt は残す
+results/snv_p30_smoke/  # 2026-11-11T21:52:58Z 段 P30 step c の煙(200 step → 保存 → System で読んで変換まで通過・記録 results/snv_p30/smoke_c.log): last.pt・split.json・train_log.json

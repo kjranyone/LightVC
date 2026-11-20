@@ -5,16 +5,27 @@ Model weights
 The weights are not stored in this repository. `cargo run -p lightvc-xtask -- package`
 copies three exported parts into models/ of the distribution:
 
-  - models/pfront_export — front end v3 (signal processing only).
-    Holds a fixed mel filterbank and a DCT matrix. It has no learned weights
-    and no training data.
+  - models/front_gate — front end v3 (fixed mel filterbank and DCT matrix; signal
+    processing) plus a gate network and a time-frequency mask network
+    (checkpoint snv_p45_gate_t80: gate from snv_p40_gate_t80, mask from snv_p45_mask).
+    Trained on mixtures of
+      - speech generated with Irodori-TTS-v4.1-Small (Aratako; MIT) by the fictional
+        voices described below, and versions of that speech re-synthesized with
+        WORLD (M. Morise; modified BSD) at lower pitch and longer vocal tract,
+        passed through simulated recording chains and MP3 coding, and
+      - real non-speech audio (music, noise, hand and object sounds) from MUSAN,
+        the Free Music Archive and FSD50K (development split), limited to CC0,
+        Public Domain and CC BY sources with speech removed. The per-source credits
+        are listed in ATTRIBUTION_SOURCES.md. No source audio is distributed.
 
-  - models/p_model_export — performance encoder E and circuit C
-    (checkpoint snv_p11_r, step 20000).
-    Trained only on speech generated with Irodori-TTS-v4.1-Small (Aratako; MIT):
-    564 fictional voices (VoiceDesign, made from text descriptions; no recording
-    of a real person was used as a voice reference), 10 utterances per voice,
-    plus non-verbal vocalizations by the same voices.
+  - models/k3g — three content encoders and circuits whose outputs are averaged
+    (checkpoints snv_p24_c, snv_p30_c and snv_p91e_c; the frame-wise weights are
+    and the attention keys and values are stored as 16-bit floats). Trained only on speech generated with
+    Irodori-TTS-v4.1-Small (Aratako; MIT): 564 fictional voices (VoiceDesign, made
+    from text descriptions; no recording of a real person was used as a voice
+    reference), 10 utterances per voice, non-verbal vocalizations by the same
+    voices, and the same sentences read by different voices; the encoders also saw
+    WORLD re-synthesized and recording-chain versions of that speech.
     The sentences were taken from the transcripts of a non-public speech dataset,
     which is not distributed.
 

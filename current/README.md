@@ -16,7 +16,7 @@ ASMR・官能バ美肉向けのリアルタイムVCを作る。普通の発声�
 
 **2026-11-01 研究リセット(オーナー)**: これまでの出力は「適当にメルが近くなっただけ」の水準に留まった。本線を [synth_nam_vc.md](synth_nam_vc.md)(構音の構造のアナログモデリング・PROPOSED rev1)へ移す。理論の土台 = 構音の構造を変更すれば任意の話者に変換できる。フロンティア = 低レイテンシで実現可能なモデリング。学習データは Irodori-TTS v4.1 の生成・zero-shot を維持・目標の声は架空と同意済みの実在の両方。**リセット前の記録は全て撤回**で、構音VC系の旧資料は 2026-11-10 の棚卸しで削除した。
 
-**採用済みの完成VCはない。** 現状・製品の候補・未決の問いは [RESEARCH.md](RESEARCH.md) §0 と [paper_snv.md](paper_snv.md)。
+**採用(2026-11-19): K3G**(paper_snv 段 P93・耳の関門はオーナーの判定「p11、k3gでは目標音声に対する話者の同一性が、人間の耳ではk3gが圧倒的に優れている。」)。配線と数値は §3 の製品の経路と [paper_snv.md](paper_snv.md) 段 P93・P94。残りの問い(伴奏の下の着地・UTMOS の絶対値・Windows の実時間)は [RESEARCH.md](RESEARCH.md)。
 
 ## 2. 設計と現役資料
 
@@ -47,7 +47,7 @@ target参照 → voice / style / texture ──┤
 ## 3. 実装・学習の境界
 
 - 推論はRust(`crates/lightvc-core` の自作の実装・入口は `snv_stream::SnvStream`)、学習はPyTorchのuv環境。Python runtime不要、conda禁止。
-- 製品の経路は paper_snv の段 P: 前段 v3 → E / C(`results/snv_p11_r`)→ rvoc3hi(48 kHz・hop 240)。研究の製品の候補(RESEARCH.md の c_pr・段 I の型)は Rust に移していない。
+- 製品の経路は paper_snv の段 P93 の K3G(2026-11-19 採用): 門と重みつきの前段(`results/snv_p45_gate_t80_export`)→ 符号と回路の 3 組の平均と錨(`results/snv_k3g16kv_export`・重みと注意の鍵と値は f16)→ rvoc3hi(48 kHz・hop 240・4 スレッド)。数値の関門(試験の CER 0.2527 / 0.2531・線 0.275)・耳の関門(オーナー 2026-11-19「p11、k3gでは目標音声に対する話者の同一性が、人間の耳ではk3gが圧倒的に優れている。」)・Rust の一致と実時間(関門 S: 1 ブロックの p99 最悪 4.82 ms < 5 ms)を通った。それまでの製品の経路は 前段 v3 → E / C(`results/snv_p11_r`)→ rvoc3hi。研究の候補(RESEARCH.md・成績表 results/LEADERBOARD.md。2026-11-12 から研究の基準の系は `snv_p30_c` の型 = paper_snv §7 rev86・それまでは P8)は Rust に移していない。
 - 製品推論は自作のネットワークを使う。SSL/ASR・話者認識等の補助モデルは評価の物差し・参考値まで。学習の目標・蒸留・表現の監督として直接使わない(オーナー判断 2026-11-01「既存アルゴリズムはベンチマークの参考値にしても良いが、直接教師にしない」)。出荷時依存にしない。
 - prosodyは明示特徴、voice/style/textureは別経路。contentをSSL/ASRの表現で作る旧方針は上の判断で置き換えた。DAC latentからspeaker-free contentを学ぶStage1へ戻らない。
 - 別VCの変換音声をtargetにするteacher蒸留は禁止。実音声・同一内容ペア・検証された信号処理由来の教師を使う。例外は Irodori-TTS v4.1 の生成音声(オーナー判断 2026-11-01・加工は入力側だけ)。

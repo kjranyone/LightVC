@@ -91,13 +91,14 @@ fn package() -> anyhow::Result<()> {
     // SnvStream の部品の書き出し(manifest.json + weights.bin。fixture は試験用なので入れない)。
     // **出荷する物を明示列挙**（欠品は fail-closed のまま）。
     for (rel, dst) in [
-        ("results/pfront_export/manifest.json", "models/pfront_export/manifest.json"),
-        ("results/pfront_export/weights.bin", "models/pfront_export/weights.bin"),
-        ("results/p_model_export/manifest.json", "models/p_model_export/manifest.json"),
-        ("results/p_model_export/weights.bin", "models/p_model_export/weights.bin"),
+        ("results/snv_p45_gate_t80_export/manifest.json", "models/front_gate/manifest.json"),
+        ("results/snv_p45_gate_t80_export/weights.bin", "models/front_gate/weights.bin"),
+        ("results/snv_k3g16kv_export/manifest.json", "models/k3g/manifest.json"),
+        ("results/snv_k3g16kv_export/weights.bin", "models/k3g/weights.bin"),
         ("results/rvoc3hi/export_330k/manifest.json", "models/rvoc3hi/manifest.json"),
         ("results/rvoc3hi/export_330k/weights.bin", "models/rvoc3hi/weights.bin"),
         ("NOTICE", "NOTICE"),
+        ("ATTRIBUTION_SOURCES.md", "ATTRIBUTION_SOURCES.md"),
         ("README.md", "README.md"),
     ] {
         let src = root.join(rel);

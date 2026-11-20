@@ -1,0 +1,28 @@
+
+# 2026-11-14T05:21:53Z 段 P52 の煙(粗さの族の 200 step の重み・門の保存に差し替えた形・本物の男声の物差しの入口で 1 人)
+results/snv_p52_mask_smoke/
+results/snv_p52_gate_smoke/
+results/snv_p52/smoke_cv.json
+
+# 2026-11-14T11:08:48Z 判定を記録した腕の途中の保存(段 P45 = P45_gain・P47 = P47_flat・P50 = P50_worse。RESEARCH.md に「判定の後に消す」と書いた分。last.pt と門の保存 *_gate_t80 は残す)
+results/snv_p45_mask/mid_20000.pt
+results/snv_p45_mask/mid_40000.pt
+results/snv_p45_mask/step10k.pt
+results/snv_p45_mid_20000/
+results/snv_p45_mid_40000/
+results/snv_p47_mask/mid_20000.pt
+results/snv_p47_mask/mid_40000.pt
+results/snv_p47_mask/step10k.pt
+results/snv_p47_mid_20000/
+results/snv_p47_mid_40000/
+results/snv_p50_mask/mid_10000.pt
+results/snv_p50_mask/mid_20000.pt
+results/snv_p50_mask/step10k.pt
+results/snv_p50_mid_10000/
+results/snv_p50_mid_20000/
+
+# 2026-11-14T12:16:35Z 段 P53 の煙(本物の男声 + 伴奏の物差しの倍音の事前の行・2 人・空の事前 w −1 が段 P48 の研究の形の行を 16 中 15 で同じ CER に再現することの確かめ)
+results/snv_p53/smoke.json
+- 2026-11-14T13:30:27Z 段 P54 の煙(動作確認だけ・当日中に消す): results/snv_p54/smoke.json
+- 2026-11-14T13:31:04Z 段 P52 step b の負け腕(P52_flat・last.pt と train_log は残す)の中間の保存: results/snv_p52_mask/mid_20000.pt・mid_40000.pt・step10k.pt・results/snv_p52_mid_20000/(last.pt = 20k の写し)・results/snv_p52_mid_40000/(last.pt = 40k の写し)。途中の値は RESEARCH.md の段 P52 の行に記録済み
+- 2026-11-14T23:32:34Z 段 P55 の煙(動作確認だけ・当日中に消す): results/snv_p55_smoke/・results/snv_p55_smoke.log

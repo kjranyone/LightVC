@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 
 use crate::affinity::Team;
 use crate::nvoc::Tensors;
+use crate::prof::prof;
 
 const CH: usize = 256;
 const HEADS: usize = 4;
@@ -18,7 +19,7 @@ const ATTN_AFTER: usize = 3;
 pub const D_Y: usize = 29;
 pub const D_A: usize = 64;
 
-struct Lin {
+pub(crate) struct Lin {
     w: Vec<f32>,
     b: Vec<f32>,
     i: usize,
@@ -26,13 +27,18 @@ struct Lin {
 }
 
 impl Lin {
-    fn new(ts: &Tensors, name: &str) -> Result<Self> {
+    pub(crate) fn new(ts: &Tensors, name: &str) -> Result<Self> {
         let (w, sh) = ts.get(&format!("{name}.weight"))?;
         let (b, _) = ts.get(&format!("{name}.bias"))?;
         Ok(Self { w, b, o: sh[0], i: sh[1] })
     }
 
-    fn run(&self, x: &[f32], y: &mut [f32]) {
+    /// 重みを f16 に丸めて f32 で持つ(段 P94・小さい層は帯域に効かないので f32 のまま読む)。
+    pub(crate) fn half(&mut self) {
+        self.w.iter_mut().for_each(|v| *v = f32_of(f16_of(*v)));
+    }
+
+    pub(crate) fn run(&self, x: &[f32], y: &mut [f32]) {
         for o in 0..self.o {
             let row = &self.w[o * self.i..(o + 1) * self.i];
             y[o] = self.b[o] + dot8(row, x);
@@ -100,13 +106,166 @@ fn relu(v: &mut [f32]) {
 }
 /// 構造(登録の定数): 鍵 k [heads][tr][dk]・値 v [heads][tr][dv]。
 pub struct Memory {
-    k: Vec<f32>,
-    v: Vec<f32>,
+    pub(crate) k: Vec<f32>,
+    pub(crate) v: Vec<f32>,
     tr: usize,
+    kh: Vec<u16>,
+    vh: Vec<u16>,
+}
+
+impl Memory {
+    /// 鍵と値を f16 でも持ち、フレームごとの表の読みはそちらを読む(段 P94 step c・training/snv_p1_eval の SNV_KV16 と同じ値)。
+    pub(crate) fn half(&mut self) {
+        self.kh = self.k.iter().map(|&x| f16_of(x)).collect();
+        self.vh = self.v.iter().map(|&x| f16_of(x)).collect();
+    }
+}
+
+/// f32 → f16(最も近い偶数への丸め・非正規化数と無限大を含む・torch の .half() と同じ値)。
+pub(crate) fn f16_of(x: f32) -> u16 {
+    let b = x.to_bits();
+    let sign = ((b >> 16) & 0x8000) as u16;
+    let exp = ((b >> 23) & 0xff) as i32;
+    let man = b & 0x7f_ffff;
+    if exp == 0xff {
+        return sign | 0x7c00 | if man != 0 { 0x200 } else { 0 };
+    }
+    let e = exp - 127 + 15;
+    if e >= 0x1f {
+        return sign | 0x7c00;
+    }
+    if e <= 0 {
+        if e < -10 {
+            return sign;
+        }
+        let m = man | 0x80_0000;
+        let sh = (14 - e) as u32;
+        let (mut r, rem, half) = (m >> sh, m & ((1 << sh) - 1), 1u32 << (sh - 1));
+        if rem > half || (rem == half && r & 1 == 1) {
+            r += 1;
+        }
+        return sign | r as u16;
+    }
+    let mut r = ((e as u32) << 10) | (man >> 13);
+    let rem = man & 0x1fff;
+    if rem > 0x1000 || (rem == 0x1000 && r & 1 == 1) {
+        r += 1;
+    }
+    sign | r as u16
+}
+
+/// f16 → f32(厳密)。
+pub(crate) fn f32_of(h: u16) -> f32 {
+    let sign = ((h & 0x8000) as u32) << 16;
+    let (exp, man) = (((h >> 10) & 0x1f) as u32, (h & 0x3ff) as u32);
+    let bits = match exp {
+        0 if man == 0 => sign,
+        0 => {
+            let (mut m, mut e) = (man, 113u32);
+            while m & 0x400 == 0 {
+                m <<= 1;
+                e -= 1;
+            }
+            sign | (e << 23) | ((m & 0x3ff) << 13)
+        }
+        0x1f => sign | 0x7f80_0000 | (man << 13),
+        _ => sign | ((exp + 112) << 23) | (man << 13),
+    };
+    f32::from_bits(bits)
+}
+
+/// 重みの行列 [rows][n](f32 か f16・段 P94)。f16 は読むときに f32 へ広げ、f32 の経路と同じ順で足す(= f16 に丸めた f32 の重みと 1 bit 同じ)。
+pub(crate) struct Wm {
+    f: Vec<f32>,
+    h: Vec<u16>,
+}
+
+impl Wm {
+    pub(crate) fn new(f: Vec<f32>, half: bool) -> Self {
+        if half { Self { h: f.iter().map(|&v| f16_of(v)).collect(), f: Vec::new() } } else { Self { f, h: Vec::new() } }
+    }
+
+    pub(crate) fn mv(&self, segs: &[&[f32]], b: Option<&[f32]>, out: &mut [f32]) {
+        if self.h.is_empty() { mv(&self.f, segs, b, out) } else { mv16(&self.h, segs, b, out) }
+    }
+
+    pub(crate) fn into_f32(self) -> Vec<f32> {
+        if self.h.is_empty() { self.f } else { self.h.iter().map(|&v| f32_of(v)).collect() }
+    }
+}
+
+/// mv の f16 の重みの版(同じ足し順)。
+pub(crate) fn mv16(w: &[u16], segs: &[&[f32]], b: Option<&[f32]>, out: &mut [f32]) {
+    let n: usize = segs.iter().map(|s| s.len()).sum();
+    debug_assert_eq!(w.len(), out.len() * n);
+    #[cfg(target_arch = "x86_64")]
+    if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") && is_x86_feature_detected!("f16c") && segs.iter().all(|s| s.len() % 8 == 0) {
+        unsafe { mv16_avx2(w, segs, n, b, out) };
+        return;
+    }
+    let mut row = vec![0.0f32; n];
+    for (r, y) in out.iter_mut().enumerate() {
+        for (d, &h) in row.iter_mut().zip(&w[r * n..(r + 1) * n]) {
+            *d = f32_of(h);
+        }
+        let mut s = b.map_or(0.0, |b| b[r]);
+        let mut o = 0;
+        for seg in segs {
+            s += dot8(&row[o..o + seg.len()], seg);
+            o += seg.len();
+        }
+        *y = s;
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma,f16c")]
+unsafe fn mv16_avx2(w: &[u16], segs: &[&[f32]], n: usize, b: Option<&[f32]>, out: &mut [f32]) {
+    use core::arch::x86_64::*;
+    unsafe {
+    let rows = out.len();
+    let wp = w.as_ptr();
+    let ld = |p: *const u16| _mm256_cvtph_ps(_mm_loadu_si128(p as *const __m128i));
+    let mut r = 0;
+    while r + 4 <= rows {
+        let mut a = [_mm256_setzero_ps(); 4];
+        let mut o = 0;
+        for seg in segs {
+            let xp = seg.as_ptr();
+            let mut c = 0;
+            while c < seg.len() {
+                let xv = _mm256_loadu_ps(xp.add(c));
+                for (q, aq) in a.iter_mut().enumerate() {
+                    *aq = _mm256_fmadd_ps(ld(wp.add((r + q) * n + o + c)), xv, *aq);
+                }
+                c += 8;
+            }
+            o += seg.len();
+        }
+        for (q, aq) in a.iter().enumerate() {
+            out[r + q] = hsum(*aq) + b.map_or(0.0, |b| b[r + q]);
+        }
+        r += 4;
+    }
+    while r < rows {
+        let mut a = _mm256_setzero_ps();
+        let mut o = 0;
+        for seg in segs {
+            let mut c = 0;
+            while c < seg.len() {
+                a = _mm256_fmadd_ps(ld(wp.add(r * n + o + c)), _mm256_loadu_ps(seg.as_ptr().add(c)), a);
+                c += 8;
+            }
+            o += seg.len();
+        }
+        out[r] = hsum(a) + b.map_or(0.0, |b| b[r]);
+        r += 1;
+    }
+    }
 }
 
 /// 行優先の行列 w [rows][n] × x(segs の連結・n = Σ 長さ)+ b → out [rows]。
-fn mv(w: &[f32], segs: &[&[f32]], b: Option<&[f32]>, out: &mut [f32]) {
+pub(crate) fn mv(w: &[f32], segs: &[&[f32]], b: Option<&[f32]>, out: &mut [f32]) {
     let n: usize = segs.iter().map(|s| s.len()).sum();
     debug_assert_eq!(w.len(), out.len() * n);
     #[cfg(target_arch = "x86_64")]
@@ -181,6 +340,37 @@ unsafe fn mv_avx2(w: &[f32], segs: &[&[f32]], n: usize, b: Option<&[f32]>, out: 
     }
 }
 
+/// wsum の f16 の値の版(同じ順の積と和)。
+unsafe fn wsum16(p: &[f32], v: &[u16], acc: &mut [f32; DV]) {
+    #[cfg(target_arch = "x86_64")]
+    if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("f16c") {
+        unsafe { wsum16_avx2(p, v, acc) };
+        return;
+    }
+    for (pt, vr) in p.iter().zip(v.chunks_exact(DV)) {
+        for d in 0..DV {
+            acc[d] += pt * f32_of(vr[d]);
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,f16c")]
+unsafe fn wsum16_avx2(p: &[f32], v: &[u16], acc: &mut [f32; DV]) {
+    use core::arch::x86_64::*;
+    unsafe {
+        let (mut a0, mut a1) = (_mm256_loadu_ps(acc.as_ptr()), _mm256_loadu_ps(acc.as_ptr().add(8)));
+        for (t, &pt) in p.iter().enumerate() {
+            let s = _mm256_set1_ps(pt);
+            let vp = v.as_ptr().add(t * DV);
+            a0 = _mm256_add_ps(a0, _mm256_mul_ps(s, _mm256_cvtph_ps(_mm_loadu_si128(vp as *const __m128i))));
+            a1 = _mm256_add_ps(a1, _mm256_mul_ps(s, _mm256_cvtph_ps(_mm_loadu_si128(vp.add(8) as *const __m128i))));
+        }
+        _mm256_storeu_ps(acc.as_mut_ptr(), a0);
+        _mm256_storeu_ps(acc.as_mut_ptr().add(8), a1);
+    }
+}
+
 /// Σ_t p[t]·v[t][..DV](注意の値の重み付きの和)。
 #[cfg_attr(target_arch = "x86_64", target_feature(enable = "avx2"))]
 unsafe fn wsum(p: &[f32], v: &[f32], acc: &mut [f32; DV]) {
@@ -208,15 +398,15 @@ struct Shard {
     hi: usize,
     h0: usize,
     h1: usize,
-    wc: Vec<Vec<f32>>,
+    wc: Vec<Wm>,
     bc: Vec<Vec<f32>>,
-    wo: Vec<Vec<f32>>,
+    wo: Vec<Wm>,
     bo: Vec<Vec<f32>>,
     g: Vec<Vec<f32>>,
     s: Vec<Vec<f32>>,
-    wq: Vec<f32>,
+    wq: Wm,
     bq: Vec<f32>,
-    wa: Vec<f32>,
+    wa: Wm,
     ba: Vec<f32>,
     ab: Vec<f32>,
     tmp: Vec<f32>,
@@ -238,6 +428,9 @@ struct Raw {
     t: usize,
     mk: *const f32,
     mvv: *const f32,
+    mk16: *const u16,
+    mv16p: *const u16,
+    kv16: bool,
     tr: usize,
 }
 
@@ -257,7 +450,7 @@ impl Raw {
             for (j, tp) in taps.iter_mut().enumerate().take(k) {
                 *tp = std::slice::from_raw_parts(self.slot(i, (k - 1 - j) * d), CH);
             }
-            mv(&s.wc[i], &taps[..k], Some(&s.bc[i]), &mut s.ab[..2 * n]);
+            s.wc[i].mv(&taps[..k], Some(&s.bc[i]), &mut s.ab[..2 * n]);
             let gt = std::slice::from_raw_parts_mut(self.gated.add(s.lo), n);
             for c in 0..n {
                 let a = s.ab[c] * (1.0 + s.g[i][c]) + s.s[i][c];
@@ -270,7 +463,7 @@ impl Raw {
         unsafe {
             let s = &mut *self.sh.add(r);
             let n = s.hi - s.lo;
-            mv(&s.wo[i], &[std::slice::from_raw_parts(self.gated, CH)], Some(&s.bo[i]), &mut s.tmp[..n]);
+            s.wo[i].mv(&[std::slice::from_raw_parts(self.gated, CH)], Some(&s.bo[i]), &mut s.tmp[..n]);
             let src = self.slot(i, 0).add(s.lo);
             let dst = if i == ATTN_AFTER { self.ha.add(s.lo) } else if i == 11 { self.hf.add(s.lo) } else { self.slot(i + 1, 0).add(s.lo) };
             for c in 0..n {
@@ -283,15 +476,18 @@ impl Raw {
         unsafe {
             let s = &mut *self.sh.add(r);
             let nq = (s.h1 - s.h0) * DK;
-            mv(&s.wq, &[std::slice::from_raw_parts(self.ha, CH)], Some(&s.bq), &mut s.qv[..nq]);
+            s.wq.mv(&[std::slice::from_raw_parts(self.ha, CH)], Some(&s.bq), &mut s.qv[..nq]);
             if s.logit.len() < self.tr {
                 s.logit.resize(self.tr, 0.0);
             }
             let sc = 1.0 / (DK as f32).sqrt();
             for (li, hd) in (s.h0..s.h1).enumerate() {
-                let kh = std::slice::from_raw_parts(self.mk.add(hd * self.tr * DK), self.tr * DK);
                 let lg = &mut s.logit[..self.tr];
-                mv(kh, &[&s.qv[li * DK..(li + 1) * DK]], None, lg);
+                if self.kv16 {
+                    mv16(std::slice::from_raw_parts(self.mk16.add(hd * self.tr * DK), self.tr * DK), &[&s.qv[li * DK..(li + 1) * DK]], None, lg);
+                } else {
+                    mv(std::slice::from_raw_parts(self.mk.add(hd * self.tr * DK), self.tr * DK), &[&s.qv[li * DK..(li + 1) * DK]], None, lg);
+                }
                 let mut mx = f32::NEG_INFINITY;
                 for l in lg.iter_mut() {
                     *l *= sc;
@@ -303,7 +499,11 @@ impl Raw {
                     z += *l;
                 }
                 let mut acc = [0f32; DV];
-                wsum(lg, std::slice::from_raw_parts(self.mvv.add(hd * self.tr * DV), self.tr * DV), &mut acc);
+                if self.kv16 {
+                    wsum16(lg, std::slice::from_raw_parts(self.mv16p.add(hd * self.tr * DV), self.tr * DV), &mut acc);
+                } else {
+                    wsum(lg, std::slice::from_raw_parts(self.mvv.add(hd * self.tr * DV), self.tr * DV), &mut acc);
+                }
                 let ch = std::slice::from_raw_parts_mut(self.ctx.add(hd * DV), DV);
                 let iz = 1.0 / z;
                 for d in 0..DV {
@@ -317,7 +517,7 @@ impl Raw {
         unsafe {
             let s = &mut *self.sh.add(r);
             let n = s.hi - s.lo;
-            mv(&s.wa, &[std::slice::from_raw_parts(self.ctx, HEADS * DV)], Some(&s.ba), &mut s.tmp[..n]);
+            s.wa.mv(&[std::slice::from_raw_parts(self.ctx, HEADS * DV)], Some(&s.ba), &mut s.tmp[..n]);
             let (src, dst) = (self.ha.add(s.lo), self.slot(ATTN_AFTER + 1, 0).add(s.lo));
             for c in 0..n {
                 *dst.add(c) = *src.add(c) + s.tmp[c];
@@ -328,7 +528,7 @@ impl Raw {
 
 /// 因果の網(E と C で共通の形): inp → 12 段の FiLM つき膨張畳み込み(3 段目の後に参照を読む注意)→ head。
 /// 段の出力チャンネルを Team の rank に分ける(rank 数 = 1・2・4)。段 i の入力の履歴 = 環 ring[i] [R][CH](R = 2 の冪 > (k−1)·d)。
-struct Net {
+pub(crate) struct Net {
     w: Vec<BlockW>,
     inp: Lin,
     head: Lin,
@@ -342,10 +542,11 @@ struct Net {
     ctx: Vec<f32>,
     t: usize,
     z: Option<Vec<f32>>,
+    half: bool,
 }
 
 impl Net {
-    fn new(ts: &Tensors, p: &str) -> Result<Self> {
+    pub(crate) fn new(ts: &Tensors, p: &str) -> Result<Self> {
         let mut w = Vec::new();
         for (i, &d) in DILS.iter().enumerate() {
             let (cw, sh) = ts.get(&format!("{p}.blocks.{i}.conv.weight"))?;
@@ -367,29 +568,31 @@ impl Net {
         let ring = w.iter().map(|b| vec![0.0f32; ((b.k - 1) * b.d + 1).next_power_of_two() * CH]).collect();
         let mut net = Self {
             w, inp: Lin::new(ts, &format!("{p}.inp"))?, head: Lin::new(ts, &format!("{p}.head"))?, q: Lin::new(ts, &format!("{p}.q"))?, o: Lin::new(ts, &format!("{p}.o"))?,
-            shards: Vec::new(), ring, gated: vec![0.0; CH], ha: vec![0.0; CH], hf: vec![0.0; CH], ctx: vec![0.0; HEADS * DV], t: 0, z: None,
+            shards: Vec::new(), ring, gated: vec![0.0; CH], ha: vec![0.0; CH], hf: vec![0.0; CH], ctx: vec![0.0; HEADS * DV], t: 0, z: None, half: false,
         };
         net.split(1);
         Ok(net)
     }
 
-    fn split(&mut self, p: usize) {
+    pub(crate) fn split(&mut self, p: usize) {
         assert!(CH.is_multiple_of(p) && HEADS.is_multiple_of(p), "rank 数 {p}");
         let (n, nh) = (CH / p, HEADS / p);
+        let half = self.half;
         let rows = |w: &[f32], width: usize, r: std::ops::Range<usize>| w[r.start * width..r.end * width].to_vec();
+        let wm = |v: Vec<f32>| Wm::new(v, half);
         self.shards = (0..p)
             .map(|r| {
                 let (lo, hi, h0, h1) = (r * n, (r + 1) * n, r * nh, (r + 1) * nh);
                 let kc = |b: &BlockW| b.k * CH;
                 Shard {
                     lo, hi, h0, h1,
-                    wc: self.w.iter().map(|b| [rows(&b.wc, kc(b), lo..hi), rows(&b.wc, kc(b), CH + lo..CH + hi)].concat()).collect(),
+                    wc: self.w.iter().map(|b| wm([rows(&b.wc, kc(b), lo..hi), rows(&b.wc, kc(b), CH + lo..CH + hi)].concat())).collect(),
                     bc: self.w.iter().map(|b| [&b.bc[lo..hi], &b.bc[CH + lo..CH + hi]].concat()).collect(),
-                    wo: self.w.iter().map(|b| rows(&b.wo, CH, lo..hi)).collect(),
+                    wo: self.w.iter().map(|b| wm(rows(&b.wo, CH, lo..hi))).collect(),
                     bo: self.w.iter().map(|b| b.bo[lo..hi].to_vec()).collect(),
                     g: vec![vec![0.0; n]; 12], s: vec![vec![0.0; n]; 12],
-                    wq: rows(&self.q.w, CH, h0 * DK..h1 * DK), bq: self.q.b[h0 * DK..h1 * DK].to_vec(),
-                    wa: rows(&self.o.w, HEADS * DV, lo..hi), ba: self.o.b[lo..hi].to_vec(),
+                    wq: wm(rows(&self.q.w, CH, h0 * DK..h1 * DK)), bq: self.q.b[h0 * DK..h1 * DK].to_vec(),
+                    wa: wm(rows(&self.o.w, HEADS * DV, lo..hi)), ba: self.o.b[lo..hi].to_vec(),
                     ab: vec![0.0; 2 * n], tmp: vec![0.0; n], qv: vec![0.0; nh * DK], logit: Vec::new(),
                 }
             })
@@ -399,7 +602,15 @@ impl Net {
         }
     }
 
-    fn set_z(&mut self, z: &[f32]) {
+    /// フレームごとに読む重み(段の畳み込みと出力・注意の q と o・inp・head)を f16 にする(段 P94・training/snv_p1_eval.half_weights と同じ値)。
+    pub(crate) fn set_half(&mut self) {
+        self.half = true;
+        self.inp.half();
+        self.head.half();
+        self.split(self.shards.len().max(1));
+    }
+
+    pub(crate) fn set_z(&mut self, z: &[f32]) {
         let mut gs = vec![0.0; 2 * CH];
         for (i, b) in self.w.iter().enumerate() {
             b.film.run(z, &mut gs);
@@ -411,12 +622,12 @@ impl Net {
         self.z = Some(z.to_vec());
     }
 
-    fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.ring.iter_mut().for_each(|r| r.iter_mut().for_each(|v| *v = 0.0));
         self.t = 0;
     }
 
-    fn step(&mut self, team: &Team, x: &[f32], mem: &Memory, out: &mut [f32]) {
+    pub(crate) fn step(&mut self, team: &Team, x: &[f32], mem: &Memory, out: &mut [f32]) {
         assert_eq!(team.size(), self.shards.len(), "Team と分け方の rank 数");
         let m0 = self.ring[0].len() / CH - 1;
         let s0 = self.t & m0;
@@ -428,14 +639,18 @@ impl Net {
             dil: std::array::from_fn(|i| self.w[i].d),
             k: std::array::from_fn(|i| self.w[i].k),
             gated: self.gated.as_mut_ptr(), ha: self.ha.as_mut_ptr(), hf: self.hf.as_mut_ptr(), ctx: self.ctx.as_mut_ptr(),
-            t: self.t, mk: mem.k.as_ptr(), mvv: mem.v.as_ptr(), tr: mem.tr,
+            t: self.t, mk: mem.k.as_ptr(), mvv: mem.v.as_ptr(), mk16: mem.kh.as_ptr(), mv16p: mem.vh.as_ptr(), kv16: !mem.kh.is_empty(), tr: mem.tr,
         };
         for i in 0..12 {
-            team.run(&|r| unsafe { raw.phase_a(r, i) });
-            team.run(&|r| unsafe { raw.phase_b(r, i) });
+            prof!(member M_CONV, {
+                team.run(&|r| unsafe { raw.phase_a(r, i) });
+                team.run(&|r| unsafe { raw.phase_b(r, i) });
+            });
             if i == ATTN_AFTER {
-                team.run(&|r| unsafe { raw.phase_q(r) });
-                team.run(&|r| unsafe { raw.phase_o(r) });
+                prof!(member M_ATTN, {
+                    team.run(&|r| unsafe { raw.phase_q(r) });
+                    team.run(&|r| unsafe { raw.phase_o(r) });
+                });
             }
         }
         self.head.run(&self.hf, out);
@@ -444,7 +659,7 @@ impl Net {
 }
 
 /// 構造の推定(登録・オフライン): genc → 平均 → gz = z・鍵と値。
-struct StructEnc {
+pub(crate) struct StructEnc {
     genc: [OConv; 3],
     gz: Lin,
     kenc: Option<[OConv; 2]>,
@@ -453,7 +668,7 @@ struct StructEnc {
 }
 
 impl StructEnc {
-    fn new(ts: &Tensors, p: &str, from_frames: bool) -> Result<Self> {
+    pub(crate) fn new(ts: &Tensors, p: &str, from_frames: bool) -> Result<Self> {
         let oc = |n: &str| OConv::new(ts, &format!("{p}.{n}"));
         Ok(Self {
             genc: [oc("genc.0")?, oc("genc.2")?, oc("genc.4")?],
@@ -465,7 +680,7 @@ impl StructEnc {
     }
 
     /// rx [ci][t](構造の入力)・ra [D_A][t](C の鍵の入力 = 参照の演奏・E は None)→ (z, 記憶)。
-    fn run(&self, rx: &[f32], ra: Option<&[f32]>, t: usize) -> (Vec<f32>, Memory) {
+    pub(crate) fn run(&self, rx: &[f32], ra: Option<&[f32]>, t: usize) -> (Vec<f32>, Memory) {
         let mut g = self.genc[0].run(rx, t);
         relu(&mut g);
         let mut g = self.genc[1].run(&g, t);
@@ -511,7 +726,7 @@ impl StructEnc {
                 }
             }
         }
-        (z, Memory { k: kf, v: vf, tr: t })
+        (z, Memory { k: kf, v: vf, tr: t, kh: Vec::new(), vh: Vec::new() })
     }
 }
 
@@ -630,6 +845,52 @@ mod tests {
     }
 
     #[test]
+    fn f16_matches_hardware_and_rounded_f32() {
+        let mut st = 0x9e37_79b9_7f4a_7c15u64;
+        let mut xs: Vec<f32> = (0..200_000)
+            .map(|_| {
+                st ^= st << 13;
+                st ^= st >> 7;
+                st ^= st << 17;
+                f32::from_bits(st as u32)
+            })
+            .filter(|v| v.is_finite())
+            .collect();
+        xs.extend([0.0, -0.0, 65504.0, 65520.0, 65519.99, 6.1e-5, 5.96e-8, 2.98e-8, 2.99e-8, 1e-10, -1e-10, f32::INFINITY, f32::NEG_INFINITY]);
+        for (k, scale) in [1.0f32, 1e-3, 1e-6, 1e3].iter().enumerate() {
+            for &x in xs.iter().take(50_000) {
+                let v = x * scale;
+                let h = f16_of(v);
+                #[cfg(target_arch = "x86_64")]
+                if is_x86_feature_detected!("f16c") {
+                    let hw = unsafe {
+                        use core::arch::x86_64::*;
+                        _mm_extract_epi16(_mm_cvtps_ph(_mm_set1_ps(v), _MM_FROUND_TO_NEAREST_INT), 0) as u16
+                    };
+                    if !v.is_nan() {
+                        assert_eq!(h, hw, "f16_of({v:e}) 尺度 {k}");
+                    }
+                    let back = unsafe {
+                        use core::arch::x86_64::*;
+                        _mm_cvtss_f32(_mm_cvtph_ps(_mm_set1_epi16(h as i16)))
+                    };
+                    assert_eq!(f32_of(h).to_bits(), back.to_bits(), "f32_of({h:#x})");
+                }
+            }
+        }
+        let (rows, n) = (37, 256 * 3);
+        let w: Vec<f32> = xs.iter().take(rows * n).map(|v| (v.to_bits() % 2000) as f32 / 1000.0 - 1.0).collect();
+        let x: Vec<f32> = (0..n).map(|i| ((i * 7919) % 101) as f32 / 50.0 - 1.0).collect();
+        let b: Vec<f32> = (0..rows).map(|i| i as f32 * 0.01).collect();
+        let segs: [&[f32]; 3] = [&x[..256], &x[256..512], &x[512..]];
+        let wr: Vec<f32> = w.iter().map(|&v| f32_of(f16_of(v))).collect();
+        let (mut o1, mut o2) = (vec![0.0f32; rows], vec![0.0f32; rows]);
+        mv(&wr, &segs, Some(&b), &mut o1);
+        Wm::new(w, true).mv(&segs, Some(&b), &mut o2);
+        assert!(o1.iter().zip(&o2).all(|(a, c)| a.to_bits() == c.to_bits()), "f16 の経路と丸めた f32 の重みの経路が 1 bit 同じでない");
+    }
+
+    #[test]
     fn parity_with_python_model() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../results/p_model_export");
         if !dir.join("manifest.json").exists() {
@@ -678,6 +939,135 @@ mod tests {
                 assert!(s, "スレッド {par} の出力が 1 スレッドと違う");
             }
             seq.get_or_insert(y_all);
+        }
+    }
+}
+
+#[cfg(all(test, target_arch = "x86_64"))]
+mod bench {
+    use super::mv;
+    use core::arch::x86_64::*;
+
+    const ROWS: usize = 512;
+    const N: usize = 768;
+    const MATS: usize = 22;
+
+    #[target_feature(enable = "avx2,fma,f16c")]
+    unsafe fn mv_f16(w: &[u16], x: &[f32], out: &mut [f32]) {
+        unsafe {
+            for (r, o) in out.chunks_exact_mut(4).enumerate() {
+                let mut a = [_mm256_setzero_ps(); 4];
+                let mut c = 0;
+                while c < N {
+                    let xv = _mm256_loadu_ps(x.as_ptr().add(c));
+                    for (q, aq) in a.iter_mut().enumerate() {
+                        let wv = _mm256_cvtph_ps(_mm_loadu_si128(w.as_ptr().add((r * 4 + q) * N + c) as *const __m128i));
+                        *aq = _mm256_fmadd_ps(wv, xv, *aq);
+                    }
+                    c += 8;
+                }
+                for (q, aq) in a.iter().enumerate() {
+                    let mut t = [0f32; 8];
+                    _mm256_storeu_ps(t.as_mut_ptr(), *aq);
+                    o[q] = t.iter().sum();
+                }
+            }
+        }
+    }
+
+    #[target_feature(enable = "avx2,fma")]
+    unsafe fn mv_i8(w: &[i8], x: &[f32], out: &mut [f32]) {
+        unsafe {
+            for (r, o) in out.chunks_exact_mut(4).enumerate() {
+                let mut a = [_mm256_setzero_ps(); 4];
+                let mut c = 0;
+                while c < N {
+                    let xv = _mm256_loadu_ps(x.as_ptr().add(c));
+                    for (q, aq) in a.iter_mut().enumerate() {
+                        let wi = _mm256_cvtepi8_epi32(_mm_loadl_epi64(w.as_ptr().add((r * 4 + q) * N + c) as *const __m128i));
+                        *aq = _mm256_fmadd_ps(_mm256_cvtepi32_ps(wi), xv, *aq);
+                    }
+                    c += 8;
+                }
+                for (q, aq) in a.iter().enumerate() {
+                    let mut t = [0f32; 8];
+                    _mm256_storeu_ps(t.as_mut_ptr(), *aq);
+                    o[q] = t.iter().sum();
+                }
+            }
+        }
+    }
+
+    fn rnd(n: usize, seed: u64) -> Vec<f32> {
+        let mut st = seed | 1;
+        (0..n)
+            .map(|_| {
+                st ^= st << 13;
+                st ^= st >> 7;
+                st ^= st << 17;
+                ((st >> 40) as f32 / (1u64 << 24) as f32 - 0.5) * 0.1
+            })
+            .collect()
+    }
+
+    /// 1 組ぶんの重み(22 枚 × [512][768] = 34.6 MB の f32)を threads 本のスレッドがそれぞれ別の写しで読む 1 回の通しの時間 ms(最小)。same = 1 枚目だけを 22 回(キャッシュに載る = 計算だけの時間)。
+    fn pass(threads: usize, kind: &str, same: bool) -> f64 {
+        let x = rnd(N, 7);
+        let bar = std::sync::Barrier::new(threads + 1);
+        let best = std::sync::Mutex::new(vec![f64::INFINITY; threads]);
+        let reps = 30;
+        std::thread::scope(|sc| {
+            for th in 0..threads {
+                let (x, bar, best) = (&x, &bar, &best);
+                sc.spawn(move || {
+                    crate::affinity::pin_current_to_perf();
+                    let f: Vec<f32> = rnd(MATS * ROWS * N, 11 + th as u64);
+                    let h: Vec<u16> = if kind == "f16" { f.iter().map(|&v| (v * 32768.0) as i16 as u16).collect() } else { Vec::new() };
+                    let b: Vec<i8> = if kind == "i8" { f.iter().map(|&v| (v * 1270.0) as i8).collect() } else { Vec::new() };
+                    let mut out = vec![0.0f32; ROWS];
+                    let mut sink = 0.0f32;
+                    for _ in 0..reps {
+                        bar.wait();
+                        let t0 = std::time::Instant::now();
+                        for m in 0..MATS {
+                            let o = if same { 0 } else { m * ROWS * N };
+                            match kind {
+                                "f16" => unsafe { mv_f16(&h[o..o + ROWS * N], x, &mut out) },
+                                "i8" => unsafe { mv_i8(&b[o..o + ROWS * N], x, &mut out) },
+                                _ => mv(&f[o..o + ROWS * N], &[x], None, &mut out),
+                            }
+                            sink += out[m];
+                        }
+                        let ms = t0.elapsed().as_secs_f64() * 1e3;
+                        let mut g = best.lock().unwrap();
+                        g[th] = g[th].min(ms);
+                    }
+                    std::hint::black_box(sink);
+                });
+            }
+            for _ in 0..reps {
+                std::thread::sleep(std::time::Duration::from_millis(3));
+                bar.wait();
+            }
+        });
+        let g = best.lock().unwrap();
+        g.iter().sum::<f64>() / threads as f64
+    }
+
+    /// メモリ帯域が律速かを確かめる: 同じ計算で、重みがキャッシュに載る場合と載らない場合・スレッド数・重みの型(f32 / f16 / int8)を振る。
+    /// cargo test --release -p lightvc-core bench_weight_stream -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn bench_weight_stream() {
+        let mb = (MATS * ROWS * N * 4) as f64 / 1e6;
+        for kind in ["f32", "f16", "i8"] {
+            let bytes = mb * match kind { "f16" => 0.5, "i8" => 0.25, _ => 1.0 };
+            let c = pass(1, kind, true);
+            eprintln!("{kind}: 計算だけ(1 枚を 22 回・1 スレッド){c:.3} ms");
+            for th in [1usize, 2, 3, 4, 6] {
+                let (s, cc) = (pass(th, kind, false), pass(th, kind, true));
+                eprintln!("{kind}: {th} スレッド・組 1 つぶん {bytes:.1} MB の通し {s:.3} ms / スレッド(合計 {:.1} GB/s)・同じ形でキャッシュに載る場合 {cc:.3} ms・比 {:.2}", th as f64 * bytes / s, s / cc);
+            }
         }
     }
 }

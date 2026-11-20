@@ -8,6 +8,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use crate::nvoc::{CConv, HarmSrc, Tensors, HOP};
+use crate::prof::prof;
 
 pub const UPS: [usize; 4] = [5, 4, 4, 3];
 pub const D_COND: usize = 31;
@@ -143,6 +144,8 @@ impl Stage {
     fn run(&mut self, xin: &[f32], n_in: usize, exc: &[f32], idx: usize, par: Option<&RbWorker>) -> usize {
         let (r, ci, co) = (self.r, self.ci, self.co);
         let n = n_in * r;
+        #[cfg(test)]
+        let t_up = crate::prof::start();
         self.xi.resize(ci * n, 0.0);
         for c in 0..ci {
             let mut p = self.prev[c];
@@ -173,15 +176,17 @@ impl Stage {
         if let Some(w) = par {
             w.tx.send((idx, self.x.clone(), n)).expect("rvoc worker");
         }
-        for rb in self.res.iter_mut() {
+        #[cfg(test)]
+        crate::prof::stop(crate::prof::VOC_UP, t_up);
+        prof!(VOC_RB, for rb in self.res.iter_mut() {
             self.xr.copy_from_slice(&self.x);
             rb.run(&mut self.xr, n);
             for (x, &y) in self.acc.iter_mut().zip(self.xr.iter()) {
                 *x += y;
             }
-        }
+        });
         if let Some(w) = par {
-            let y = crate::affinity::recv_spin(&w.rx).expect("rvoc worker");
+            let y = prof!(VOC_WAIT, crate::affinity::recv_spin(&w.rx).expect("rvoc worker"));
             for (x, &v) in self.acc.iter_mut().zip(y.iter()) {
                 *x += v;
             }
@@ -582,7 +587,7 @@ impl RVoc {
                 d.extend_from_slice(&self.cbuf[..27]);
             }
         } else {
-            self.pre.run(cond, 1, &mut self.h0);
+            prof!(VOC_PRE, self.pre.run(cond, 1, &mut self.h0));
             if let Some(d) = self.vdump.as_mut() {
                 d.extend_from_slice(&cond[..27]);
             }
@@ -602,7 +607,7 @@ impl RVoc {
         for (a, &b) in self.out_in.iter_mut().zip(cur.iter()) {
             *a = if b < 0.0 { b * 0.01 } else { b };
         }
-        self.post.run(&self.out_in, n, out);
+        prof!(VOC_POST, self.post.run(&self.out_in, n, out));
     }
 }
 

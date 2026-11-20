@@ -105,3 +105,26 @@ crates/lightvc-core/tests/(空のディレクトリ)
 current/ROADMAP.md  4210 B  リセット前(2026-10-13 整理)の未決事項・撤回された記録(未決は paper_snv §9 と RESEARCH §0 へ)・2026-11-10T02:25:59Z
 current/RESEARCH.md の §1〜§5(リセット前の 2026-10-13〜10-30 の記録・撤回済み・消えた資料と結果へのリンク)・本文は git の履歴・2026-11-10T02:25:59Z
 # 復元(2026-11-10T04:00:12Z): training/export_rvoc.py を git(HEAD)から戻した。11-09 の削除は誤り(import されないが、配布物の部品 results/rvoc3hi/export_330k の作り方)。results/rvoc3hi/snap/ema_330k.pt から書き出し直して weights.bin・manifest.json がビット一致。
+
+# 2026-11-10T12:01Z 段 D5 の途中の成果物(測り直した値に置き換え済み)
+results/snv_d5/dev_rows_devA.aborted_copyref.json  # 参照を写しの書き起こしにした最初の走行(orig・copy・anchor の途中で止めた)→ dev_rows_devA.json(参照 = 元の音の書き起こし・cer_c に写しの参照も残す)
+results/snv_d5/dev_rows_devA.aborted_copyref.log
+results/snv_d5/attrib.json  # 系が出そろう前の帰属 → attrib_f1.json・attrib_e1.json
+results/snv_d5/attrib_e1_partial.json
+results/snv_d5/sig_probe.json  # 鎖 v1 の最初の出力 → sig_probe_f2v1.json
+results/snv_i25_smoke/  # 段 I25 の煙(本番の入口・200 step・0.361 s/step・fit_s 4.80)・2026-11-10T12:25Z
+results/snv_i25_smoke_combo/  # 煙の組み合わせ(評価の経路の確認)
+results/snv_i25/smoke_rows.json
+results/snv_i25_e_w/step10k.pt  # 段 I25 の 10k の保存(途中信号は results/snv_i25/mid10k_*.json に記録済み・last.pt を残す)・2026-11-10T13:57Z
+results/snv_i25_combo10k/  # 10k の組み合わせ(途中信号の評価だけ)
+2026-11-10T17:20:07Z 段 P16 の煙(train_snv_p16.py --smoke・40 声・200 step・動作確認だけ): results/snv_p16_smoke/{last.pt,split.json,train_log.json}
+2026-11-10T17:21:15Z 段 P16 の擬似の操作者の版の作りかけ(r ~ logU[0.5, 1] の版・895 本・高さの目標を台帳に合わせる作りに替える前): data/snv_p_feat_x16/
+
+# 2026-11-10 段 P19 の煙(本番の入口・200 step・検査が済んだので当日中に削除)
+results/snv_p19_smoke/last.pt
+results/snv_p19_smoke/split.json
+results/snv_p19_smoke/train_log.json
+results/snv_p19_smoke.train.log(在れば)
+
+# 2026-11-10 段 P16 の途中の保存(20k の途中信号は results/snv_p16/mid20k_summary.json に記録済み・last.pt = 40k を残す)
+results/snv_p16_x/step20k.pt

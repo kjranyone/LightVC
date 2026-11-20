@@ -2,6 +2,8 @@
 //! 高さと有声 = 因果の Butterworth 4 次 → 左寄せの CMNDF(基準窓 1200・遅れ 20〜960)→ 谷の候補 6(放物線の補間)→ 1 kHz 未満のパワーの比 → 前向きの動的計画。
 //! 包絡 = 因果の位置 τ_t = min(tH, (t+1)H − 2 − ⌈1.5 T0 SR⌉) の CheapTrick(enroll.rs の WORLD の移植)→ √ → mel 128 → log(床 1e-5)→ DCT 25。
 //! 周期性 = 左寄せの Hann 2048 の 4 帯の倍音の山と谷のパワー比。定数と一致検査の固定の入出力 = training/export_pfront.py(paper_snv §6 段 P)。
+//! 重み m [NB_P](振幅・p_gate の門が開いたフレーム)を渡すと training/train_snv_mask.features_with_mask と snv_p0_front.f0_track_myin の計算:
+//! YIN の区間とパワーに m(2049 本へ線形の補間)を掛け、周期性は m² ⊙ P で、包絡の mel の帯の振幅に √((m² ⊙ P)·fb / P·fb) を掛ける。
 
 use std::path::Path;
 
@@ -9,6 +11,7 @@ use anyhow::{bail, Context, Result};
 
 use crate::enroll::{cheaptrick_frame, Randn};
 use crate::nvoc::{Tensors, HOP};
+use crate::prof::prof;
 use crate::ship_front::fft;
 
 const SR: f64 = 48000.0;
@@ -74,6 +77,16 @@ fn hann_sym(n: usize) -> Vec<f64> {
     (0..n).map(|i| 0.5 - 0.5 * (2.0 * std::f64::consts::PI * i as f64 / (n - 1) as f64).cos()).collect()
 }
 
+/// 重み m [n] を nb 本の格子へ線形の補間した k 本目(snv_p0_front.mask_to_grid)。
+fn grid(m: &[f64], nb: usize, k: usize) -> f64 {
+    let n = m.len() - 1;
+    let pos = (k * n) as f64 / (nb - 1) as f64;
+    let lo = (pos.floor() as usize).min(n);
+    let hi = (lo + 1).min(n);
+    let fr = pos - lo as f64;
+    m[lo] * (1.0 - fr) + m[hi] * fr
+}
+
 impl PFront {
     pub fn load(dir: &Path) -> Result<Self> {
         let (ts, man) = Tensors::load(dir)?;
@@ -118,9 +131,26 @@ impl PFront {
         y
     }
 
-    /// 左寄せの CMNDF(snv_p0_front.cmndf): dn [TMAX+1]・ms = 基準窓の平均パワー。
-    fn cmndf(&mut self) -> (Vec<f64>, f64) {
-        let s = &self.lp;
+    /// 低域通過の区間に重みを掛けた区間(snv_p0_front.cmndf_masked: 4096 点の rfft × 補間した m → irfft の先頭 L_SEG)。
+    fn filtered(&mut self, m: &[f64]) -> Vec<f64> {
+        for i in 0..NFFT_X {
+            self.re[i] = if i < L_SEG { self.lp[i] } else { 0.0 };
+            self.im[i] = 0.0;
+        }
+        fft(&mut self.re, &mut self.im);
+        for k in 0..NFFT_X {
+            let g = grid(m, NFFT_X / 2 + 1, if k <= NFFT_X / 2 { k } else { NFFT_X - k });
+            self.re[k] *= g;
+            self.im[k] = -(self.im[k] * g);
+        }
+        fft(&mut self.re, &mut self.im);
+        (0..L_SEG).map(|i| self.re[i] / NFFT_X as f64).collect()
+    }
+
+    /// 左寄せの CMNDF(snv_p0_front.cmndf・m があれば cmndf_masked): dn [TMAX+1]・ms = 基準窓の平均パワー。
+    fn cmndf(&mut self, m: Option<&[f64]>) -> (Vec<f64>, f64) {
+        let sm = m.map(|m| self.filtered(m));
+        let s = sm.as_deref().unwrap_or(&self.lp);
         for i in 0..NFFT_X {
             self.re[i] = if i < L_SEG { s[i] } else { 0.0 };
             self.im[i] = 0.0;
@@ -181,15 +211,21 @@ impl PFront {
         (f, cost)
     }
 
-    /// 1 kHz 未満のパワーの比(snv_p0_front.lowband・左寄せの Hann 4096)。
-    fn lowband(&mut self) -> f64 {
+    /// 1 kHz 未満のパワーの比(snv_p0_front.lowband・左寄せの Hann 4096・m があればパワーに補間した m²)。
+    fn lowband(&mut self, m: Option<&[f64]>) -> f64 {
         for i in 0..NFFT_S {
             self.re[i] = self.raw[RING - NFFT_S + i] * self.hann_s[i];
             self.im[i] = 0.0;
         }
         fft(&mut self.re, &mut self.im);
         let k = (LB_HZ / (SR / NFFT_S as f64)) as usize;
-        let p = |i: usize, re: &[f64], im: &[f64]| re[i] * re[i] + im[i] * im[i];
+        let p = |i: usize, re: &[f64], im: &[f64]| {
+            let v = re[i] * re[i] + im[i] * im[i];
+            m.map_or(v, |m| {
+                let g = grid(m, NB_S, i);
+                v * (g * g)
+            })
+        };
         let lo: f64 = (1..k).map(|i| p(i, &self.re, &self.im)).sum();
         let all: f64 = (1..NB_S).map(|i| p(i, &self.re, &self.im)).sum();
         lo / (all + 1e-20)
@@ -259,7 +295,7 @@ impl PFront {
         (f0, best)
     }
 
-    fn envelope(&mut self, f0: f32) -> [f32; 25] {
+    fn envelope(&mut self, f0: f32, g: Option<&[f64]>) -> [f32; 25] {
         let end = ((self.t + 1) * HOP) as f64;
         let t0 = 1.0 / if f0 > 0.0 { f0 as f64 } else { 200.0 };
         let tau = ((self.t * HOP) as f64).min(end - 2.0 - (1.5 * t0 * SR).ceil());
@@ -274,7 +310,7 @@ impl PFront {
             let (lo, hi) = self.fbr[m];
             let row = &self.fb[m * NB_CT + lo..m * NB_CT + hi];
             let s: f64 = row.iter().zip(self.sq[lo..hi].iter()).map(|(&w, &q)| w as f64 * q).sum();
-            *mv = s.max(1e-5).ln();
+            *mv = g.map_or(s, |g| s * g[m]).max(1e-5).ln();
         }
         let mut c = [0.0f32; 25];
         for (k, ck) in c.iter_mut().enumerate() {
@@ -284,13 +320,30 @@ impl PFront {
         c
     }
 
-    fn periodicity(&mut self, f0: f32) -> [f32; 4] {
+    /// 左寄せの Hann 2048 のパワー [NB_P](snv_p0_front.power_p)。
+    fn power_p(&mut self) -> Vec<f64> {
         for i in 0..NFFT_P {
             self.re[i] = self.raw[RING - NFFT_P + i] * self.hann_p[i];
             self.im[i] = 0.0;
         }
         fft(&mut self.re[..NFFT_P], &mut self.im[..NFFT_P]);
-        let p: Vec<f64> = (0..NB_P).map(|i| self.re[i] * self.re[i] + self.im[i] * self.im[i]).collect();
+        (0..NB_P).map(|i| self.re[i] * self.re[i] + self.im[i] * self.im[i]).collect()
+    }
+
+    /// 包絡の mel の帯の利得 √((m² ⊙ P)·fb / P·fb)(帯のパワーが 0 なら 1)。
+    fn band_gain(&self, pw: &[f64], pm: &[f64]) -> Vec<f64> {
+        (0..self.nm)
+            .map(|m| {
+                let (lo, hi) = self.fbr[m];
+                let row = &self.fb[m * NB_CT + lo..m * NB_CT + hi];
+                let num: f64 = row.iter().zip(&pm[lo..hi]).map(|(&w, &q)| w as f64 * q).sum();
+                let den: f64 = row.iter().zip(&pw[lo..hi]).map(|(&w, &q)| w as f64 * q).sum();
+                if den > 0.0 { (num / den).sqrt() } else { 1.0 }
+            })
+            .collect()
+    }
+
+    fn periodicity(&self, f0: f32, p: &[f64]) -> [f32; 4] {
         let df = SR / NFFT_P as f64;
         let fv = if f0 > 0.0 { f0 as f64 } else { 500.0 };
         let kmax = (self.hb.last().map(|b| b.1).unwrap_or(10000.0) / 60.0) as usize + 1;
@@ -320,20 +373,39 @@ impl PFront {
 
     /// 入力の 1 ブロック(HOP = 240 サンプル・48 kHz)→ このフレームの前段の出力(未来の入力を見ない)。
     pub fn process_block(&mut self, x: &[f32]) -> PFrame {
+        self.process_block_masked(x, None)
+    }
+
+    /// 重み m [NB_P](振幅・None = 前段 v3 と同じ計算)を掛けた 1 ブロック。全ての m ≥ 1 なら高さと有声は前段 v3 の区間とパワーのまま(f0_track_myin の keep)。
+    pub fn process_block_masked(&mut self, x: &[f32], m: Option<&[f64]>) -> PFrame {
         assert_eq!(x.len(), HOP, "ブロックは HOP サンプル");
-        self.raw.drain(..HOP);
-        self.raw.extend(x.iter().map(|&v| v as f64));
-        self.lp.drain(..HOP);
-        for &v in x {
-            let y = self.lowpass(v as f64);
-            self.lp.push(y);
-        }
-        let (dn, ms) = self.cmndf();
-        let (f, c) = Self::candidates(&dn);
-        let lb = self.lowband();
-        let (f0, ap) = self.dp_step(&f, &c, ms, lb);
-        let env = self.envelope(f0);
-        let per = self.periodicity(f0);
+        assert!(m.is_none_or(|m| m.len() == NB_P), "重みは NB_P 本");
+        prof!(F_BUF, {
+            self.raw.drain(..HOP);
+            self.raw.extend(x.iter().map(|&v| v as f64));
+            self.lp.drain(..HOP);
+            for &v in x {
+                let y = self.lowpass(v as f64);
+                self.lp.push(y);
+            }
+        });
+        let mf = m.filter(|m| m.iter().any(|&v| v < 1.0));
+        let (dn, ms) = prof!(F_CMNDF, self.cmndf(mf));
+        let (f, c) = prof!(F_DP, Self::candidates(&dn));
+        let lb = prof!(F_LOWBAND, self.lowband(mf));
+        let (f0, ap) = prof!(F_DP, self.dp_step(&f, &c, ms, lb));
+        let pw = prof!(F_POWER, self.power_p());
+        let (env, per) = match m {
+            None => (prof!(F_ENV, self.envelope(f0, None)), prof!(F_PER, self.periodicity(f0, &pw))),
+            Some(m) => {
+                let (pm, g) = prof!(F_PER, {
+                    let pm: Vec<f64> = pw.iter().zip(m).map(|(&p, &w)| p * (w * w)).collect();
+                    let g = self.band_gain(&pw, &pm);
+                    (pm, g)
+                });
+                (prof!(F_ENV, self.envelope(f0, Some(&g))), prof!(F_PER, self.periodicity(f0, &pm)))
+            }
+        };
         self.t += 1;
         PFrame { f0, ap, env, per }
     }

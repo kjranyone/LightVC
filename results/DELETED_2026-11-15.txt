@@ -1,0 +1,15 @@
+# 2026-11-15 削除台帳(削除の前に書いた・不可逆)
+## 段 P55(P55_flat・判定の記録の後・負け腕は last だけ残す)
+results/snv_p55_mask/mid_20000.pt   途中の規則の 20k の重み(記録 results/snv_p55/realmask_20000.json は残す)
+results/snv_p55_mask/mid_40000.pt   途中の規則の 40k の重み(記録 results/snv_p55/realmask_40000.json は残す)
+results/snv_p55_mask/step10k.pt     10k の写し
+results/snv_p55_mid_20000/          20k の重みの写し(realmask の測りの入口)
+results/snv_p55_mid_40000/          40k の重みの写し(realmask の測りの入口)
+残す: results/snv_p55_mask/last.pt・results/snv_p55_gate_t80/last.pt(判定した形)・results/snv_p55/ の全て
+
+2026-11-15T07:52Z 段 P57 step b の族の特徴の作り直し(混ぜの場を (声, k) で決める形に直す前の、作りかけの 931 項目・どこからも参照していない)
+  data/snv_p_feat_fr57/(作りかけ・931 npz)→ 同じ名前で作り直す
+  data/snv_p_feat_fr57_smoke/(動作確認の 48 項目・当日に削除)
+
+2026-11-15T12:15Z 段 P57 の診断の腕(D_open・判定の記録の後・last だけ残す)
+  results/diag_snv_p57_c_rec2/step20k.pt   20k の写し(記録 results/snv_p57/cv_music_diag.json・step_b_summary.json は残す)

@@ -1,0 +1,46 @@
+# 2026-11-12T00:30:03Z 段 P30 step c の判定を記録した後(results/snv_p30c/verdict.yaml)・途中の保存だけ(last.pt は残す・走行中の snv_p31_c1 は参照しない)
+results/snv_p30_c/step20k.pt
+results/snv_p34_smoke/  # 2026-11-12T01:29:32Z 段 P34 step b の煙(200 step → 保存 → System で読んで変換・p18_align まで通過・記録 results/snv_p34/smoke_c.log・smoke_land.log・smoke_align.log): last.pt・split.json・train_log.json
+results/snv_p34/smoke_land.json  # 同上(学習していない重みの値)
+results/snv_p34/smoke_align.json  # 同上
+
+# 2026-11-12T04:34:42Z 段 P31 の判定を記録した後の中間の保存(results/snv_p31c/verdict.yaml・途中信号 results/snv_p31c/mid20k.yaml は rows の json に残る)
+results/snv_p31_c1/step20k.pt
+
+# 2026-11-12T05:12:54Z 試験の評価の入口の煙(P8・試行ごとの CER の保存の確かめ・値は読まない)
+results/snv_p1/smoke_test_snv_p8_wst.json
+results/snv_p1/wav_smoke/
+
+# 2026-11-12T05:51:49Z 段 P34 の判定(H34_keep)を記録した後の中間の保存(results/snv_p34c/verdict.yaml・途中信号 results/snv_p34c/mid20k.yaml は rows の json に残る)
+results/snv_p34_c/step20k.pt
+
+# 2026-11-12T07:24:17Z 評価の経路の直し(snv_p1_eval.structure)の前後の一致の確かめ(snv_p30_c の自己の reamp 72 本: 1 位の当たりは全て一致・余弦は 4 桁目が 1 だけ違う試行のみ)
+results/snv_p36/compat/
+
+# 2026-11-12T08:38:22Z 段 P37 step b の煙と起動前の測りの置き場(腕 snv_p37_mask の入口と評価の入口の確かめ・値は results/snv_p37/smoke_mask.log と prereg に残る)
+results/snv_p37_mask_smoke/
+results/snv_p37_gate_smoke/
+results/snv_p37_ctl_smoke/
+
+# 2026-11-12T10:42:46Z 段 P37 step b の判定(B_band)を記録した後の中間の保存(途中の値は results/snv_p37_mask.train.log と prereg に残る)
+results/snv_p37_mask/step10k.pt
+
+# 2026-11-12T12:37:06Z 段 P38 の煙と起動前の測りの置き場(値は results/snv_p38/smoke_mask.log と prereg に残る)
+results/snv_p38_mask_smoke/
+results/snv_p38_gate_smoke/
+results/snv_p38_ctl_smoke/
+results/snv_p38/cv_music_smoke.json
+
+# 2026-11-12T16:09:29Z 段 P39 step a の煙(1 人・手拍子の条件の入口の確かめ)
+results/snv_p39/smoke_cv.json
+
+# 2026-11-12T16:09:50Z 段 P38 の判定の記録の後(P38_transfer・results/snv_p38/prereg.yaml の result)。最終の重み last.pt は残す
+results/snv_p38_mask/step10k.pt
+
+# 2026-11-12T18:40:52Z 段 P41 の起動前の測り(--eval_only・--smoke の束)の置き場。重みは作っていない(族の分け方の写しだけ)
+results/snv_p41_ctrl_smoke/
+
+# 2026-11-12T21:42:40Z 段 P41 の煙(200 step の門・持続と閾を足した保存・本物の男声の物差しの入口で 1 人)
+results/snv_p41_gate_smoke/
+results/snv_p41_gate_smoke_t80/
+results/snv_p41/smoke_cv.json

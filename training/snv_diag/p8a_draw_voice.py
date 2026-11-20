@@ -6,6 +6,8 @@ wg = 白くした後に次元ごとに登録の経験分布 → 標準正規の�
 wst64 = PCA 64 次元・wstL = 0〜240 ms の 7 枚・wst64L = 両方。w32 = PCA 32 + ZCA・f32 = PCA 32 で、話者に依らない混合正規 G(池の登録・話者適応の学習 4 巡)の下の
 尤度 + log|det A| を最大にする話者ごとのアフィン A・b(初期値 = ZCA・results/snv_p9b/prereg.yaml)。
 r = 平均も引かない素の表現(P14)・元 aE = 演奏の取り出しの回路の逆 EncS(es=<重み>・操作者の登録 = その声の t00〜t02 で構造を読む)の演奏の平均(paper_snv 段 I)・a32 / s32 = PCA 32 + ZCA の後、時間をずらした共分散(a = 8 フレーム・s = 4 + 8 + 16 の和)の対称の部分の固有ベクトルで話者ごとの正準の向きへ(固有値の大きい順・3 次のモーメントで符号・results/snv_p9c/prereg.yaml)。cer=1 = 本物の男声 12 区間を D で描いて large-v3 の CER(描ける内容・results/snv_p9a/prereg.yaml)。
+real=devA [n=64](段 P19〜)= 描ける内容を、試験の 12 区間ではなく開発の組(devA の先頭 n 人の有効な源・登録 e0〜e7)で測る(平均と中央値)。
+wsts3 / wsts6 = wst の収縮 0.3 / 0.6・wst2 = 遅れ 0・40 ms の 2 枚・w32s3 / w32s6 = w32 の収縮 0.3 / 0.6(results/snv_p19/prereg.yaml)。
     cd training && uv run --no-sync python snv_diag/p8a_draw_voice.py [R=pitch,EMA,Y,c_P2b,c_P2e,w_c_P2b,w_c_P2e] [out=results/snv_p8a/draw_voice.json] [cer=1]
 """
 from __future__ import annotations
@@ -34,7 +36,10 @@ LAGS = (0, 4, 8, 12, 16, 20)
 LAGS_LONG = (0, 8, 16, 24, 32, 40, 48)
 ST_LAGS = (0, 8, 16, 24)
 ST_LAGS_L = (0, 8, 16, 24, 32, 40, 48)
-SHR = {"w": 0.1, "w01": 0.01, "w3": 0.3, "w64": 0.1, "wg": 0.1, "wst": 0.1, "wst64": 0.1, "wstL": 0.1, "wst64L": 0.1, "w32": 0.1, "f32": 0.1, "a32": 0.1, "s32": 0.1, "r": 0.0}
+SHR = {"w": 0.1, "w01": 0.01, "w3": 0.3, "w64": 0.1, "wg": 0.1, "wst": 0.1, "wst64": 0.1, "wstL": 0.1, "wst64L": 0.1, "w32": 0.1, "f32": 0.1, "a32": 0.1, "s32": 0.1, "r": 0.0,
+       "wsts3": 0.3, "wsts6": 0.6, "wst2": 0.1, "w32s3": 0.3, "w32s6": 0.6}
+ST_LAGS_2 = (0, 8)
+W32 = ("w32", "w32s3", "w32s6")
 K_G = 64
 SAT_IT = 4
 EM_IT = 30
@@ -225,11 +230,11 @@ def main() -> int:
             zz = vx(lambda x: (x - mu) @ P @ W) @ U
             U = U * np.where((zz ** 3).mean(0) >= 0, 1.0, -1.0)
             return lambda x: (x - mu) @ P @ W @ U
-        if tf in ("w32", "f32"):
+        if tf in W32 + ("f32",):
             P = pca[b][:, :32]
             xe = vx(lambda x: (x - mu) @ P)
             W = whiten(xe, SHR[tf])
-            if tf == "w32":
+            if tf in W32:
                 return lambda x: (x - mu) @ P @ W
             Xt = torch.from_numpy(np.ascontiguousarray(xe[::2])).float().to(DEV)[None]
             A, bb = fit_affine(Xt, torch.ones(Xt.shape[:2], dtype=torch.bool, device=DEV), torch.from_numpy(W).float().to(DEV)[None], torch.zeros(1, 32, device=DEV), gmm)
@@ -241,7 +246,7 @@ def main() -> int:
             from scipy.special import ndtri
             return lambda x: np.stack([ndtri((np.searchsorted(E[:, d], u) + 0.5) / (len(E) + 1)) for d, u in enumerate(((x - mu) @ W).T)], 1)
         P = pca[b][:, :64 if "64" in tf else 32]
-        stk = lambda x: lagged((x - mu) @ P, ST_LAGS_L if tf.endswith("L") else ST_LAGS)
+        stk = lambda x: lagged((x - mu) @ P, ST_LAGS_L if tf.endswith("L") else ST_LAGS_2 if tf == "wst2" else ST_LAGS)
         W = whiten(vx(stk), SHR[tf])
         return lambda x: stk(x) @ W
 
@@ -317,16 +322,30 @@ def main() -> int:
             segs, _ = asr.transcribe(w, language="ja", beam_size=5, temperature=0.0, condition_on_previous_text=False, vad_filter=False)
             return kana("".join(x.text for x in segs))
 
-        srcs = json.loads((EV.A1 / "convert_meta.json").read_text())["sources"]
-        ref_txt = {s_: tr(to16(*load(T.FEAT / f"real/{s_}.wav")).astype(np.float32)) for s_ in srcs}
         rrows = []
-        for sp in sorted({s_.rsplit("_", 1)[0] for s_ in srcs}):
-            ss = [s_ for s_ in srcs if s_.startswith(sp + "_")]
-            rrows += list(zip(ss, rows_for([raw_rel(f"real/{sp}_enroll", SP / f"a1src/{sp}_enroll.npz", need)], [raw_rel(f"real/{s_}", SP / f"a1src/{s_}.npz", need) for s_ in ss])))
-        res["cer"] = {}
+        if opt.get("real", "test") == "devA":
+            dv = json.loads((ROOT / "results/snv_d5/dev_rows_devA.json").read_text())["ref"]
+            man = json.loads((ROOT / "data/cv22_ja/dev_manifest.json").read_text())
+            ref_txt = {}
+            for sp in [x for x in man["speakers"] if x["split"] == "devA"][:int(opt.get("n", 64))]:
+                ss = [f"{sp['speaker']}_{c['name']}" for c in sp["src"][:2] if dv[f"{sp['speaker']}_{c['name']}"]["text_vs_orig"] <= 0.1]
+                ref_txt |= {s_: dv[s_]["orig"] for s_ in ss}
+                if ss:
+                    rrows += list(zip(ss, rows_for([raw_rel(f"cv/{sp['speaker']}_{e['name']}", SP / f"cv/{sp['speaker']}_{e['name']}.npz", need) for e in sp["enroll"]], [raw_rel(f"cv/{s_}", SP / f"cv/{s_}.npz", need) for s_ in ss])))
+        else:
+            srcs = json.loads((EV.A1 / "convert_meta.json").read_text())["sources"]
+            ref_txt = {s_: tr(to16(*load(T.FEAT / f"real/{s_}.wav")).astype(np.float32)) for s_ in srcs}
+            for sp in sorted({s_.rsplit("_", 1)[0] for s_ in srcs}):
+                ss = [s_ for s_ in srcs if s_.startswith(sp + "_")]
+                rrows += list(zip(ss, rows_for([raw_rel(f"real/{sp}_enroll", SP / f"a1src/{sp}_enroll.npz", need)], [raw_rel(f"real/{s_}", SP / f"a1src/{s_}.npz", need) for s_ in ss])))
+        res["cer"], res["cer_median"], res["real"] = {}, {}, {"set": opt.get("real", "test"), "n": len(rrows)}
 
         def d_cer(dec) -> float:
-            return round(float(np.mean([cer(ref_txt[s_], tr(w16(render(dec(row), row["u"])))) for s_, row in rrows])), 4)
+            cs = [cer(ref_txt[s_], tr(w16(render(dec(row), row["u"])))) for s_, row in rrows]
+            res["cer_median"][cur[0]] = round(float(np.median(cs)), 4)
+            return round(float(np.mean(cs)), 4)
+
+        cur = ["COPY"]
 
         res["cer"]["COPY"] = d_cer(lambda row: row["u"]["y"].T)
         print("COPY cer", res["cer"]["COPY"], flush=True)
@@ -348,8 +367,9 @@ def main() -> int:
         dec = lambda row: net((torch.from_numpy(row[r]).to(DEV) - mx) / sx).detach().cpu().numpy()
         res["self_id"][r], res["val_l1"][r] = self_id(dec)
         if do_cer:
+            cur[0] = r
             res["cer"][r] = d_cer(dec)
-        print(r, "train_l1", round(float(loss), 4), "self_id", res["self_id"][r], "val_l1", res["val_l1"][r], "cer", res.get("cer", {}).get(r), flush=True)
+        print(r, "train_l1", round(float(loss), 4), "self_id", res["self_id"][r], "val_l1", res["val_l1"][r], "cer", res.get("cer", {}).get(r), "cer_median", res.get("cer_median", {}).get(r), flush=True)
         del X, net
         torch.cuda.empty_cache()
     out = ROOT / opt.get("out", "results/snv_p8a/draw_voice.json")
