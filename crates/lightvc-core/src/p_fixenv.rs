@@ -7,7 +7,7 @@ use std::path::Path;
 use anyhow::{ensure, Context, Result};
 
 use crate::nvoc::{Tensors, HOP};
-use crate::ship_front::fft;
+use crate::fft::fft;
 
 pub const D_ENV: usize = 25;
 

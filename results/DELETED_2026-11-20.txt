@@ -1,2 +1,35 @@
 # 2026-11-20T00:32:07Z 段 P94 の CLI の煙の出力(判定は results/snv_p94/prereg.yaml の product_switch に記録済み)
 results/snv_p94/cli_smoke/out.wav
+# 2026-11-20T18:23:01Z 不要コードの削除(git の管理下・本文は履歴から戻せる)。Rust = 製品の経路 SnvStream(K3G・p11・p30・門)から辿れない項目(モジュールを非公開にした検査の dead_code で判定)。
+crates/lightvc-core/src/artic_vc.rs  62727 B  製品の経路から辿れない(リセット前の構音 VC・旧前段・V2F の SIMD)
+crates/lightvc-core/src/artic_render.rs  19366 B  製品の経路から辿れない(リセット前の構音 VC・旧前段・V2F の SIMD)
+crates/lightvc-core/src/c1.rs  5284 B  製品の経路から辿れない(リセット前の構音 VC・旧前段・V2F の SIMD)
+crates/lightvc-core/src/lvl.rs  9071 B  製品の経路から辿れない(リセット前の構音 VC・旧前段・V2F の SIMD)
+crates/lightvc-core/src/rr.rs  20687 B  製品の経路から辿れない(リセット前の構音 VC・旧前段・V2F の SIMD)
+crates/lightvc-core/src/f0est.rs  15599 B  製品の経路から辿れない(リセット前の構音 VC・旧前段・V2F の SIMD)
+crates/lightvc-core/src/simd.rs  38840 B  製品の経路から辿れない(リセット前の構音 VC・旧前段・V2F の SIMD)
+crates/lightvc-core/src/ship_front.rs  30267 B  製品の経路から辿れない(リセット前の構音 VC・旧前段・V2F の SIMD)
+crates/lightvc-core/src/enroll.rs  32394 B  登録(Analyzer・CausalCt・sym_pow・試験 3)を削除。前段 v3 が使う CheapTrick(cheaptrick_frame・Randn)は cheaptrick.rs へ移した
+crates/lightvc-core/src/ship_front.rs の fft は fft.rs へ移した(他の項目と試験 8 は削除)
+crates/lightvc-core/src/nvoc.rs の NVoc・MelFront・Up・SrcConv・ResBlock・Stage・lrelu・CConv::new / reset・NFFT・WIN・NBIN・試験 nvoc_parity_and_rtf(旧ボコーダ)。Tensors・CConv・HarmSrc・定数は残す
+crates/lightvc-core/src/rvoc.rs の render(構音の描画)・ext_slow・reset_slow・slow_basis・set_ext_slow・slow_sigma(artic_vc だけが使った)
+crates/lightvc-core/examples/simd_bench.rs  1561 B  消したモジュールの計測の例
+crates/lightvc-core/examples/front_split.rs  1445 B  消したモジュールの計測の例
+crates/lightvc-core/testdata/ci_im.bin  24672 B  消した試験(ship_front・simd)だけが読む
+crates/lightvc-core/testdata/ci_re.bin  24672 B  消した試験(ship_front・simd)だけが読む
+crates/lightvc-core/testdata/ci_y.bin  12288 B  消した試験(ship_front・simd)だけが読む
+crates/lightvc-core/testdata/mel_fb_1024_80.bin  164160 B  消した試験(ship_front・simd)だけが読む
+crates/lightvc-core/testdata/sf_exc.bin  176400 B  消した試験(ship_front・simd)だけが読む
+crates/lightvc-core/testdata/sf_f0.bin  704 B  消した試験(ship_front・simd)だけが読む
+crates/lightvc-core/testdata/sf_f0u.bin  176400 B  消した試験(ship_front・simd)だけが読む
+crates/lightvc-core/testdata/sf_fill.bin  704 B  消した試験(ship_front・simd)だけが読む
+crates/lightvc-core/testdata/sf_mel.bin  55040 B  消した試験(ship_front・simd)だけが読む
+crates/lightvc-core/testdata/sf_meta.json  22 B  消した試験(ship_front・simd)だけが読む
+crates/lightvc-core/testdata/sf_noise.bin  176400 B  消した試験(ship_front・simd)だけが読む
+crates/lightvc-core/testdata/sf_phi.bin  176400 B  消した試験(ship_front・simd)だけが読む
+crates/lightvc-core/testdata/sf_w.bin  176400 B  消した試験(ship_front・simd)だけが読む
+crates/lightvc-core/testdata/v2f_w.bin  225224 B  消した試験(ship_front・simd)だけが読む
+crates/lightvc-core/testdata/v2f_x.bin  74016 B  消した試験(ship_front・simd)だけが読む
+crates/lightvc-core/testdata/v2f_y.bin  4112 B  消した試験(ship_front・simd)だけが読む
+# 2026-11-20T18:23:01Z 不要コードの削除(Python)。リセット前の盲検の試聴サーバ(配信先 d1_ab・chorus_probe・nrft_ab はリセット前の撤回済みの耳の試験・引くのは撤回済みの memory だけ)。他の研究・診断のスクリプトは results/ の段の証拠か今の評価が読むファイル(例 ecapa_lda_T.npz)につながるので残す
+training/serve_ab.py  5929 B  リセット前の試聴サーバ

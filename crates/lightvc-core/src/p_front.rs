@@ -1,6 +1,6 @@
 //! P 線の前段 v3(training/snv_p0_front.py)のストリーミング版。48 kHz・H = 240・フレーム t の窓は (t+1)H で終わる(先読み 0)・発話の統計なし。
 //! 高さと有声 = 因果の Butterworth 4 次 → 左寄せの CMNDF(基準窓 1200・遅れ 20〜960)→ 谷の候補 6(放物線の補間)→ 1 kHz 未満のパワーの比 → 前向きの動的計画。
-//! 包絡 = 因果の位置 τ_t = min(tH, (t+1)H − 2 − ⌈1.5 T0 SR⌉) の CheapTrick(enroll.rs の WORLD の移植)→ √ → mel 128 → log(床 1e-5)→ DCT 25。
+//! 包絡 = 因果の位置 τ_t = min(tH, (t+1)H − 2 − ⌈1.5 T0 SR⌉) の CheapTrick(cheaptrick.rs の WORLD の移植)→ √ → mel 128 → log(床 1e-5)→ DCT 25。
 //! 周期性 = 左寄せの Hann 2048 の 4 帯の倍音の山と谷のパワー比。定数と一致検査の固定の入出力 = training/export_pfront.py(paper_snv §6 段 P)。
 //! 重み m [NB_P](振幅・p_gate の門が開いたフレーム)を渡すと training/train_snv_mask.features_with_mask と snv_p0_front.f0_track_myin の計算:
 //! YIN の区間とパワーに m(2049 本へ線形の補間)を掛け、周期性は m² ⊙ P で、包絡の mel の帯の振幅に √((m² ⊙ P)·fb / P·fb) を掛ける。
@@ -9,10 +9,10 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 
-use crate::enroll::{cheaptrick_frame, Randn};
+use crate::cheaptrick::{cheaptrick_frame, Randn};
 use crate::nvoc::{Tensors, HOP};
 use crate::prof::prof;
-use crate::ship_front::fft;
+use crate::fft::fft;
 
 const SR: f64 = 48000.0;
 const W_YIN: usize = 1200;

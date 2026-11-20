@@ -45,7 +45,7 @@ Third-party licenses
     and is used under Apache-2.0.
   - The GUI and the plugin editor embed egui's default fonts
     (SIL Open Font License 1.1, Ubuntu Font Licence 1.0).
-  - WORLD (M. Morise) — modified BSD. crates/lightvc-core/src/enroll.rs ports
+  - WORLD (M. Morise) — modified BSD. crates/lightvc-core/src/cheaptrick.rs ports
     CheapTrick (cheaptrick.cpp / common.cpp / matlabfunctions.cpp). License text below.
   - ASIO SDK is NOT included (proprietary; users must obtain it from Steinberg
     to build ASIO support themselves).

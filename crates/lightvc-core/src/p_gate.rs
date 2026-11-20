@@ -11,7 +11,7 @@ use crate::affinity::Team;
 use crate::nvoc::{Tensors, HOP};
 use crate::p30_model::{at, CConv};
 use crate::prof::prof;
-use crate::ship_front::fft;
+use crate::fft::fft;
 
 const CH: usize = 256;
 const NFFT: usize = 2048;

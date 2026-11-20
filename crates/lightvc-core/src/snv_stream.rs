@@ -369,8 +369,8 @@ mod tests {
             for i in 0..n {
                 (ra[i], ia[i], rb[i], ib[i]) = (a[st + i] as f64 * win[i], 0.0, b[st + i] as f64 * win[i], 0.0);
             }
-            crate::ship_front::fft(&mut ra, &mut ia);
-            crate::ship_front::fft(&mut rb, &mut ib);
+            crate::fft::fft(&mut ra, &mut ia);
+            crate::fft::fft(&mut rb, &mut ib);
             for k in 0..=n / 2 {
                 let (ma, mb) = ((ra[k] * ra[k] + ia[k] * ia[k]).sqrt(), (rb[k] * rb[k] + ib[k] * ib[k]).sqrt());
                 num += (ma - mb) * (ma - mb);

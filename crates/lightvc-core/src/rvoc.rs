@@ -352,8 +352,6 @@ pub struct RVoc {
     pre: CConv,
     ctx: Option<Ctx>,
     slow: Option<Slow>,
-    /// 外から与える遅い揺らぎ [24](操作者の揺らぎ・artic_vc::OpSlow)。文脈の符号器のずれの後・乱数の揺らぎの後に包絡の行へ足す(TabVoc.make と同じ順)。
-    ext_slow: Option<Vec<f32>>,
     cbuf: Vec<f32>,
     pub d_cond: usize,
     /// 音量の条件を低い帯域の水準に(diag_ppgvoc47・cfg.c0low): 行 0 = a·(行 0 + Σ_{r=1..24} v_r·行 r)。None = 従来。
@@ -368,8 +366,6 @@ pub struct RVoc {
     pub vdump: Option<Vec<f32>>,
     /// 診断: Some のとき毎フレーム、文脈の符号器の前の生の条件 [d_cond] と符号器の後の包絡 24 行を積む(LIGHTVC_DUMP_RCOND)
     pub rdump: Option<Vec<f32>>,
-    /// 構音の描画(生成器なし・current/artic_render.md)。Some なら生成器の段を通らず、生の条件と遅い揺らぎ + R の ΔS から描く。
-    pub render: Option<crate::artic_render::ArticRender>,
 }
 
 fn src_geom(tot: usize) -> (usize, usize, usize) {
@@ -407,7 +403,7 @@ impl RVoc {
             stages.push(Stage { r, ci, co, prev: vec![0.0; ci], up, src, res, n_res, xi: vec![], x: vec![], xr: vec![], acc: vec![], es: vec![] });
         }
         let post = conv("post", ch >> UPS.len(), 1, 7, 1)?;
-        Ok(Self { pre, ctx: None, slow: None, ext_slow: None, cbuf: vec![], d_cond, c0low: None, stages, par: None, post, h0: vec![0.0; ch], out_in: vec![], ch, vdump: None, rdump: None, render: None })
+        Ok(Self { pre, ctx: None, slow: None, cbuf: vec![], d_cond, c0low: None, stages, par: None, post, h0: vec![0.0; ch], out_in: vec![], ch, vdump: None, rdump: None })
     }
 
     pub fn random(ch: usize, seed: u64) -> Self {
@@ -509,60 +505,9 @@ impl RVoc {
         self.par = Some(RbWorker::spawn(rbs));
     }
 
-    /// 遅い音色の揺らぎの乱数を種 seed から始め直す(揺らぎが無ければ何もしない)。
-    pub fn reset_slow(&mut self, seed: u64) {
-        if let Some(sl) = self.slow.as_mut() {
-            sl.reset(seed);
-        }
-    }
-
-    /// 遅い音色の揺らぎの基底 [24, k](行優先)と k(揺らぎが無ければ None)。操作者の揺らぎ(artic_vc::OpSlow)が同じ基底へ射影する。
-    pub fn slow_basis(&self) -> Option<(Vec<f64>, usize)> {
-        self.slow.as_ref().map(|sl| (sl.b.clone(), sl.k))
-    }
-
-    /// 外から与える遅い揺らぎ [24] を次のブロックから使う(None で止める)。
-    pub fn set_ext_slow(&mut self, z: Option<&[f32]>) {
-        match z {
-            Some(v) => self.ext_slow.get_or_insert_with(|| vec![0.0; 24]).copy_from_slice(v),
-            None => self.ext_slow = None,
-        }
-    }
-
-    /// 遅い音色の揺らぎの倍率(揺らぎが無ければ None)。
-    pub fn slow_sigma(&mut self, sigma: Option<f64>) -> Option<f64> {
-        let sl = self.slow.as_mut()?;
-        if let Some(v) = sigma {
-            sl.sigma = v;
-        }
-        Some(sl.sigma)
-    }
-
     /// cond [d_cond](文脈の符号器があれば生の条件・内部で包絡のずれを足す・遅い揺らぎがあればその後に足す)・exc [2][HOP] → out [HOP]
     pub fn process_block(&mut self, cond: &[f32], exc: &[f32], out: &mut [f32]) {
-        if let Some(rd) = self.render.as_mut() {
-            self.cbuf.clear();
-            self.cbuf.extend_from_slice(cond);
-            if let Some(sl) = self.slow.as_mut() {
-                sl.apply(&mut self.cbuf);
-            }
-            if let Some(e) = self.ext_slow.as_ref() {
-                for (c, &v) in self.cbuf[1..25].iter_mut().zip(e.iter()) {
-                    *c += v;
-                }
-            }
-            let mut post = [0.0f32; 24];
-            for r in 0..24 {
-                post[r] = self.cbuf[1 + r] - cond[1 + r];
-            }
-            if let Some(d) = self.rdump.as_mut() {
-                d.extend_from_slice(cond);
-                d.extend_from_slice(&self.cbuf[1..25]);
-            }
-            rd.process(cond, &post, out);
-            return;
-        }
-        if self.ctx.is_some() || self.slow.is_some() || self.ext_slow.is_some() {
+        if self.ctx.is_some() || self.slow.is_some() {
             self.cbuf.clear();
             self.cbuf.extend_from_slice(cond);
             if let Some(d) = self.rdump.as_mut() {
@@ -576,11 +521,6 @@ impl RVoc {
             }
             if let Some(sl) = self.slow.as_mut() {
                 sl.apply(&mut self.cbuf);
-            }
-            if let Some(e) = self.ext_slow.as_ref() {
-                for (c, &v) in self.cbuf[1..25].iter_mut().zip(e.iter()) {
-                    *c += v;
-                }
             }
             self.pre.run(&self.cbuf, 1, &mut self.h0);
             if let Some(d) = self.vdump.as_mut() {
