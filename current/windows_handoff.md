@@ -30,6 +30,11 @@ Linux の配布物 `target/LightVC-0.1.0-linux.zip` の `models/` は OS に依�
 
 ## 3. Windows で確かめること(この順)
 
+Linux から Windows 向けに型の検査を済ませた(2026-11-20・`cargo check --target x86_64-pc-windows-gnu`)。
+
+- `lightvc-app`(GUI・CLI)・`lightvc-audio`・`lightvc-core`: 通る。
+- `lightvc-clap`(CLAP / VST3): ビルドの手順の中で C++ のコンパイラが要り、Linux からの検査はできていない(mingw の g++ が無い)。Windows の MSVC で直に作る。
+
 1. **ビルド**: `cargo build --release -p lightvc-app`。30 ms 級の遅延には `--features asio` が要る(ASIO SDK は各自で用意する・WASAPI の共有モードは 30 ms を切れない)。
 2. **一致**: `cargo test --release -p lightvc-core`。`results/` の 3 つの書き出しと `fixture*/` が要る。`results/snv_k3g_export`・`results/snv_k3g16_export` が無い試験は読み飛ばす。
 3. **1 ブロックの時間(関門 S)**: 4 スレッドで p99 < 5 ms。6 回測り、最悪の値で判定する。
