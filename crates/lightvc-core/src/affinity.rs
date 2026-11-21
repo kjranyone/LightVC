@@ -247,10 +247,10 @@ mod win {
     }
 }
 
-/// 受け渡しの待ちを最大 LVC_SPIN_US µs 回してから寝る(D627: 起床の遅れを避ける・既定 1000・0 = すぐ寝る)。
+/// 受け渡しの待ちを最大 LVC_SPIN_US µs 回してから寝る(D627: 起床の遅れを避ける・既定 500・0 = すぐ寝る。Windows 実機では 0/1000/2000 より 500 が最良だった)。
 pub fn spin_us() -> u64 {
     static V: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    *V.get_or_init(|| std::env::var("LVC_SPIN_US").ok().and_then(|s| s.parse().ok()).unwrap_or(1000))
+    *V.get_or_init(|| std::env::var("LVC_SPIN_US").ok().and_then(|s| s.parse().ok()).unwrap_or(500))
 }
 
 pub fn recv_spin<T>(rx: &std::sync::mpsc::Receiver<T>) -> Result<T, std::sync::mpsc::RecvError> {
