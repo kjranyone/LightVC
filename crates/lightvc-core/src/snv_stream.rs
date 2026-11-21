@@ -332,8 +332,9 @@ mod tests {
         s
     }
 
-    /// (出力・ブロックあたり ms・門が開いていたブロック)。
+    /// (出力・ブロックあたり ms・門が開いていたブロック)。rank 0(呼び出しのスレッド)は製品の音声スレッドと同じ専用の P コアに置く(affinity の確認済み: 置かないと E コアに載る)。
     fn run(s: &mut SnvStream, x: &[f32], ys: Option<&mut Vec<f32>>) -> (Vec<f32>, Vec<f64>, Vec<bool>) {
+        crate::affinity::pin_audio_driver();
         let t = x.len() / HOP;
         let mut out = vec![0.0f32; t * HOP];
         let (mut ms, mut op) = (Vec::with_capacity(t), Vec::with_capacity(t));
