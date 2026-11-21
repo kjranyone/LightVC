@@ -21,7 +21,10 @@ pub struct DuplexStream {
 
 impl DuplexStream {
     pub fn list_input_devices() -> Result<Vec<DeviceInfo>> {
-        let host = cpal::default_host();
+        Self::list_input_devices_on(&crate::host::pick(crate::host::HostPref::Default)?)
+    }
+
+    pub fn list_input_devices_on(host: &cpal::Host) -> Result<Vec<DeviceInfo>> {
         let devices = host.input_devices()?;
         let mut info = Vec::new();
         for dev in devices {
@@ -41,7 +44,10 @@ impl DuplexStream {
     }
 
     pub fn list_output_devices() -> Result<Vec<DeviceInfo>> {
-        let host = cpal::default_host();
+        Self::list_output_devices_on(&crate::host::pick(crate::host::HostPref::Default)?)
+    }
+
+    pub fn list_output_devices_on(host: &cpal::Host) -> Result<Vec<DeviceInfo>> {
         let devices = host.output_devices()?;
         let mut info = Vec::new();
         for dev in devices {
@@ -61,13 +67,13 @@ impl DuplexStream {
     }
 
     pub fn default_input() -> Result<Device> {
-        let host = cpal::default_host();
+        let host = crate::host::pick(crate::host::HostPref::Default)?;
         host.default_input_device()
             .ok_or_else(|| anyhow!("No default input device found"))
     }
 
     pub fn default_output() -> Result<Device> {
-        let host = cpal::default_host();
+        let host = crate::host::pick(crate::host::HostPref::Default)?;
         host.default_output_device()
             .ok_or_else(|| anyhow!("No default output device found"))
     }

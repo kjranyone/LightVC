@@ -230,13 +230,13 @@ impl AudioEngine {
 }
 
 pub fn default_input() -> Result<Device> {
-    cpal::default_host()
+    crate::host::pick(crate::host::HostPref::Default)?
         .default_input_device()
         .ok_or_else(|| anyhow::anyhow!("No default input device found"))
 }
 
 pub fn default_output() -> Result<Device> {
-    cpal::default_host()
+    crate::host::pick(crate::host::HostPref::Default)?
         .default_output_device()
         .ok_or_else(|| anyhow::anyhow!("No default output device found"))
 }

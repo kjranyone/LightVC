@@ -9,3 +9,7 @@ cpal.workspace = true
 rubato.workspace = true
 rtrb.workspace = true
 anyhow.workspace = true
+
+[features]
+default = []
+asio = ["cpal/asio"]

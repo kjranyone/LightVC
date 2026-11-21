@@ -20,4 +20,4 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 
 [features]
 default = []
-asio = ["cpal/asio"]
+asio = ["cpal/asio", "lightvc-audio/asio"]
