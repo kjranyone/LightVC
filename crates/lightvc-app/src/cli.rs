@@ -22,6 +22,8 @@ pub enum Command {
     Snv(SnvCmd),
     /// paper_snv の製品経路のリアルタイム変換(マイク → 48 kHz・240 サンプル単位 → スピーカー)。
     RealtimeSnv(RealtimeSnvCmd),
+    /// 使えるホストと入出力装置の一覧(既定の選択の確認)。
+    Devices,
     /// Launch desktop GUI (3 tabs: offline/realtime/voices).
     Gui(GuiCmd),
 }
@@ -130,6 +132,41 @@ pub struct RealtimeSnvCmd {
     /// cpal のバッファ (フレーム数・0 = 既定)
     #[arg(long, default_value_t = 240)]
     pub buffer: u32,
+    /// オーディオホスト (default / wasapi / asio。未指定なら LVC_HOST → 既定の方針)
+    #[arg(long, default_value = "default")]
+    pub host: String,
+    /// 入力装置(`devices` の一覧の番号・未指定 = 既定)
+    #[arg(long)]
+    pub input: Option<usize>,
+    /// 出力装置(`devices` の一覧の番号・未指定 = 既定)
+    #[arg(long)]
+    pub output: Option<usize>,
+}
+
+pub fn run_devices() -> Result<()> {
+    let mut shown = Vec::new();
+    for pref in [lightvc_audio::HostPref::Default, lightvc_audio::HostPref::Wasapi, lightvc_audio::HostPref::Asio] {
+        let Ok(host) = lightvc_audio::host::pick(pref) else { continue };
+        let name = host.id().name().to_ascii_lowercase();
+        if shown.contains(&name) {
+            continue;
+        }
+        shown.push(name.clone());
+        let inputs = lightvc_audio::DuplexStream::list_input_devices_on(&host)?;
+        let outputs = lightvc_audio::DuplexStream::list_output_devices_on(&host)?;
+        if inputs.is_empty() && outputs.is_empty() {
+            continue;
+        }
+        println!("host {name}:");
+        for (i, d) in inputs.iter().enumerate() {
+            println!("  in  {i}: {} ({}Hz, {}ch)", d.name, d.sample_rate, d.channels);
+        }
+        for (i, d) in outputs.iter().enumerate() {
+            println!("  out {i}: {} ({}Hz, {}ch)", d.name, d.sample_rate, d.channels);
+        }
+    }
+    println!("hosts: {:?}", shown);
+    Ok(())
 }
 
 pub fn run_snv(cmd: SnvCmd) -> Result<()> {
@@ -188,32 +225,51 @@ pub fn run_snv(cmd: SnvCmd) -> Result<()> {
 }
 
 pub fn run_realtime_snv(cmd: RealtimeSnvCmd) -> Result<()> {
-    use cpal::traits::DeviceTrait;
+    use cpal::traits::{DeviceTrait, HostTrait};
     use lightvc_core::snv_stream::SnvStream;
     const HOP: usize = SnvStream::BLOCK;
     const SR: usize = 48_000;
+    lightvc_core::affinity::pin_audio_driver();
+    lightvc_core::affinity::raise_timer_resolution();
     let mut vc = cmd.model.load()?;
-    let input = lightvc_audio::engine::default_input()?;
-    let output = lightvc_audio::engine::default_output()?;
+    {
+        // 重みのページインと常駐スレッドの起動を済ませる(開始直後の無音の窓を防ぐ)。
+        let mut warm = vec![0f32; HOP];
+        let mut sink = vec![0f32; HOP];
+        vc.process_block(&warm, &mut sink);
+    }
+    let host_pref = lightvc_audio::host::HostPref::parse(&cmd.host)?;
+    let host = lightvc_audio::host::pick(host_pref)?;
+    let host_name = host.id().name().to_ascii_lowercase();
+    let pick_dev = |idx: Option<usize>, inputs: bool| {
+        let devs = if inputs { host.input_devices().ok() } else { host.output_devices().ok() };
+        match idx {
+            None => None,
+            Some(i) => devs.and_then(|mut d| d.nth(i)),
+        }
+    };
+    let input = pick_dev(cmd.input, true).or_else(|| host.default_input_device()).ok_or_else(|| anyhow::anyhow!("No input device found ({host_name})"))?;
+    let output = pick_dev(cmd.output, false).or_else(|| host.default_output_device()).ok_or_else(|| anyhow::anyhow!("No output device found ({host_name})"))?;
     let in_cfg = input.default_input_config()?;
     let out_cfg = output.default_output_config()?;
     let buf = if cmd.buffer == 0 { cpal::BufferSize::Default } else { cpal::BufferSize::Fixed(cmd.buffer) };
-    let (engine, mut io, dev_sr) = match lightvc_audio::AudioEngine::start_with(
+    let (engine, mut io) = match lightvc_audio::AudioEngine::start_with(
         &input, &output, SR as u32, SR as u32, in_cfg.channels(), out_cfg.channels(), buf) {
-        Ok((e, io)) => (e, io, SR),
+        Ok((e, io)) => (e, io),
         Err(e48) => {
-            let (isr, osr) = (in_cfg.sample_rate(), out_cfg.sample_rate());
-            anyhow::ensure!(isr == osr, "48 kHz で開けず({e48})、入出力の既定レートも不一致 ({isr} / {osr})");
-            let (e, io) = lightvc_audio::AudioEngine::start_with(&input, &output, isr, osr, in_cfg.channels(), out_cfg.channels(), buf)?;
-            (e, io, isr as usize)
+            // 両方の装置の既定レートで開く(入出力でレートが違っても up/down の変換で繋ぐ)。
+            lightvc_audio::AudioEngine::start_with(&input, &output, in_cfg.sample_rate(), out_cfg.sample_rate(), in_cfg.channels(), out_cfg.channels(), buf)
+                .map_err(|e| anyhow::anyhow!("48 kHz も既定レート({}/{})も開けない: {e48} / {e}", in_cfg.sample_rate(), out_cfg.sample_rate()))?
         }
     };
-    let conv = dev_sr != SR;
-    let mut up = if conv { Some(lightvc_audio::RateConv::new(dev_sr, SR, HOP)?) } else { None };
-    let mut down = if conv { Some(lightvc_audio::RateConv::new(SR, dev_sr, HOP)?) } else { None };
-    println!("snv realtime | device {} Hz{} | algorithmic latency {:.1} ms(ブロック + 出力部)+ resampler + device buffers | 半音 {:+} | スレッド {}",
-             dev_sr, if conv { " (48 kHz へ変換)" } else { "" }, SnvStream::LATENCY_SAMPLES as f64 / 48.0, cmd.model.semitones, cmd.model.threads);
-    for _ in 0..HOP {
+    let (csr, psr) = (engine.capture_sample_rate as usize, engine.playback_sample_rate as usize);
+    let conv = csr != SR || psr != SR;
+    let mk = |a: usize, b: usize| if a == b { Ok(None) } else { lightvc_audio::RateConv::new(a, b, HOP).map(Some) };
+    let mut up = mk(csr, SR)?;
+    let mut down = mk(SR, psr)?;
+    println!("snv realtime | host {host_name} | in {csr} Hz・out {psr} Hz{} | algorithmic latency {:.1} ms(ブロック + 出力部)+ resampler + device buffers | 半音 {:+} | スレッド {}",
+             if conv { " (48 kHz へ/からの変換)" } else { "" }, SnvStream::LATENCY_SAMPLES as f64 / 48.0, cmd.model.semitones, cmd.model.threads);
+    for _ in 0..1024 {
         let _ = io.playback.push(0.0);
     }
     let mut cap: Vec<f32> = Vec::new();
@@ -254,6 +310,11 @@ pub fn run_realtime_snv(cmd: RealtimeSnvCmd) -> Result<()> {
             times.push(t0.elapsed().as_secs_f64() * 1000.0);
             in48.drain(..HOP);
             out48.extend(out.iter().map(|v| v.clamp(-1.0, 1.0)));
+        }
+        // 遅れが溜まったら古い入力を捨てて実時間に追いつく(GUI と同じ・drain の O(n) の蓄積崩壊を防ぐ)。
+        if in48.len() > 8 * HOP {
+            let excess = in48.len() - 2 * HOP;
+            in48.drain(..excess);
         }
         match down.as_mut() {
             Some(d) => {

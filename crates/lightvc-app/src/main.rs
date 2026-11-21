@@ -19,12 +19,22 @@ mod widgets;
 use clap::Parser;
 
 fn main() -> anyhow::Result<()> {
-    lightvc_core::affinity::pin_current_to_perf();
     let args = cli::Cli::parse();
     let result = match args.command {
-        cli::Command::Snv(cmd) => cli::run_snv(cmd),
-        cli::Command::RealtimeSnv(cmd) => cli::run_realtime_snv(cmd),
-        cli::Command::Gui(cmd) => cli::run_gui(cmd),
+        // GUI の描画の糸は E コアへ(P コアは音声の糸に空ける)。CLI の処理の糸は音声の糸なので P コア。
+        cli::Command::Gui(cmd) => {
+            lightvc_core::affinity::pin_current_to_efficiency();
+            cli::run_gui(cmd)
+        }
+        cli::Command::Snv(cmd) => {
+            lightvc_core::affinity::pin_audio_driver();
+            cli::run_snv(cmd)
+        }
+        cli::Command::RealtimeSnv(cmd) => {
+            lightvc_core::affinity::pin_audio_driver();
+            cli::run_realtime_snv(cmd)
+        }
+        cli::Command::Devices => cli::run_devices(),
     };
     // Explicit exit to avoid hang on mmap/safetensors drop on Windows
     match result {

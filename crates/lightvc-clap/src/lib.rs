@@ -108,15 +108,49 @@ impl LightVcParams {
             m.lock().unwrap().lines().map(str::trim).filter(|l| !l.is_empty()).map(PathBuf::from).collect()
         };
         LoadCfg {
-            front: self.front_dir.lock().unwrap().trim().to_string(),
-            model: self.model_dir.lock().unwrap().trim().to_string(),
-            voc: self.voc_dir.lock().unwrap().trim().to_string(),
+            front: resolve_export(&self.front_dir.lock().unwrap().trim(), "front_gate"),
+            model: resolve_export(&self.model_dir.lock().unwrap().trim(), "k3g"),
+            voc: resolve_export(&self.voc_dir.lock().unwrap().trim(), "rvoc3hi"),
             operator: lines(&self.operator_wavs),
             target: lines(&self.target_wavs),
             threads: *self.threads.lock().unwrap(),
             semitones: PITCH[self.pitch.value().clamp(0, 3) as usize] as f32,
         }
     }
+}
+
+/// 重みの既定の場所を探す(未指定のとき): 実行形式の隣の models/ → VST3 バンドルの models/ → %APPDATA%\LightVC\models → 作業ツリーの results/。
+fn resolve_export(user: &str, sub: &str) -> String {
+    if !user.is_empty() {
+        return user.to_string();
+    }
+    let candidates = |exe: &Path| {
+        let mut v = vec![exe.parent().unwrap_or(Path::new(".")).to_path_buf()];
+        for _ in 0..3 {
+            if let Some(p) = v.last().unwrap().parent() {
+                v.push(p.to_path_buf());
+            }
+        }
+        v.retain(|d| d.is_dir());
+        v
+    };
+    let mut roots: Vec<PathBuf> = std::env::current_exe().map(|e| candidates(&e)).unwrap_or_default();
+    if let Some(app) = std::env::var_os("APPDATA") {
+        roots.push(PathBuf::from(app).join("LightVC"));
+    }
+    roots.push(std::env::current_dir().unwrap_or_default());
+    let found = [
+        ("models", sub),
+        ("results", match sub {
+            "front_gate" => "snv_p45_gate_t80_export",
+            "k3g" => "snv_k3g16kv_export",
+            _ => "rvoc3hi/export_330k",
+        }),
+    ]
+    .iter()
+    .flat_map(|(top, name)| roots.iter().map(move |r| r.join(top).join(name)))
+    .find(|d| d.join("manifest.json").is_file());
+    found.map(|p| p.display().to_string()).unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------
@@ -167,6 +201,11 @@ impl LoadCfg {
         s.enroll_operator(&op.iter().map(|x| x.as_slice()).collect::<Vec<_>>())?;
         let tg = self.target.iter().map(|p| load_48k(p)).collect::<anyhow::Result<Vec<_>>>()?;
         s.enroll_target(&tg.iter().map(|x| x.as_slice()).collect::<Vec<_>>())?;
+        {
+            let mut warm = vec![0.0f32; HOP];
+            let mut sink = vec![0.0f32; HOP];
+            s.process_block(&warm, &mut sink);
+        }
         Ok(s)
     }
 }
@@ -744,6 +783,8 @@ impl Io {
 }
 
 fn inference_thread(task_rx: Receiver<Task>, shared: Arc<Shared>) {
+    lightvc_core::affinity::pin_audio_driver();
+    lightvc_core::affinity::raise_timer_resolution();
     let (load_tx, load_rx) = unbounded::<anyhow::Result<SnvStream>>();
     let mut stream: Option<SnvStream> = None;
     let mut io: Option<Io> = None;

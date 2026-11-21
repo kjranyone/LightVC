@@ -20,7 +20,10 @@ impl AudioPlayer {
         let playing_clone = playing.clone();
 
         let thread = std::thread::spawn(move || {
-            let host = cpal::default_host();
+            let host = match lightvc_audio::host::pick(lightvc_audio::host::HostPref::Default) {
+                Ok(h) => h,
+                Err(_) => return,
+            };
             let Some(device) = host.default_output_device() else {
                 return;
             };

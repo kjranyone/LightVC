@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use eframe::egui;
+use lightvc_audio::HostPref;
 use lightvc_core::snv_stream::SnvStream;
 
 /// Real-time metrics from inference thread.
@@ -26,14 +27,27 @@ pub struct RtMetrics {
     pub disconnected: bool,
     pub overrun: u64,
     pub underrun: u64,
+    /// 直前の 5 秒の窓の 1 ブロックの計算時間 ms(realtime-snv と同じ定義)。
+    pub compute_p50: f32,
+    pub compute_p95: f32,
+    pub compute_p99: f32,
+    /// 窓の中のブロック数。
+    pub blocks: u32,
+    /// 直前のブロックで門が開いていたか。
+    pub gate_open: bool,
+    /// 使っているホストの名前(default / wasapi / asio)。
+    pub host: String,
 }
 
-/// Control messages from UI to real-time inference thread.
+/// Control messages from UI to the real-time inference thread.
 pub enum RtControl {
     StartWithDevices {
+        host: HostPref,
         input_idx: Option<usize>,
         output_idx: Option<usize>,
     },
+    /// 読み込みと登録を済ませた変換器(重い処理は別の糸で・音声の経路にロックを置かない)。
+    Stream(Box<SnvStream>),
     Stop,
     Bypass(bool),
     /// Mute the output (silence) while keeping the stream armed.
@@ -44,9 +58,6 @@ pub enum RtControl {
     /// 固定の半音(運用 = 0 / 5 / 7 / 12)。
     SetSemitones(f32),
 }
-
-/// Hot-swappable conversion engine shared with the inference thread.
-pub type EngineSlot = Arc<Mutex<Option<SnvStream>>>;
 
 /// SnvStream の部品の書き出し(training/export_{pfront,snv_model,rvoc}.py)と登録。
 #[derive(Clone)]
@@ -75,7 +86,6 @@ impl Default for SnvSettings {
 
 /// Application-wide shared state.
 pub struct AppState {
-    pub engine: EngineSlot,
     pub model_loaded: bool,
     pub loading: bool,
     pub settings: SnvSettings,
@@ -87,17 +97,81 @@ pub struct AppState {
     pub rt_control_tx: Option<Sender<RtControl>>,
     pub rt_metrics_rx: Option<Receiver<RtMetrics>>,
     pub rt_initialized: bool,
+    /// 進行中の操作者の録音(無し = 通常)。
+    pub operator_rec: Option<OperatorRecording>,
     /// App-wide audio device selection (None = system default).
     /// Indices match DuplexStream::list_input_devices() /
     /// list_output_devices() ordering.
     pub selected_input: Option<usize>,
     pub selected_output: Option<usize>,
+    /// App-wide audio host selection (default / wasapi / asio).
+    pub selected_host: HostPref,
 }
 
 #[derive(Clone)]
 pub struct VoiceEntry {
     pub name: String,
     pub path: std::path::PathBuf,
+}
+
+/// 進行中の操作者の録音(GUI からマイク録音・30 秒ほど)。
+pub struct OperatorRecording {
+    pub started: std::time::Instant,
+    pub seconds: u32,
+    pub path: PathBuf,
+}
+
+impl LightVcApp {
+    /// 操作者の発話を既定のマイクから seconds 秒録って 48 kHz の WAV に納め、登録の列に加える(§3.4)。
+    pub fn record_operator_static(state: &Arc<Mutex<AppState>>, seconds: u32) {
+        {
+            let mut s = state.lock().unwrap();
+            if s.operator_rec.is_some() || s.loading {
+                return;
+            }
+            let dir = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_default().join("LightVC").join("recordings");
+            let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            let path = if dir.is_dir() || std::fs::create_dir_all(&dir).is_ok() {
+                dir.join(format!("operator_{stamp}.wav"))
+            } else {
+                PathBuf::from(format!("operator_{stamp}.wav"))
+            };
+            s.operator_rec = Some(OperatorRecording { started: std::time::Instant::now(), seconds, path });
+        }
+        let st = state.clone();
+        std::thread::spawn(move || {
+            let r = (|| -> anyhow::Result<PathBuf> {
+                let (engine, mut io) = lightvc_audio::AudioEngine::start_default_buffered(cpal::BufferSize::Fixed(240))?;
+                let dev_sr = engine.capture_sample_rate as usize;
+                let want = seconds as usize * dev_sr;
+                let mut cap = Vec::with_capacity(want + 4800);
+                while cap.len() < want {
+                    if engine.is_disconnected() {
+                        anyhow::bail!("オーディオ装置が切断された");
+                    }
+                    while let Ok(s) = io.capture.pop() {
+                        cap.push(s);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+                drop(engine);
+                cap.truncate(want);
+                let x48 = crate::cli::resample_to_48k(&cap, dev_sr as u32)?;
+                let path = st.lock().unwrap().operator_rec.as_ref().map(|r| r.path.clone()).unwrap_or_default();
+                crate::cli::save_wav_mono(&path, &x48, 48_000)?;
+                Ok(path)
+            })();
+            let mut s = st.lock().unwrap();
+            s.operator_rec = None;
+            match r {
+                Ok(path) => {
+                    s.settings.operator.push(path.clone());
+                    s.status = format!("操作者の録音を保存した: {}", path.display());
+                }
+                Err(e) => s.error = Some(format!("録音の失敗: {e}")),
+            }
+        });
+    }
 }
 
 /// WAV を読み、48 kHz のモノラルにする。
@@ -119,6 +193,12 @@ pub fn build_stream(cfg: &SnvSettings, target: &[PathBuf]) -> anyhow::Result<Snv
     s.enroll_operator(&op.iter().map(|x| x.as_slice()).collect::<Vec<_>>())?;
     let tg = target.iter().map(|p| load_48k(p)).collect::<anyhow::Result<Vec<_>>>()?;
     s.enroll_target(&tg.iter().map(|x| x.as_slice()).collect::<Vec<_>>())?;
+    {
+        // 重みのページインと常駐スレッドの起動を済ませる(開始直後の無音の窓を防ぐ・状態は 5 ms の無音ぶんだけ先行する)。
+        let mut warm = vec![0f32; lightvc_core::snv_stream::SnvStream::BLOCK];
+        let mut sink = vec![0f32; lightvc_core::snv_stream::SnvStream::BLOCK];
+        s.process_block(&warm, &mut sink);
+    }
     Ok(s)
 }
 
@@ -156,7 +236,6 @@ pub struct LightVcApp {
 impl LightVcApp {
     pub fn new() -> Self {
         let state = Arc::new(Mutex::new(AppState {
-            engine: Arc::new(Mutex::new(None)),
             model_loaded: false,
             loading: false,
             settings: SnvSettings::default(),
@@ -168,8 +247,10 @@ impl LightVcApp {
             rt_control_tx: None,
             rt_metrics_rx: None,
             rt_initialized: false,
+            operator_rec: None,
             selected_input: None,
             selected_output: None,
+            selected_host: HostPref::Default,
         }));
 
         Self {
@@ -222,6 +303,12 @@ impl LightVcApp {
             disconnected: false,
             overrun: 0,
             underrun: 2,
+            compute_p50: 4.1,
+            compute_p95: 4.6,
+            compute_p99: 4.8,
+            blocks: 960,
+            gate_open: true,
+            host: "wasapi".into(),
         };
         self.current_tab = Tab::Realtime;
     }
@@ -233,7 +320,6 @@ impl LightVcApp {
         }
         let (control_tx, control_rx) = unbounded();
         let (metrics_tx, metrics_rx) = unbounded();
-        let engine = s.engine.clone();
         s.rt_control_tx = Some(control_tx);
         s.rt_metrics_rx = Some(metrics_rx);
         s.rt_initialized = true;
@@ -241,13 +327,14 @@ impl LightVcApp {
         // The inference thread runs even without an engine (bypass), so the
         // audio path can be tested before the model is loaded.
         std::thread::spawn(move || {
-            crate::realtime_tab::inference_loop(engine, control_rx, metrics_tx);
+            crate::realtime_tab::inference_loop(control_rx, metrics_tx);
         });
     }
 
-    /// 選んだ目標の声で SnvStream を組み直し、組めたら差し替える(重い処理は別の糸で・音は止めない)。
+    /// 選んだ目標の声で SnvStream を組み直し、音声の糸へ渡す(重い処理は別の糸で・音は止めない・ロックは音声の経路に置かない)。
     pub fn load_engine_static(state: &Arc<Mutex<AppState>>) {
-        let (cfg, target, slot) = {
+        Self::ensure_rt_thread_static(state);
+        let (cfg, target) = {
             let mut s = state.lock().unwrap();
             if s.loading {
                 return;
@@ -256,7 +343,7 @@ impl LightVcApp {
             s.loading = true;
             s.status = "Loading model and enrolling...".to_string();
             s.error = None;
-            (s.settings.clone(), target, s.engine.clone())
+            (s.settings.clone(), target)
         };
         let st = state.clone();
         std::thread::spawn(move || {
@@ -266,10 +353,13 @@ impl LightVcApp {
             s.loading = false;
             match r {
                 Ok(engine) => {
-                    let old = slot.lock().unwrap().replace(engine);
-                    drop(old);
-                    s.model_loaded = true;
-                    s.status = format!("Model loaded・enrolled in {:.1} s", t0.elapsed().as_secs_f64());
+                    let sent = s.rt_control_tx.as_ref().map(|tx| tx.send(RtControl::Stream(Box::new(engine))).is_ok()).unwrap_or(false);
+                    if sent {
+                        s.model_loaded = true;
+                        s.status = format!("Model loaded・enrolled in {:.1} s", t0.elapsed().as_secs_f64());
+                    } else {
+                        s.error = Some("Load failed: realtime thread is gone".to_string());
+                    }
                 }
                 Err(e) => s.error = Some(format!("Load failed: {e}")),
             }
@@ -410,11 +500,17 @@ impl LightVcApp {
 
         // Settings dialog — app-wide device selection
         if self.settings_open {
-            let inputs = lightvc_audio::DuplexStream::list_input_devices().unwrap_or_default();
-            let outputs = lightvc_audio::DuplexStream::list_output_devices().unwrap_or_default();
-            let (mut sel_in, mut sel_out) = {
+            let hosts = lightvc_audio::host::available();
+            let host_now = lightvc_audio::host::pick({
                 let s = self.state.lock().unwrap();
-                (s.selected_input, s.selected_output)
+                s.selected_host
+            })
+            .unwrap_or_else(|_| cpal::default_host());
+            let inputs = lightvc_audio::DuplexStream::list_input_devices_on(&host_now).unwrap_or_default();
+            let outputs = lightvc_audio::DuplexStream::list_output_devices_on(&host_now).unwrap_or_default();
+            let (mut sel_in, mut sel_out, mut sel_host) = {
+                let s = self.state.lock().unwrap();
+                (s.selected_input, s.selected_output, s.selected_host)
             };
             egui::Window::new("Audio Devices")
                 .open(&mut self.settings_open)
@@ -427,6 +523,25 @@ impl LightVcApp {
                     egui::ScrollArea::vertical()
                         .max_height(360.0)
                         .show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new("Host")
+                                    .size(12.0)
+                                    .color(crate::theme::colors::TEXT_DIM),
+                            );
+                            ui.horizontal(|ui| {
+                                if ui.selectable_label(sel_host == HostPref::Default, "default").clicked() {
+                                    sel_host = HostPref::Default;
+                                }
+                                for h in &hosts {
+                                    let pref = HostPref::parse(h).unwrap();
+                                    if ui.selectable_label(sel_host == pref, *h).clicked() {
+                                        sel_host = pref;
+                                    }
+                                }
+                            });
+                            ui.add_space(8.0);
+                            ui.separator();
+                            ui.add_space(4.0);
                             ui.label(
                                 egui::RichText::new("Input")
                                     .size(12.0)
@@ -457,6 +572,7 @@ impl LightVcApp {
             let mut s = self.state.lock().unwrap();
             s.selected_input = sel_in;
             s.selected_output = sel_out;
+            s.selected_host = sel_host;
         }
 
         // Status bar
@@ -569,6 +685,7 @@ impl LightVcApp {
                                 &metrics,
                                 || Self::load_engine_static(&state),
                                 || Self::ensure_rt_thread_static(&state),
+                                |secs| Self::record_operator_static(&state, secs),
                                 |ctrl| Self::send_control(&state, ctrl),
                                 &mut self.asset_cache,
                             );
@@ -625,14 +742,15 @@ impl LightVcApp {
             }
         }
 
-        // Only request continuous repaint during realtime mode, while loading,
-        // or while a Catalog preview is playing.
+        // Only request repaint during realtime mode, while loading, or while a
+        // Catalog preview is playing. 33 ms cap while audio runs (meters stay
+        // live without burning a full core); no repaint while idle.
         let loading = self.state.lock().unwrap().loading;
         if self.current_tab == Tab::Realtime
             || loading
             || (self.current_tab == Tab::Catalog && self.catalog.playing_voice.is_some())
         {
-            ctx.request_repaint();
+            ctx.request_repaint_after(std::time::Duration::from_millis(33));
         }
     }
 }

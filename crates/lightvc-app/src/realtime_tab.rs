@@ -6,12 +6,11 @@
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use cpal::traits::HostTrait;
 use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
 use lightvc_core::snv_stream::SnvStream;
 
-use crate::app::{AppState, EngineSlot, RtControl, RtMetrics};
+use crate::app::{AppState, RtControl, RtMetrics};
 use crate::file_pick::FilePick;
 use crate::widgets;
 
@@ -33,6 +32,7 @@ pub fn render(
     metrics: &RtMetrics,
     mut on_load: impl FnMut(),
     mut on_ensure_thread: impl FnMut(),
+    on_record: impl Fn(u32),
     on_control: impl Fn(RtControl),
     assets: &mut crate::assets::AssetCache,
 ) {
@@ -113,9 +113,24 @@ pub fn render(
                         if ui.button("Add operator WAV").clicked() {
                             operator_pick.open(ctx);
                         }
+                        let (recording, remaining) = {
+                            let s = state.lock().unwrap();
+                            let rem = s.operator_rec.as_ref().map(|r| r.seconds.saturating_sub(r.started.elapsed().as_secs() as u32));
+                            (s.operator_rec.is_some(), rem)
+                        };
+                        if let Some(rem) = remaining {
+                            ui.label(
+                                egui::RichText::new(format!("●REC 残り {rem} s"))
+                                    .size(11.0)
+                                    .color(crate::theme::colors::ERROR),
+                            );
+                        } else if ui.button("Record operator (30 s)").clicked() && !*running {
+                            on_record(30);
+                        }
                         if !cfg.operator.is_empty() && ui.button("Clear").clicked() {
                             cfg.operator.clear();
                         }
+                        let _ = recording;
                     });
                     ui.add_space(crate::theme::space::TIGHT);
                     let can_load = !cfg.operator.is_empty() && ref_name.is_some() && !loading;
@@ -166,6 +181,16 @@ pub fn render(
                             None => ("no voice".to_string(), crate::theme::colors::TEXT_MUTED),
                         };
                         ui.label(egui::RichText::new(txt).size(12.0).color(col));
+                        if *running && !*bypass && has_engine {
+                            let (g, c) = if metrics.gate_open {
+                                ("GATE", crate::theme::colors::MINT)
+                            } else {
+                                ("gate", crate::theme::colors::TEXT_MUTED)
+                            };
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(egui::RichText::new(g).size(10.0).color(c).strong());
+                            });
+                        }
                     });
                     ui.add_space(crate::theme::space::TIGHT);
                     ui.horizontal(|ui| {
@@ -180,6 +205,21 @@ pub fn render(
                                     .color(crate::theme::colors::ERROR),
                             );
                         }
+                    });
+                    ui.add_space(crate::theme::space::TIGHT);
+                    // 5 秒ごとの 1 ブロックの計算時間(realtime-snv と同じ定義・p99 < 5.0 が線)。
+                    ui.horizontal(|ui| {
+                        let col = |v: f32| if v >= 5.0 { crate::theme::colors::ERROR } else { crate::theme::colors::MINT };
+                        ui.label(egui::RichText::new("compute ms").size(10.0).color(crate::theme::colors::TEXT_DIM));
+                        for (name, v) in [("p50", metrics.compute_p50), ("p95", metrics.compute_p95), ("p99", metrics.compute_p99)] {
+                            ui.label(egui::RichText::new(format!("{name} {v:.2}")).size(10.0).color(col(v)));
+                            ui.add_space(crate::theme::space::TIGHT);
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let n = if metrics.blocks == 0 && metrics.compute_p99 == 0.0 { String::new() } else { format!("{} blk", metrics.blocks) };
+                            ui.label(egui::RichText::new(n).size(10.0).color(crate::theme::colors::TEXT_MUTED));
+                            ui.label(egui::RichText::new(format!("host {}", if metrics.host.is_empty() { "-" } else { &metrics.host })).size(10.0).color(crate::theme::colors::TEXT_DIM));
+                        });
                     });
                 });
             },
@@ -325,7 +365,7 @@ pub fn render(
 
 fn start_msg(state: &Arc<Mutex<AppState>>) -> RtControl {
     let s = state.lock().unwrap();
-    RtControl::StartWithDevices { input_idx: s.selected_input, output_idx: s.selected_output }
+    RtControl::StartWithDevices { host: s.selected_host, input_idx: s.selected_input, output_idx: s.selected_output }
 }
 
 // =========================================================================
@@ -333,32 +373,39 @@ fn start_msg(state: &Arc<Mutex<AppState>>) -> RtControl {
 // =========================================================================
 
 fn start_engine(
+    host_pref: lightvc_audio::HostPref,
     input_idx: Option<usize>,
     output_idx: Option<usize>,
     buffer_frames: u32,
-) -> anyhow::Result<(lightvc_audio::AudioEngine, lightvc_audio::AudioBuffers)> {
-    let buf = cpal::BufferSize::Fixed(buffer_frames);
-    let host = cpal::default_host();
+) -> anyhow::Result<(lightvc_audio::AudioEngine, lightvc_audio::AudioBuffers, String)> {
+    use cpal::traits::HostTrait as _;
+    let buf = if buffer_frames == 0 { cpal::BufferSize::Default } else { cpal::BufferSize::Fixed(buffer_frames) };
+    let host = lightvc_audio::host::pick(host_pref)?;
+    let host_name = host.id().name().to_ascii_lowercase();
     let in_dev = match input_idx {
         Some(i) => host.input_devices().ok().and_then(|mut d| d.nth(i)),
-        None => lightvc_audio::DuplexStream::default_input().ok(),
+        None => host.default_input_device(),
     };
     let out_dev = match output_idx {
         Some(i) => host.output_devices().ok().and_then(|mut d| d.nth(i)),
-        None => lightvc_audio::DuplexStream::default_output().ok(),
+        None => host.default_output_device(),
     };
     match (in_dev, out_dev) {
-        (Some(i), Some(o)) => lightvc_audio::AudioEngine::start_buffered(&i, &o, buf),
-        _ => lightvc_audio::AudioEngine::start_default_buffered(buf),
+        (Some(i), Some(o)) => lightvc_audio::AudioEngine::start_buffered(&i, &o, buf).map(|(e, b)| (e, b, host_name)),
+        _ => anyhow::bail!("選んだホストに入出力の装置が無い({host_name})"),
     }
 }
 
 /// Device-rate capture → 48 kHz → SnvStream (240-sample blocks) → device-rate playback.
-pub fn inference_loop(engine_slot: EngineSlot, control_rx: Receiver<RtControl>, metrics_tx: Sender<RtMetrics>) {
+/// この糸が変換器を持ち(ロックなし)・P コアに置かれる。登録と読み込みは別の糸で済ませたものを RtControl::Stream で受け取る。
+pub fn inference_loop(control_rx: Receiver<RtControl>, metrics_tx: Sender<RtMetrics>) {
+    lightvc_core::affinity::pin_audio_driver();
+    lightvc_core::affinity::raise_timer_resolution();
     let mut running = false;
     let mut bypass = false;
     let mut muted = false;
     let mut buffer_frames: u32 = 256;
+    let mut stream: Option<SnvStream> = None;
     let mut engine: Option<lightvc_audio::AudioEngine> = None;
     let mut cap_rx: Option<rtrb::Consumer<f32>> = None;
     let mut pb_tx: Option<rtrb::Producer<f32>> = None;
@@ -368,16 +415,21 @@ pub fn inference_loop(engine_slot: EngineSlot, control_rx: Receiver<RtControl>, 
     let mut out = vec![0f32; HOP];
     let (mut in_rms, mut out_rms, mut rtf) = (0.0f32, 0.0f32, 0.0f32);
     let algo_ms = SnvStream::LATENCY_SAMPLES as f32 / 48.0;
+    let mut times: Vec<f64> = Vec::new();
+    let mut window = (0.0f32, 0.0f32, 0.0f32, 0u32);
+    let mut gate_open = false;
+    let mut host_name = String::new();
+    let mut last_report = Instant::now();
 
     loop {
         while let Ok(msg) = control_rx.try_recv() {
             match msg {
-                RtControl::StartWithDevices { input_idx, output_idx } => {
+                RtControl::StartWithDevices { host, input_idx, output_idx } => {
                     if running {
                         continue;
                     }
-                    match start_engine(input_idx, output_idx, buffer_frames) {
-                        Ok((eng, bufs)) => {
+                    match start_engine(host, input_idx, output_idx, buffer_frames) {
+                        Ok((eng, bufs, hname)) => {
                             let (csr, psr) = (eng.capture_sample_rate as usize, eng.playback_sample_rate as usize);
                             let mk = |a: usize, b: usize| if a == b { Ok(None) } else { lightvc_audio::RateConv::new(a, b, HOP).map(Some) };
                             match (mk(csr, SR), mk(SR, psr)) {
@@ -390,7 +442,9 @@ pub fn inference_loop(engine_slot: EngineSlot, control_rx: Receiver<RtControl>, 
                                     cap_rx = Some(bufs.capture);
                                     pb_tx = Some(bufs.playback);
                                     engine = Some(eng);
+                                    host_name = hname;
                                     running = true;
+                                    last_report = Instant::now();
                                 }
                                 (Err(e), _) | (_, Err(e)) => eprintln!("Resampler: {e}"),
                             }
@@ -398,6 +452,7 @@ pub fn inference_loop(engine_slot: EngineSlot, control_rx: Receiver<RtControl>, 
                         Err(e) => eprintln!("Audio: {e}"),
                     }
                 }
+                RtControl::Stream(s) => stream = Some(*s),
                 RtControl::Stop => {
                     running = false;
                     engine = None;
@@ -410,7 +465,7 @@ pub fn inference_loop(engine_slot: EngineSlot, control_rx: Receiver<RtControl>, 
                 RtControl::Mute(m) => muted = m,
                 RtControl::SetBufferSize(n) => buffer_frames = n,
                 RtControl::SetSemitones(k) => {
-                    if let Some(s) = engine_slot.lock().unwrap().as_mut() {
+                    if let Some(s) = stream.as_mut() {
                         s.set_semitones(k);
                     }
                 }
@@ -467,8 +522,9 @@ pub fn inference_loop(engine_slot: EngineSlot, control_rx: Receiver<RtControl>, 
             let t0 = Instant::now();
             let blk = &in48[..HOP];
             let mut converted = false;
-            if !bypass && let Some(s) = engine_slot.lock().unwrap().as_mut() {
+            if !bypass && let Some(s) = stream.as_mut() {
                 s.process_block(blk, &mut out);
+                gate_open = s.gate_open();
                 converted = true;
             }
             if !converted {
@@ -482,6 +538,7 @@ pub fn inference_loop(engine_slot: EngineSlot, control_rx: Receiver<RtControl>, 
             rtf = t0.elapsed().as_secs_f32() / (HOP as f32 / SR as f32);
             out48.extend(out.iter().map(|v| v.clamp(-1.0, 1.0)));
             in48.drain(..HOP);
+            times.push(t0.elapsed().as_secs_f64() * 1e3);
             did_work = true;
         }
 
@@ -507,8 +564,19 @@ pub fn inference_loop(engine_slot: EngineSlot, control_rx: Receiver<RtControl>, 
             }
         }
 
+        // 5 秒ごとの 1 ブロックの計算時間(realtime-snv と同じ定義・p99 < 5.0 が線)。
+        if last_report.elapsed().as_secs() >= 5 && !times.is_empty() {
+            let mut t = times.clone();
+            t.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let q = |p: f64| t[((t.len() as f64 - 1.0) * p) as usize] as f32;
+            window = (q(0.5), q(0.95), q(0.99), t.len() as u32);
+            times.clear();
+            last_report = Instant::now();
+        }
+
         let (overrun, underrun) = engine.as_ref().map(|e| (e.overrun_count(), e.underrun_count())).unwrap_or((0, 0));
-        let buf_ms = buffer_frames as f32 / 48.0;
+        let dev_sr = engine.as_ref().map(|e| e.capture_sample_rate).unwrap_or(SR as u32) as f32;
+        let buf_ms = buffer_frames as f32 * 1000.0 / dev_sr;
         let _ = metrics_tx.send(RtMetrics {
             input_rms: in_rms,
             output_rms: out_rms,
@@ -517,6 +585,12 @@ pub fn inference_loop(engine_slot: EngineSlot, control_rx: Receiver<RtControl>, 
             disconnected: false,
             overrun,
             underrun,
+            compute_p50: window.0,
+            compute_p95: window.1,
+            compute_p99: window.2,
+            blocks: window.3,
+            gate_open,
+            host: host_name.clone(),
         });
 
         if !did_work {
