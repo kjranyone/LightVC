@@ -267,15 +267,23 @@ fn install() -> anyhow::Result<()> {
         .unwrap_or_else(|_| ".".into());
 
     if cfg!(target_os = "windows") {
-        // VST3: C:\Program Files\Common Files\VST3\
-        let vst3_dest = PathBuf::from(r"C:\Program Files\Common Files\VST3");
-        if vst3_dest.exists() || vst3_dest.parent().map(|p| p.exists()).unwrap_or(false) {
-            fs::create_dir_all(&vst3_dest)?;
-            copy_dir(
-                &bundled.join(format!("{PLUGIN_NAME}.vst3")),
-                &vst3_dest.join(format!("{PLUGIN_NAME}.vst3")),
-            )?;
-            eprintln!("Installed VST3: {}", vst3_dest.display());
+        // VST3: C:\Program Files\Common Files\VST3\(権限が足りなければ Steinberg のユーザー置き場 %LOCALAPPDATA%\Programs\Common\VST3 へ)。
+        let user_vst3 = env::var("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(&home))
+            .join("Programs")
+            .join("Common")
+            .join("VST3");
+        let sys_vst3 = PathBuf::from(r"C:\Program Files\Common Files\VST3");
+        let try_dir = |dst: &Path| -> anyhow::Result<()> {
+            fs::create_dir_all(dst)?;
+            copy_dir(&bundled.join(format!("{PLUGIN_NAME}.vst3")), &dst.join(format!("{PLUGIN_NAME}.vst3")))?;
+            eprintln!("Installed VST3: {}", dst.display());
+            Ok(())
+        };
+        if try_dir(&sys_vst3).is_err() {
+            eprintln!("システムの VST3 フォルダへ書けない(管理者権限が要る)→ ユーザー置き場へ入れる");
+            try_dir(&user_vst3)?;
         }
 
         // CLAP: %LOCALAPPDATA%\Programs\Common\CLAP\

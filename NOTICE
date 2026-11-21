@@ -39,6 +39,8 @@ Third-party licenses
   - CLAP plugin ABI (clap-sys): MIT OR Apache-2.0
   - VST3 support: clap-wrapper crate (MIT OR Apache-2.0) with its bundled
     VST3 SDK 3.8.0 (Steinberg Media Technologies GmbH; MIT)
+  - "VST" is a trademark of Steinberg Media Technologies GmbH. This
+    distribution is not affiliated with or endorsed by Steinberg.
   - Plugin framework nice-plug / nice-plug-egui: ISC
   - Other Rust crates: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Zlib,
     Unicode-3.0 or CC0-1.0. self_cell is dual-licensed (Apache-2.0 OR GPL-2.0-only)
