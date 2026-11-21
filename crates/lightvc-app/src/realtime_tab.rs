@@ -35,14 +35,17 @@ pub fn render(
     on_record: impl Fn(u32),
     on_control: impl Fn(RtControl),
     assets: &mut crate::assets::AssetCache,
+    open_voices: &mut bool,
+    select_voice: &mut Option<usize>,
+    cancel_rec: &mut bool,
 ) {
     let stop_icon = assets.icon_stop(ctx).clone();
     on_ensure_thread();
 
-    let (has_engine, loading, mut cfg, ref_name) = {
+    let (has_engine, loading, mut cfg, ref_name, voices, selected_voice) = {
         let s = state.lock().unwrap();
         let name = s.selected_voice.and_then(|i| s.voices.get(i).map(|v| v.name.clone()));
-        (s.model_loaded, s.loading, s.settings.clone(), name)
+        (s.model_loaded, s.loading, s.settings.clone(), name, s.voices.iter().map(|v| v.name.clone()).collect::<Vec<_>>(), s.selected_voice)
     };
     let force_bypass = !has_engine;
 
@@ -113,24 +116,26 @@ pub fn render(
                         if ui.button("Add operator WAV").clicked() {
                             operator_pick.open(ctx);
                         }
-                        let (recording, remaining) = {
+                        let (remaining, rec_active) = {
                             let s = state.lock().unwrap();
                             let rem = s.operator_rec.as_ref().map(|r| r.seconds.saturating_sub(r.started.elapsed().as_secs() as u32));
-                            (s.operator_rec.is_some(), rem)
+                            (rem, s.operator_rec.is_some())
                         };
-                        if let Some(rem) = remaining {
+                        if rec_active {
                             ui.label(
-                                egui::RichText::new(format!("●REC 残り {rem} s"))
+                                egui::RichText::new(format!("●REC 残り {} s", remaining.unwrap_or(0)))
                                     .size(11.0)
                                     .color(crate::theme::colors::ERROR),
                             );
+                            if ui.button("Cancel").clicked() {
+                                *cancel_rec = true;
+                            }
                         } else if ui.button("Record operator (30 s)").clicked() && !*running {
                             on_record(30);
                         }
                         if !cfg.operator.is_empty() && ui.button("Clear").clicked() {
                             cfg.operator.clear();
                         }
-                        let _ = recording;
                     });
                     ui.add_space(crate::theme::space::TIGHT);
                     let can_load = !cfg.operator.is_empty() && ref_name.is_some() && !loading;
@@ -141,11 +146,17 @@ pub fn render(
                         if loading {
                             ui.spinner();
                         } else if ref_name.is_none() {
-                            ui.label(
-                                egui::RichText::new("select a target in Voices")
-                                    .size(10.0)
-                                    .color(crate::theme::colors::ERROR),
-                            );
+                            if voices.is_empty() {
+                                if ui.button("Open Voices →").clicked() {
+                                    *open_voices = true;
+                                }
+                            } else {
+                                ui.label(
+                                    egui::RichText::new("下から目標を選ぶ")
+                                        .size(10.0)
+                                        .color(crate::theme::colors::ERROR),
+                                );
+                            }
                         } else if !has_engine {
                             ui.label(
                                 egui::RichText::new("no model -> BYPASS")
@@ -207,16 +218,19 @@ pub fn render(
                         }
                     });
                     ui.add_space(crate::theme::space::TIGHT);
-                    // 5 秒ごとの 1 ブロックの計算時間(realtime-snv と同じ定義・p99 < 5.0 が線)。
+                    // 5 秒ごとの 1 ブロックの計算時間(realtime-snv と同じ定義・p99 < 5.0 が線)。最初の窓が閉じるまで「—」。
                     ui.horizontal(|ui| {
+                        let measuring = metrics.blocks > 0 || metrics.compute_p99 > 0.0;
                         let col = |v: f32| if v >= 5.0 { crate::theme::colors::ERROR } else { crate::theme::colors::MINT };
                         ui.label(egui::RichText::new("compute ms").size(10.0).color(crate::theme::colors::TEXT_DIM));
                         for (name, v) in [("p50", metrics.compute_p50), ("p95", metrics.compute_p95), ("p99", metrics.compute_p99)] {
-                            ui.label(egui::RichText::new(format!("{name} {v:.2}")).size(10.0).color(col(v)));
+                            let t = if measuring { format!("{name} {v:.2}") } else { format!("{name} —") };
+                            let c = if measuring { col(v) } else { crate::theme::colors::TEXT_MUTED };
+                            ui.label(egui::RichText::new(t).size(10.0).color(c));
                             ui.add_space(crate::theme::space::TIGHT);
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let n = if metrics.blocks == 0 && metrics.compute_p99 == 0.0 { String::new() } else { format!("{} blk", metrics.blocks) };
+                            let n = if measuring { format!("{} blk", metrics.blocks) } else { String::new() };
                             ui.label(egui::RichText::new(n).size(10.0).color(crate::theme::colors::TEXT_MUTED));
                             ui.label(egui::RichText::new(format!("host {}", if metrics.host.is_empty() { "-" } else { &metrics.host })).size(10.0).color(crate::theme::colors::TEXT_DIM));
                         });
@@ -230,6 +244,25 @@ pub fn render(
         cfg.operator.push(path);
     }
     let semitones_before = cfg.semitones;
+
+    // 目標の声の簡易選択(この画面で完結・管理は Voices タブ)。
+    if !voices.is_empty() {
+        ui.add_space(crate::theme::space::MEDIUM);
+        crate::theme::info_card_frame().show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                crate::theme::subheading(ui, "Target");
+                ui.add_space(crate::theme::space::SMALL);
+                for (i, name) in voices.iter().enumerate() {
+                    if crate::theme::pill_button(ui, name, selected_voice == Some(i)) {
+                        *select_voice = Some(i);
+                    }
+                }
+                if ui.small_button("管理…").clicked() {
+                    *open_voices = true;
+                }
+            });
+        });
+    }
 
     ui.add_space(crate::theme::space::MEDIUM);
 

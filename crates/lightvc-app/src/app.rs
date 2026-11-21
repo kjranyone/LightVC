@@ -119,11 +119,14 @@ pub struct OperatorRecording {
     pub started: std::time::Instant,
     pub seconds: u32,
     pub path: PathBuf,
+    /// キャンセルの合図(録音の糸が每周確認する)。
+    pub cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl LightVcApp {
     /// 操作者の発話を既定のマイクから seconds 秒録って 48 kHz の WAV に納め、登録の列に加える(§3.4)。
     pub fn record_operator_static(state: &Arc<Mutex<AppState>>, seconds: u32) {
+        use std::sync::atomic::AtomicBool;
         {
             let mut s = state.lock().unwrap();
             if s.operator_rec.is_some() || s.loading {
@@ -136,10 +139,11 @@ impl LightVcApp {
             } else {
                 PathBuf::from(format!("operator_{stamp}.wav"))
             };
-            s.operator_rec = Some(OperatorRecording { started: std::time::Instant::now(), seconds, path });
+            s.operator_rec = Some(OperatorRecording { started: std::time::Instant::now(), seconds, path, cancel: std::sync::Arc::new(AtomicBool::new(false)) });
         }
         let st = state.clone();
         std::thread::spawn(move || {
+            let cancel = st.lock().unwrap().operator_rec.as_ref().map(|r| r.cancel.clone());
             let r = (|| -> anyhow::Result<PathBuf> {
                 let (engine, mut io) = lightvc_audio::AudioEngine::start_default_buffered(cpal::BufferSize::Fixed(240))?;
                 let dev_sr = engine.capture_sample_rate as usize;
@@ -148,6 +152,9 @@ impl LightVcApp {
                 while cap.len() < want {
                     if engine.is_disconnected() {
                         anyhow::bail!("オーディオ装置が切断された");
+                    }
+                    if cancel.as_ref().is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
+                        anyhow::bail!("cancelled");
                     }
                     while let Ok(s) = io.capture.pop() {
                         cap.push(s);
@@ -162,12 +169,14 @@ impl LightVcApp {
                 Ok(path)
             })();
             let mut s = st.lock().unwrap();
+            let cancelled = r.as_ref().err().is_some_and(|e| e.to_string().contains("cancelled"));
             s.operator_rec = None;
             match r {
                 Ok(path) => {
                     s.settings.operator.push(path.clone());
                     s.status = format!("操作者の録音を保存した: {}", path.display());
                 }
+                Err(_e) if cancelled => s.status = "操作者の録音を中止した".to_string(),
                 Err(e) => s.error = Some(format!("録音の失敗: {e}")),
             }
         });
@@ -668,6 +677,7 @@ impl LightVcApp {
                 let mut rt_buffer_frames = self.rt_buffer_frames;
                 let metrics = self.rt_metrics.clone();
                 let operator_pick = self.operator_pick.clone();
+                let (mut open_voices, mut select_voice, mut cancel_rec) = (false, None, false);
 
                 egui::CentralPanel::default().show(ctx, |ui| {
                     egui::ScrollArea::vertical()
@@ -688,10 +698,33 @@ impl LightVcApp {
                                 |secs| Self::record_operator_static(&state, secs),
                                 |ctrl| Self::send_control(&state, ctrl),
                                 &mut self.asset_cache,
+                                &mut open_voices,
+                                &mut select_voice,
+                                &mut cancel_rec,
                             );
                         });
                 });
 
+                if cancel_rec {
+                    if let Some(r) = self.state.lock().unwrap().operator_rec.as_ref() {
+                        r.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+                if let Some(i) = select_voice {
+                    let reload = {
+                        let mut s = self.state.lock().unwrap();
+                        if s.voices.get(i).is_some() {
+                            s.selected_voice = Some(i);
+                        }
+                        s.model_loaded && !s.settings.operator.is_empty()
+                    };
+                    if reload {
+                        Self::load_engine_static(&state);
+                    }
+                }
+                if open_voices {
+                    self.current_tab = Tab::Catalog;
+                }
                 self.rt_running = rt_running;
                 self.rt_bypass = rt_bypass;
                 self.rt_muted = rt_muted;
