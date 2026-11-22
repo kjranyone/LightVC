@@ -1,0 +1,90 @@
+# 2026-11-22T15:24:56Z 無視されている古い試験のデータの整理(オーナー 2026-11-22「あとignoreされている試験データについても、不要な古いデータは消して。」)。
+# 規則 = AGENTS.md の Results Directory Convention。走行中の学習は無い(pgrep で確認)。製品の書き出し・書き出しの元・RESEARCH と paper が数値とパスで引く証拠(json・wav・yaml)は消していない。
+#
+# (1) 途中のチェックポイント(step*k.pt)。同じフォルダに last.pt が残る腕だけ。prereg・verdict・current/・training/ のどこからも名前で引かれていないもの。
+results/snv_p86j_c/step20k.pt  32495293 B  途中のチェックポイント(last.pt は残す)
+results/diag_snv_p90s_cpc/step5k.pt  14290597 B  途中のチェックポイント(last.pt は残す)
+results/snv_p14_pcpc/step10k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/snv_p81c_c/step20k.pt  32495293 B  途中のチェックポイント(last.pt は残す)
+results/snv_p91e1_cpc/step10k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/snv_p91e1_cpc/step15k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/diag_snv_p70_fc/step20k.pt  32495229 B  途中のチェックポイント(last.pt は残す)
+results/snv_p91e1_cpc/step20k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/snv_i6_m9/step10k.pt  199677017 B  途中のチェックポイント(last.pt は残す)
+results/snv_p1_n/step20k.pt  43621447 B  途中のチェックポイント(last.pt は残す)
+results/snv_i23_gate/step10k.pt  8705921 B  途中のチェックポイント(last.pt は残す)
+results/snv_p30_dcpc/step10k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/snv_p30_dcpc/step15k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/snv_p30_dcpc/step20k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/diag_snv_p86j_cpc/step5k.pt  14290597 B  途中のチェックポイント(last.pt は残す)
+results/snv_p3_x/step20k.pt  32552125 B  途中のチェックポイント(last.pt は残す)
+results/diag_snv_p92n24_c/step20k.pt  32495293 B  途中のチェックポイント(last.pt は残す)
+results/snv_p4_cyc/step10k.pt  32552125 B  途中のチェックポイント(last.pt は残す)
+results/snv_p2e_cpc/step15k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/snv_p82r_cpc/step10k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/snv_p82r_cpc/step15k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/diag_snv_p84_ct24/step6k.pt  32489557 B  途中のチェックポイント(last.pt は残す)
+results/snv_p82r_cpc/step20k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/snv_p91x1_cpc/step10k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/snv_p91x1_cpc/step15k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/snv_p91x1_cpc/step20k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/snv_i4_m7/step10k.pt  245457371 B  途中のチェックポイント(last.pt は残す)
+results/snv_i16_e_op/step10k.pt  232144439 B  途中のチェックポイント(last.pt は残す)
+results/diag_snv_p86j_c/step20k.pt  32495293 B  途中のチェックポイント(last.pt は残す)
+results/snv_p4_ctl/step10k.pt  32552125 B  途中のチェックポイント(last.pt は残す)
+results/snv_p91e_c/step20k.pt  32495293 B  途中のチェックポイント(last.pt は残す)
+results/snv_p91e1_c/step20k.pt  32495357 B  途中のチェックポイント(last.pt は残す)
+results/snv_p82r_c/step20k.pt  32495293 B  途中のチェックポイント(last.pt は残す)
+results/snv_p81c_cpc/step10k.pt  14599693 B  途中のチェックポイント(last.pt は残す)
+results/snv_p81c_cpc/step15k.pt  14599693 B  途中のチェックポイント(last.pt は残す)
+results/snv_p81c_cpc/step20k.pt  14599693 B  途中のチェックポイント(last.pt は残す)
+results/snv_i21_mask_nf/step10k.pt  9758529 B  途中のチェックポイント(last.pt は残す)
+results/diag_snv_p81c_c/step20k.pt  32495293 B  途中のチェックポイント(last.pt は残す)
+results/snv_p12_f/step20k.pt  51057163 B  途中のチェックポイント(last.pt は残す)
+results/snv_p91x1_c/step20k.pt  32495357 B  途中のチェックポイント(last.pt は残す)
+results/snv_i5_m8/step10k.pt  199676953 B  途中のチェックポイント(last.pt は残す)
+results/snv_i5_m8/step20k.pt  199689271 B  途中のチェックポイント(last.pt は残す)
+results/snv_i22_mask_nf/step10k.pt  9758529 B  途中のチェックポイント(last.pt は残す)
+results/diag_snv_p91n_c/step20k.pt  32495293 B  途中のチェックポイント(last.pt は残す)
+results/diag_snv_p90s_c/step20k.pt  32495357 B  途中のチェックポイント(last.pt は残す)
+results/snv_p1_wj/step20k.pt  43621447 B  途中のチェックポイント(last.pt は残す)
+results/diag_snv_p81n_cpc/step5k.pt  14290597 B  途中のチェックポイント(last.pt は残す)
+results/snv_p91x_c/step20k.pt  32495293 B  途中のチェックポイント(last.pt は残す)
+results/snv_p86j_cpc/step10k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/snv_p86j_cpc/step15k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/snv_p86j_cpc/step20k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/diag_snv_p81c_cpc/step5k.pt  14597077 B  途中のチェックポイント(last.pt は残す)
+results/diag_snv_p82r_c/step20k.pt  32495293 B  途中のチェックポイント(last.pt は残す)
+results/diag_snv_p81n_c/step20k.pt  32495293 B  途中のチェックポイント(last.pt は残す)
+results/diag_snv_p82r_cpc/step5k.pt  14290597 B  途中のチェックポイント(last.pt は残す)
+results/snv_p91x_cpc/step15k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/snv_p91x_cpc/step20k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/snv_p91x_cpc/step10k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/snv_p13_m/step20k.pt  64940607 B  途中のチェックポイント(last.pt は残す)
+results/diag_snv_p70_fcpc/step10k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/diag_snv_p70_fcpc/step15k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/diag_snv_p70_fcpc/step20k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/diag_snv_p70_qcpc/step10k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/diag_snv_p70_qcpc/step15k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/diag_snv_p70_qcpc/step20k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/snv_i8_m13/step10k.pt  232125369 B  途中のチェックポイント(last.pt は残す)
+results/diag_snv_p92n1_c/step20k.pt  32495293 B  途中のチェックポイント(last.pt は残す)
+results/snv_p91e_cpc/step15k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/snv_p91e_cpc/step20k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+results/snv_p91e_cpc/step10k.pt  14293017 B  途中のチェックポイント(last.pt は残す)
+#
+# (2) 不採用で閉じた段の入力のデータ(data/・git の外)。どれも残したコーパスから tracked のスクリプトで作り直せる。
+data/snv_p_feat_fr57/  7330699934 B  40885 ファイル  段 P57 step b(不採用)の族の特徴・training/snv_p57_feat.py
+data/snv_p_feat_v357/  4015565335 B  40885 ファイル  段 P57・P61 の読み出しの模型の特徴(閉じた線)・training/snv_p57_feat.py
+data/snv_p_wav_x52/  6943045312 B  10223 ファイル  段 P52(P52_flat)の粗さを散らした版の波形・training/snv_p52_wav.py
+data/snv_p_wav_x52w/  6941979324 B  10221 ファイル  その版に透かしを足し直したもの・training/snv_p38_wm.py
+data/snv_p_feat_xs/  3382256120 B  19205 ファイル  段 P90(周期性の崩し・悪化で閉じた)の視点の特徴・training/snv_p90_impure.py
+data/snv_p_feat_cp/  3379874778 B  19205 ファイル  段 P82(写しの視点・単独では効かず閉じた)の特徴・training/snv_p82_copyfeat.py
+data/snv_d5_f2v1/  1561826584 B  1801 ファイル  段 D5 の下見(録音の鎖 v1 を掛けた音)・どのスクリプトと資料からも引かれない・training/snv_d5_chain.py
+data/snv_d5_f2v2/  1561932580 B  1801 ファイル  段 D5 の下見(録音の鎖 v2 を掛けた音)・同上
+data/snv_d4_pilot/  48210528 B  72 ファイル  段 D4 の下見(速く話す声)・training/snv_d4_pilot.py
+data/snv_e1f_pilot/  15077248 B  32 ファイル  段 P55 の下見(8 声)・training/snv_e1f_gen.py
+#
+# (3) この段(P95)の作業の中間物。
+results/snv_p95/k3g16kv_esm_export/  66663989 B  平滑つきの fixture を作り直した置き場(製品の書き出しへ写した後の写し・重みは消してある)
+results/snv_p95/fixture_backup_noesm/  3840864 B  差し替える前の平滑なしの fixture(SNV_ESM=0 の書き出しで作り直せる)
