@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     LightVC development helper — build and launch the GUI.
 
