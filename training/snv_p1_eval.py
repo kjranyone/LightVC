@@ -11,6 +11,8 @@ test の warp=α = 操作者の源と登録の包絡を先に一律の伸縮 α 
 系の名前に +vtl(例 snv_i10_c_pr+vtl)= paper_snv §5 M17: 操作者の登録だけで声道の長さの伸縮 α を当てはめる(格子 0.7〜1.45・推論の E の内容の出力の有声の平均を、登録の高さの中央値で決めた性の学習の声の分布で z にしたノルムを最小に・母集団は results/<名>/vtl_pop.npz)。源と E の構造に同じ α・目標の参照はそのまま。
 保存に e_play = wst があれば(paper_snv §5 M28)、推論の E は snv_encw.EncW(登録の統計で白くした演奏 → 軌跡)。
 保存に e_lift があれば(paper_snv §5 M19)、推論の E が読む全ての入力(源・操作者の登録・目標の参照の鍵)の包絡の c_K〜c24 を保存の lift_mean に置き換える(C が読む包絡は元のまま)。
+描画器の界面(段 P95 step e・既定): 描画器に渡す包絡の 25 行に、描画器の学習の界面どおり因果の 3 点の平滑(重み = 描画器の ckpt の env_smooth・snv_p0_front.causal_smooth と同じ・smooth_env)を掛ける(模型に渡す値は変えない・Rust の SnvStream と同じ計算)。環境変数 SNV_ESM=0 = 掛けない(段 P1〜P94 の測りの再現)。
+環境変数 SNV_F0G=1(段 P95 step c3)= 描画器に渡す高さと有声だけを高さの番(snv_f0_guard.clean・med = 操作者の登録の f0 の中央値)で整える(模型に渡す値は変えない・Rust の f0_guard と同じ計算)。
 環境変数 SNV_KV16=1(段 P94 step c)= p3 の型の系の、目標の構造の注意の鍵と値を f16 に丸める(Rust の f16 の表の経路と同じ値)。
 環境変数 SNV_WF16=1(段 P94)= p3 の型の系の、回路と CPC のフレームごとに読む重みを f16 に丸める(half_weights・Rust の f16 の重みの経路と同じ値)。
 系の名前に +hp:<Hz>(+cs: の前・+mask: の後・paper_snv 段 P88)= 前段 D に渡す操作者の波形(源と登録)に、因果の 2 次の Butterworth の高域通過を掛ける(前段つきの系だけ)。
@@ -32,6 +34,7 @@ import torch
 
 import nvoc as N
 import rvoc as R
+import snv_f0_guard as FG
 import train_rvoc as TR
 import snv_p0_front as P0
 import train_snv_p1 as T
@@ -474,6 +477,7 @@ class System:
         if self.vtl and self.p11:
             src = warp_utt(src, self.fit_vtl(stat))
         src = self.prep(src)
+        self.f0_med = FG.median_f0([self.prep(u)["f0"] for u in stat]) if os.environ.get("SNV_F0G") else 0.0
         y = torch.from_numpy(src["y"])[None].to(DEV)
         v = torch.from_numpy(src["v"])[None].to(DEV)
         lf = torch.from_numpy(src["lf"])[None].to(DEV) + k * T.LN2_12 * v
@@ -501,10 +505,15 @@ class System:
 
     @torch.no_grad()
     def render(self, src: dict, yo: torch.Tensor, k: int) -> np.ndarray:
-        v = torch.from_numpy(src["v"])[None].to(DEV)
-        lf = torch.from_numpy(src["lf"])[None].to(DEV) + k * T.LN2_12 * v
-        cond = torch.cat([yo[:, :25], lf[:, None], v[:, None], yo[:, 25:29].clamp(0, 1.5) * v[:, None]], 1)
-        f0 = torch.from_numpy(src["f0"] * 2 ** (k / 12))[None].to(DEV)
+        f0s, vs, lfs = src["f0"], src["v"], src["lf"]
+        if getattr(self, "f0_med", 0.0) > 0:
+            f0s = FG.clean(f0s, self.f0_med)
+            vs = (f0s > 0).astype(np.float32)
+            lfs = np.where(f0s > 0, np.log(np.maximum(f0s, 1.0) / 200.0), 0.0).astype(np.float32)
+        v = torch.from_numpy(vs)[None].to(DEV)
+        lf = torch.from_numpy(lfs)[None].to(DEV) + k * T.LN2_12 * v
+        cond = torch.cat([smooth_env(self.gen, yo[:, :25]), lf[:, None], v[:, None], yo[:, 25:29].clamp(0, 1.5) * v[:, None]], 1)
+        f0 = torch.from_numpy(f0s * 2 ** (k / 12))[None].to(DEV)
         return self.gen(cond, TR.excitation(f0, cond.shape[-1] * N.HOP, torch.Generator().manual_seed(0)))[0].cpu().numpy()[N.DELAY:].astype(np.float32)
 
 
@@ -528,11 +537,20 @@ class Ens:
         return (w, yo) if with_y else w
 
 
+def smooth_env(gen: torch.nn.Module, env: torch.Tensor) -> torch.Tensor:
+    w = getattr(gen, "env_smooth", 0.0)
+    if w <= 0 or os.environ.get("SNV_ESM") == "0":
+        return env
+    q = torch.nn.functional.pad(env, (2, 0), mode="replicate")
+    return w * q[..., :-2] + (1 - 2 * w) * q[..., 1:-1] + w * q[..., 2:]
+
+
 def load_gen() -> torch.nn.Module:
     st = torch.load(CK_R, map_location="cpu", weights_only=False)
     cfg = st["cfg"]
     g = R.RVoc(ch=cfg["ch"], kernels=tuple(cfg["kernels"]), dils=tuple(cfg["dils"]), d_cond=cfg["d_cond"]).to(DEV)
     g.load_state_dict(st["ema"])
+    g.env_smooth = float(st.get("env_smooth", 0.0))
     return g.eval().requires_grad_(False)
 
 

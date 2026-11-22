@@ -84,7 +84,7 @@ def render_full(sys: EV.Ens, gen: torch.nn.Module, src: dict, yo: torch.Tensor, 
     u = sys.parts[0].prep(src)
     v = t(u["v"])
     lf = t(u["lf"]) + k * T.LN2_12 * v
-    cond = torch.cat([yo[:, :25], lf[:, None], v[:, None], yo[:, 25:29].clamp(0, 1.5) * v[:, None]], 1)
+    cond = torch.cat([EV.smooth_env(gen, yo[:, :25]), lf[:, None], v[:, None], yo[:, 25:29].clamp(0, 1.5) * v[:, None]], 1)
     exc = TR.excitation(t(u["f0"] * 2 ** (k / 12)), cond.shape[-1] * P.H, torch.Generator().manual_seed(0))
     return gen(cond, exc)[0], exc
 
@@ -101,7 +101,8 @@ def stream_fixture(fs: Path, sys: EV.Ens, gen: torch.nn.Module, x: np.ndarray, s
         w(fs, f"ref{j}_x", rx)
     w(fs, "noise", exc[0, 1]), w(fs, "yo", yo[0].T), w(fs, "w", wav.reshape(-1))
     tr = XG.transitions(u["gate"] > 0.5)
-    sh = shapes | {"T": int(yo.shape[-1]), "transitions": tr, "gate_open": float(u["gate_open"]), "rms": float(wav.pow(2).mean().sqrt())}
+    sh = shapes | {"T": int(yo.shape[-1]), "transitions": tr, "gate_open": float(u["gate_open"]), "rms": float(wav.pow(2).mean().sqrt()),
+                   "env_smooth": 0.0 if os.environ.get("SNV_ESM") == "0" else float(getattr(gen, "env_smooth", 0.0))}
     (fs / "shapes.json").write_text(json.dumps(sh, indent=1))
     return sh
 

@@ -5,12 +5,15 @@
 系 = snv_p1_eval.System の名前・orig(元の音そのもの)・copy(写しの描画 = 物差しの床)・anchor(P0c の一律のずらしの錨 W = 包絡の伸縮 α を登録の平均で目標へ当てはめる)。
 本人らしさ m = 出力の ECAPA + LDA が A0F の 24 声の中で目標を 1 位に当てるか(snv_p1_eval の test の M と同じ物差し・登録 = 目標の j 0〜2 の元の音)。g =(M − 0.061)/(0.635 − 0.061)(試験の床と天井)。
 skip=K = 組の K+1 人目から n 人目まで(段 P45 以降の確認の組 = devA の 65〜158 人目: skip=64 n=158・オーナーの選択 2026-11-13)。話者の番号(目標の割り当て)は組の中の位置のまま。
+描画(系の出力・写し・錨)は snv_p1_eval.smooth_env(描画器の界面の包絡の平滑・段 P95 step e・既定・SNV_ESM=0 で切る)を通す。
+環境変数 SNV_GUARD=1(段 P95 step c)= 系の出力の波形に出力の番(snv_out_guard・Rust の out_guard と同じ計算・P_in = 操作者の登録の水準・P_out = 目標の参照の水準)を掛けてから測る。
 出力 = results/snv_d5/dev_rows_{set}.json(系ごとの行と試行)。既に測った系は測り直さない(redo=1 で測り直す)。mode=m = 既にある行に m だけを足す(書き起こしと UTMOS は測り直さない)。
     cd training && uv run --no-sync python snv_dev_eval.py copy anchor snv_p3_x snv_p8_wst snv_i10_c_pr [set=devA] [n=64] [out=results/snv_d5/dev_rows_devA.json]
 """
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -19,6 +22,7 @@ import numpy as np
 import torch
 
 import nvoc as N
+import snv_out_guard as OG
 import snv_p0c_anchor as AN
 import snv_p1_eval as EV
 import train_rvoc as TR
@@ -126,6 +130,7 @@ def main() -> int:
                             vv = (f0 > 0).astype(np.float32)
                             lf = np.where(f0 > 0, np.log(np.maximum(f0, 1.0) / 200.0), 0.0).astype(np.float32)
                             cond = torch.from_numpy(np.concatenate([y[:25], lf[None], vv[None], np.clip(y[25:29], 0, 1.5) * vv[None]], 0))[None].to(DEV)
+                            cond = torch.cat([EV.smooth_env(gen, cond[:, :25]), cond[:, 25:]], 1)
                             with torch.no_grad():
                                 w = gen(cond, TR.excitation(torch.from_numpy(f0.astype(np.float32))[None].to(DEV), cond.shape[-1] * N.HOP, torch.Generator().manual_seed(0)))[0].cpu().numpy()[N.DELAY:].astype(np.float32)
                         else:
@@ -156,8 +161,17 @@ def main() -> int:
         v = (f0 > 0).astype(np.float32)
         lf = np.where(f0 > 0, np.log(np.maximum(f0, 1.0) / 200.0), 0.0).astype(np.float32)
         cond = torch.from_numpy(np.concatenate([y[:25], lf[None], v[None], np.clip(y[25:29], 0, 1.5) * v[None]], 0))[None].to(DEV)
+        cond = torch.cat([EV.smooth_env(gen, cond[:, :25]), cond[:, 25:]], 1)
         ex = TR.excitation(torch.from_numpy(f0.astype(np.float32))[None].to(DEV), cond.shape[-1] * N.HOP, torch.Generator().manual_seed(0))
         return gen(cond, ex)[0].cpu().numpy()[N.DELAY:].astype(np.float32)
+
+    wav48 = lambda q: librosa.load(q["wav_path"], sr=EV.SR, mono=True)[0].astype(np.float32)
+    lv = {}
+
+    def level(key: tuple, us: list[dict]) -> float:
+        if key not in lv:
+            lv[key] = OG.speech_level([wav48(q) for q in us])
+        return lv[key]
 
     items = cv_items(split, n, skip) + jvnv_items()
     meta = json.loads((EV.A1 / "convert_meta.json").read_text())
@@ -192,6 +206,8 @@ def main() -> int:
                     w = render(y, u["f0"] * 2 ** (k / 12))
                 else:
                     w = s.convert(u, enr, s.structure(f"t|{v}", trefs[v]), k)
+                    if os.environ.get("SNV_GUARD"):
+                        w = OG.apply(wav48(u), w, level(("op", it["spk"]), enr), level(("tg", v), trefs[v]))
                 y16 = w16(w)
                 o = tr(y16)
                 rows.append({"group": it["group"], "spk": it["spk"], "src": it["src"], "tgt": v, "k": k, "cer": round(cer(it["ref_o"], o), 4), "cer_c": round(cer(it["ref_c"], o), 4), "utmos": round(mos(y16), 3), "out": o}

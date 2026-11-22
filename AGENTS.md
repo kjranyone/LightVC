@@ -99,6 +99,7 @@ cargo run -p lightvc-xtask -- package   # bundle + CLI + 3 つの重みの書き
 
 - **推論は全て Rust**（自作の実装・外部の推論ライブラリなし。Candle は 2026-11-10 に外した）— Pythonランタイム不要
 - **製品の経路 = paper_snv の段 P93 の K3G**(2026-11-19・数値の関門・耳の関門・Rust の一致と実時間を通った)。門と重みつきの前段（`p_gate.rs`・`p_front.rs`・`results/snv_p45_gate_t80_export`）→ 符号と回路の 3 組の平均と錨（`k3g_model.rs`・`p30_model.rs`・`p_fixenv.rs`・`results/snv_k3g16kv_export` = 重みと注意の鍵と値を f16 で持つ）→ 出力部 rvoc3hi（`rvoc.rs`）。実時間には 4 スレッドが要る。それまでの製品の経路 = 前段 v3 → E / C（`p_model.rs`・`results/snv_p11_r`）。
+  - **出力部の界面（段 P95・2026-11-22）**: rvoc3hi は包絡の行をフレーム方向に平滑した条件で学習している（書き出しの `manifest.json` の `const.env_smooth`）。出力部に渡す包絡の 25 行には、同じ重みの因果の 3 点の平滑を必ず掛ける（Rust = `SnvStream` の既定・PyTorch = `snv_p1_eval.smooth_env`）。出力部を呼ぶ新しい経路を書くときは、この平滑を通す。出力部の後には出力の番（`out_guard.rs` = `training/snv_out_guard.py`・尖頭値を 1.0 の内側に収める）を掛ける。
   - これを `lightvc_core::snv_stream::SnvStream` が 48 kHz・240 サンプル（5 ms）単位で流す。GUI・CLAP / VST3・CLI は全てこれを使う。
   - 研究の候補（RESEARCH.md・成績表 `results/LEADERBOARD.md`・段 I の型）は、K3G を除いて Rust に移していない。
 - **学習は全て PyTorch (uv環境)** — Rustコードに依存しない

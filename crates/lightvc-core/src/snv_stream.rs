@@ -5,6 +5,8 @@
 //! 特徴の変換は training/train_snv_p1.to_y と snv_p1_eval.convert と同じ: Y = [(c0 − C0_SIL)/10, 包絡 1..25 / 10, 周期性 ×有声]・lf = ln(f0 / 200)・C の高さと励起は k 半音上。
 //! 登録(操作者・目標の参照)は波形を同じ前段に通した特徴から(発話ごとに新しい前段)。端から端の一致検査の固定の入出力 = training/export_snv_stream.py(p30 は export_snv_p30.py・門は export_snv_gate.py・K3G は export_snv_k3g.py)。
 //! アルゴリズム遅延 = ブロック HOP + rvoc の DELAY(前段と模型の先読み 0)。
+//! 描画器の後に出力の番(out_guard・段 P95・既定は入・足す遅延 0・模型に渡す値は変えない)を掛ける: 入力の動きが裏付けない大きさの出力を下げ、尖頭値を 1.0 の内側に収める。
+//! 描画器の界面の包絡の平滑(段 P95 step e・既定は入): 描画器 rvoc3hi は包絡の行をフレーム方向に平滑した条件で学習した(manifest の const.env_smooth)。同じ重みの因果の 3 点の平滑を、描画器に渡す包絡の 25 行に掛ける(模型に渡す値は変えない)。
 
 use std::path::{Path, PathBuf};
 
@@ -12,6 +14,7 @@ use anyhow::{Context, Result};
 
 use crate::k3g_model::K3gModel;
 use crate::nvoc::{DELAY, HOP, N_MEL};
+use crate::out_guard::{speech_level, OutGuard, P_NOMINAL};
 use crate::p_fixenv::{FixEnv, D_ENV};
 use crate::p_front::{PFrame, PFront};
 use crate::p_gate::Gate;
@@ -141,6 +144,12 @@ pub struct SnvStream {
     cond: Vec<f32>,
     e: Vec<f32>,
     noise: Option<(Vec<f32>, usize)>,
+    copy: bool,
+    guard: Option<OutGuard>,
+    prog: [f32; 2],
+    esm: f32,
+    esm_on: bool,
+    eh: Option<[[f32; D_ENV]; 2]>,
 }
 
 impl SnvStream {
@@ -151,11 +160,12 @@ impl SnvStream {
         let man: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(voc.join("manifest.json")).context("rvoc の manifest")?)?;
         let c = &man["const"];
         let num = |k: &str| c[k].as_f64().with_context(|| format!("const {k}"));
+        let esm = c["env_smooth"].as_f64().unwrap_or(0.0) as f32;
         let exc = Excite::new(num("H_MAX")? as f32, num("H_ROLL")? as f32, num("K_MAX")? as usize, 1);
         let model = Model::load(model)?;
         Ok(Self {
             front_dir: front.to_path_buf(), front: PFront::load(front)?, gate: Gate::load(front)?, fix: model.fixenv(), model, exc, voc: RVoc::load(voc)?, k: 0.0,
-            y: vec![0.0; D_Y], yc: vec![0.0; D_Y], a: vec![0.0; D_A], yo: vec![0.0; D_Y], cond: vec![0.0; D_COND], e: vec![0.0; 2 * HOP], noise: None,
+            y: vec![0.0; D_Y], yc: vec![0.0; D_Y], a: vec![0.0; D_A], yo: vec![0.0; D_Y], cond: vec![0.0; D_COND], e: vec![0.0; 2 * HOP], noise: None, copy: false, guard: Some(OutGuard::default()), prog: [P_NOMINAL; 2], esm, esm_on: true, eh: None,
         })
     }
 
@@ -240,6 +250,8 @@ impl SnvStream {
     pub fn enroll_operator(&mut self, utts: &[&[f32]]) -> Result<()> {
         let parts = utts.iter().map(|u| self.analyze(u, true)).collect::<Result<Vec<_>>>()?;
         self.model.enroll_operator(&Self::concat(&parts));
+        self.prog[0] = speech_level(utts, HOP);
+        self.reset_guard();
         Ok(())
     }
 
@@ -247,7 +259,36 @@ impl SnvStream {
     pub fn enroll_target(&mut self, utts: &[&[f32]]) -> Result<()> {
         let parts = utts.iter().map(|u| self.analyze(u, false)).collect::<Result<Vec<_>>>()?;
         self.model.enroll_target(&Self::concat(&parts));
+        self.prog[1] = speech_level(utts, HOP);
+        self.reset_guard();
         Ok(())
+    }
+
+    /// 出力の番(out_guard・既定は入)。切ると出力は描画器の波形そのまま(PyTorch との一致検査はこちら)。
+    pub fn set_guard(&mut self, on: bool) {
+        self.guard = on.then(|| OutGuard::new(self.prog[0], self.prog[1]));
+    }
+
+    /// 描画器の界面の包絡の平滑(既定は入・描画器の manifest の const.env_smooth = w・包絡の 25 行にフレーム t−2・t−1・t の重み w・1 − 2w・w = snv_p1_eval.smooth_env)を入れる・切る。切るのは、平滑なしで書いた古い fixture との一致検査だけ。
+    pub fn set_env_smooth(&mut self, on: bool) {
+        self.esm_on = on;
+        self.eh = None;
+    }
+
+    /// 描画器の manifest の包絡の平滑の重み w(0 = 平滑なしで学習した描画器)。
+    pub fn env_smooth(&self) -> f32 {
+        self.esm
+    }
+
+    fn reset_guard(&mut self) {
+        if let Some(g) = self.guard.as_mut() {
+            g.set_program(self.prog[0], self.prog[1]);
+        }
+    }
+
+    /// 直前のブロックの出力の番の値(OutGuard::last・番が切なら None)。
+    pub fn last_guard(&self) -> Option<[f32; 5]> {
+        self.guard.as_ref().map(OutGuard::last)
     }
 
     /// 励起の雑音を外から与える(一致検査だけ・[n] を順に使う)。
@@ -271,7 +312,18 @@ impl SnvStream {
         }
         let yc = self.fix.is_some().then_some(self.yc.as_slice());
         prof!(MODEL, self.model.step(&self.y, yc, v, lfk, open, &mut self.a, &mut self.yo));
-        self.cond[..25].copy_from_slice(&self.yo[..25]);
+        if self.copy {
+            self.yo.copy_from_slice(&self.y);
+        }
+        self.cond[..D_ENV].copy_from_slice(&self.yo[..D_ENV]);
+        if self.esm_on && self.esm > 0.0 {
+            let cur: [f32; D_ENV] = std::array::from_fn(|k| self.yo[k]);
+            let [e2, e1] = self.eh.unwrap_or([cur; 2]);
+            for k in 0..D_ENV {
+                self.cond[k] = self.esm * e2[k] + (1.0 - 2.0 * self.esm) * e1[k] + self.esm * cur[k];
+            }
+            self.eh = Some([e1, cur]);
+        }
         self.cond[25] = lfk;
         self.cond[26] = v;
         for k in 0..4 {
@@ -284,11 +336,29 @@ impl SnvStream {
             *i += HOP;
         }
         prof!(VOC, self.voc.process_block(&self.cond, &self.e, out));
+        if let Some(g) = self.guard.as_mut() {
+            g.process(x, out);
+        }
+    }
+
+    /// 診断: 模型の出力の代わりに源の Y を描画器へ渡す(写しの描画)。
+    pub fn set_copy(&mut self, on: bool) {
+        self.copy = on;
     }
 
     /// 直前のブロックの C の出力 Y [D_Y]。
     pub fn last_y(&self) -> &[f32] {
         &self.yo
+    }
+
+    /// 直前のブロックの描画器の条件 [D_COND](包絡 25・lf・有声・周期性 4)。
+    pub fn last_cond(&self) -> &[f32] {
+        &self.cond
+    }
+
+    /// 直前のブロックの源の Y [D_Y]。
+    pub fn last_src_y(&self) -> &[f32] {
+        &self.y
     }
 }
 
@@ -325,6 +395,8 @@ mod tests {
         let r = root();
         let p = |k: &str| r.join(sh[k].as_str().unwrap());
         let mut s = SnvStream::load(&front.map_or_else(|| p("front"), Path::to_path_buf), &p("model"), &p("voc")).unwrap();
+        s.set_guard(false);
+        s.set_env_smooth(sh["env_smooth"].as_f64().unwrap_or(0.0) > 0.0);
         s.set_semitones(sh["k"].as_f64().unwrap() as f32);
         s.enroll_operator(&[&rd(&fx.join("op_x.f32"))]).unwrap();
         let refs: Vec<Vec<f32>> = (0..sh["refs"].as_u64().unwrap()).map(|j| rd(&fx.join(format!("ref{j}_x.f32")))).collect();
