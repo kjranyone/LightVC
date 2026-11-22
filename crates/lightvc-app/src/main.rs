@@ -9,6 +9,7 @@
 mod audio_playback;
 mod cli;
 mod file_pick;
+mod m3;
 mod offline_tab;
 mod realtime_tab;
 mod state;

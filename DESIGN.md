@@ -1,117 +1,110 @@
-# LightVC デザイン・システム(M3 Expressive 準拠・2026-11-22)
+# LightVC デザイン・システム(M3 Expressive 準拠・2026-11-22 v5)
 
-status: 適用済み。実装は `crates/lightvc-app/src/ui.rs`。根拠は Material 3 Expressive の 6 戦術
-(use a variety of shapes / rich and nuanced colors / guide attention with typography /
-contain content for emphasis / fluid and natural motion / component flexibility)。
+status: 適用済み。トークンと部品 = `crates/lightvc-app/src/m3.rs`、画面 = `crates/lightvc-app/src/ui.rs`。
+v4 までは色が手書き・部品の寸法が仕様外・ナビゲーション部品なしで、M3E に準拠していなかった(全面的に置き換えた)。
 
-## 0. 前提と制約
+## 0. 前提
 
-- 筐体: GPUI 0.2.2(Windows)。**暗黙の色遷移(hover の fade)は無い** = hover は即時。動きは
-  `with_animation` + `bounce(ease_in_out)`(M3E の spatial spring「オーバーシュートして跳ねる」に相当)
-  で明示的に作る。
-- ブランド: きゃわわ Future Bass(ラベンダー×ピンク)を維持し、M3 の**色のロール(役割)**に載せ替える。
-- 文章は日本語。フォントはシステム(DirectWrite)のフォールバック。
-- 「要素を並べた」状態からの脱却が目的: **画面ごとに主役を 1 つ**決め、強調の階層で並べる。
+- 筐体: GPUI 0.2.2(Windows)。hover / pressed は即時(暗黙の色遷移は無い)。形の変化と動きは
+  `with_animation` と `canvas`(パスの描画)で作る。
+- ブランド: きゃわわ Future Bass(ピンク × ラベンダー × ミント)を M3 の色ロールに載せる。
+- 文言は日本語に統一する(英語を混ぜない)。フォントはシステム(DirectWrite)。
+- **画面ごとに主役を 1 つ**決める。主役だけが大きい文字・濃い色・size M のボタンを持つ。
 
-## 1. 色(M3 のトーン・ロール)
+## 1. 色(HCT トーンパレットから生成)
 
-seed = きゃわわピンク/ラベンダー。surface はラベンダーの淡いトーン列(明るいほど重要)。
+seed: primary `#E05A8A`(ピンク)・secondary `#7C68BE`(ラベンダー)・tertiary `#2EB88C`(ミント)・
+neutral = ラベンダーの色相で chroma 6(variant は 10)。Material の `material-color-utilities` の
+`TonalPalette.fromHueAndChroma` で作り、M3 の標準トーン対応で取る。**hex を手で決めない**。
 
-| ロール | 値 | 用途 |
+| ロール | light(tone) | dark(tone) |
 |---|---|---|
-| primary | `#E05A8A` | 主役の行動(Start・Load・Convert)・選択済み・メーター針 |
-| on-primary | `#FFFFFF` | primary の上の文字 |
-| primary-container | `#FBD9E5` | 選択済み chip・強調の器 |
-| on-primary-container | `#4A1B31` | 同上の文字 |
-| secondary | `#7C68BE` | バッジ(BYPASS)・アクセント |
-| secondary-container | `#E7DFF8` | tonal ボタン・Host 行 |
-| on-secondary-container | `#2A2050` | 同上の文字 |
-| tertiary | `#2EB88C` | CONVERTING/GATE(正常系)・Out メーター |
-| tertiary-container | `#CCF1E2` | 正常の器 |
-| on-tertiary-container | `#063828` | 同上の文字 |
-| error | `#C03B5E` | Stop・over/underrun・REC |
-| error-container | `#F9D6DF` | 警告の器 |
-| surface | `#F7F1F9` | 画面背景 |
-| surface-container-low | `#F2EBF5` | 設定・登録のカード |
-| surface-container-high | `#E6DCEB` | **主役のカード**(運用) |
-| surface-container-lowest | `#FFFFFF` | 診断(白・最も明るい) |
-| on-surface | `#2B2233` | 基本の文字 |
-| on-surface-variant | `#5D5266` | 補助の文字 |
-| outline | `#86748F` | outlined の縁 |
-| outline-variant | `#D9CDDF` | 区切り・メーターの溝 |
+| primary / on-primary | 40 / 100 | 80 / 20 |
+| *-container / on-*-container | 90 / 30 | 30 / 90 |
+| surface | 98 | 6 |
+| surface-container / -high | 94 / 92 | 12 / 17 |
+| on-surface / on-surface-variant | 10 / 30 | 90 / 80 |
+| outline-variant | 80 | 30 |
+| inverse-surface / inverse-on-surface | 20 / 95 | 90 / 20 |
 
-戦術「**明るさで階層を作る**」: 高 importance ほど明るい surface に載せる(M3E: brightest surface
-mapping)。運用は container-high、登録は low、診断は白。
+- 値は `m3::c` の `role!(名前, light, dark)`。ダークは OS の外観に従う(`LVC_THEME=dark|light` で固定)。
+- state layer: hover = 上に載る色を 8 %、pressed = 12 % 重ねる(`m3::mix` / `m3::alpha`)。
+- 無効: 器 = on-surface 10 %・文字 = on-surface 38 %。
+- 使い分け: primary = 主役の行動と「変換中」/ secondary = 選択(toggle・button group・chip・rail の指示子)/
+  tertiary = 対になる状態(バイパス中・停止ボタン・変換結果)/ error = 音切れ・録音中・上限超過。
 
-## 2. タイポグラフィ(M3 type scale + emphasized)
+## 2. タイポグラフィ(M3 type scale)
 
-| スタイル | サイズ/重み | 用途 |
+| スタイル | size / line / weight | 用途 |
 |---|---|---|
-| display | 22 / bold | ワードマーク「✦ LightVC」 |
-| **headline-emphasis** | 24 / bold | **主役の数値**(E2E 遅延・compute p99)。editorial moment |
-| title-medium | 15 / semibold | カード見出し |
-| body-medium | 13 / regular | 本文・パス |
-| label-large | 12 / medium | ボタン・chip |
-| label-small | 10.5 / regular(dim) | ヒント・単位・host |
+| display-large | 57 / 64 / bold | **主役の数値**(E2E 遅延)だけ |
+| headline-small | 24 / 32 / semibold | 画面の題・補助の数値 |
+| title-large | 22 / 28 / medium | hero の経路(あなた → 目標の声) |
+| title-medium | 16 / 24 / semibold | 容器の見出し・size M のボタン |
+| body-large / medium / small | 16 / 14 / 12 | 本文・パス・補足 |
+| label-large / medium | 14 / 12 medium | ボタン・chip・rail・単位 |
 
-戦術「**タイポで注意を導く**」: 画面で最も見せたい数値(遅延・p99)だけ headline-emphasis にする。
-数値+単位は baseline を揃え、単位は label-small で薄く(M3 の units)。
+## 3. シェイプ(M3 shape scale)
 
-## 3. シェイプ(shape scale + tension)
+XS 4 / SM 8 / MD 12 / LG 16 / XL 28 / full。容器 = LG、主役の容器と本文の面 = XL、chip = SM、
+snackbar = XS、ボタン = full。**形は状態で変わる**: 押すと角が締まる(full → 8)、選択で形が替わる
+(toggle: round → square、segmented list: 選択行だけ丸い、開始 = round / 停止 = square)。
 
-| トークン | radius(px) | 用途 |
+## 4. 部品(m3.rs)
+
+| M3E | 実装 | 仕様 |
 |---|---|---|
-| shape-xs | 4 | **tension 要素(診断カード)** |
-| shape-md | 10 | カード(基調・角丸) |
-| shape-lg | 14 | 主役カード |
-| shape-full | 999 | ボタン・chip・connected button group・メーター・バッジ |
+| Navigation rail | `nav_item` | 幅 96・指示子 56 × 32・選択でアイコンが塗り・指示子が spring で広がる |
+| Button (S) | `button` + `Btn::{Filled,Tonal,Outlined,Text}` | 高さ 40・アイコン 20・1 つの容器に filled は 1 個まで |
+| Button (M) | `button_m` | 高さ 56・画面の主役の行動に 1 個(開始/停止・変換する) |
+| Toggle button | `toggle_button` | tonal。未選択 round(secondary-container)→ 選択 square(secondary) |
+| Icon button | `icon_button` | 40 × 40・standard / tonal |
+| Connected button group | `segments` + `segment` | 間隔 2・内側の角 8・外側と選択中は full |
+| Filter chip | `chip` | 高さ 32・角 8・選択で secondary-container + check |
+| Toolbar(floating) | ui.rs の `toolbar` | 高さ 64・full・surface-container-high・主役のボタンを隣に置く |
+| Segmented list | `list` + `list_item` | 行ごとに面・間隔 2・端の行だけ外側の角 16・選択行は 28 |
+| Linear indicator | `meter` | 太さ 8・針と溝の間 4・末端の停止点 |
+| Loading indicator | `loading_indicator` | canvas のパス。6 つの形を spring で変形しながら回る |
+| Snackbar | ui.rs(エラー) | inverse-surface・角 4・閉じる icon button |
+| アイコン | `icon` | Material Symbols Rounded(Apache-2.0)を `assets/icons/*.svg` から埋め込む |
 
-戦術「**round と square を混ぜて緊張を作る**」: 全体を角丸(full/md)で統一し、**診断カードだけ
-四角(xs)**にして「ここは計測値」という注意を引く。M3E: "Break from the surrounding shape style
-to draw attention"。
+文字の絵文字・記号(✦ ⚙ ■ …)をアイコンの代わりに使わない。
 
-## 4. コンポーネント(M3E の部品の写像)
+## 5. レイアウト
 
-| M3E | LightVC 実装(ui.rs) | 備考 |
-|---|---|---|
-| Button (filled) | `filled_btn` | 高強調 = その画面で 1 つだけ(Realtime=Start・Offline=Convert) |
-| Button (tonal) | `tonal_btn` | 中強調(Load・Record・Browse・Play) |
-| Button (outlined) | `outlined_btn` | 低強調の枠付き(管理…・設定) |
-| Text button | `text_btn` | 最低強調(Clear・Cancel・✕) |
-| **Connected button group** | `btn_group` | Pitch(+0/+5/+7/+12)・Buffer・threads。**選択肢だけ膨らむ**(幅・full 角・primary 塗り)—— M3E の "selected button changes shape and width" の静的表現 |
-| Filter chip | `chip` | Target/Voices の選択。選択で primary-container +「✓」 |
-| **Loading indicator** | `loading(text)` | 3 点が `bounce` で順に脈動(GPUI に shape morph は無いため、M3E の "capture attention" を大きさの脈動で代用) |
-| Linear progress | `meter` | 溝(outline-variant)・針(primary/tertiary)・**末端の停止ドット**(M3 の stop indicator) |
-| Status badge | `badge` | CONVERTING=tertiary / BYPASS=secondary / STOPPED=on-surface-variant の小さな full 角 |
-| REC indicator | 点滅する error の点(`bounce`・無限) | 進行中の合図に motion を使う |
+window = surface-container の地に navigation rail(左 96)+ 本文の面(surface・角 28)。
+本文は縦スクロールする(はみ出して切れない)。最小 900 × 600。
 
-## 5. レイアウト(containment と主役)
-
-**Realtime タブ**(主役 = 今まさに変換がどう動いているか):
-1. **運用(hero・surface-container-high・shape-lg)**: 状態バッジ + 対象の声 + GATE + 遅延/RTF(headline)
-   + compute ms(p99 を headline)+ over/underrun + 輸送バー(Bypass/Mute/Pitch group + **Start(filled) 1 個** /
-   Stop = error filled)。登録と診断より大きく・明るく。
-2. **登録(surface-container-low・shape-md)**: Model(exports・threads group・操作者: Add/Record/Clear=低強調・
-   Load=tonal)と Target の chip 列。
-3. **診断(surface-container-lowest=白・shape-xs=tension)**: Input/Out メーター・host・Buffer group・
-   E2E の帯(帯の分割は線形・M3E の wavy は GPUI で描けないため不採用)。
-
-Offline タブ(主役 = Convert): Source/Reference(low)→ catalog chips → Pitch group → **Convert(filled・full)**
-→ Output(白)。Voices タブ(主役 = 声の一覧): Add(tonal 1 個)→ 一覧(行 = chip 相当・選択で
-primary-container・Play=tonal・✕=text)。
+- **リアルタイム**(主役 = 今どう変換されているか): 主列 + 補助の列(320)。
+  - hero(角 28): 状態で色が替わる(停止 = surface-container-high / 変換中 = primary-container /
+    バイパス中 = tertiary-container)。状態の pill・ゲート・経路・**E2E 遅延(display-large)**と
+    目標 30 ms / 上限 50 ms の判定・計算 p99 / RTF / ホスト・遅延の内訳・入出力の meter。
+  - toolbar(バイパス・ミュートの toggle)+ **開始 / 停止(button M)**。
+  - 調整(縁の容器): ピッチとバッファの connected button group。
+  - 補助の列: 目標の声(chip)・操作者(録音 / WAV / 消去)・モデル(書き出しの場所・スレッド・読み込み)。
+- **ファイル変換**(主役 = 変換する): 変換元と目標の声の 2 枚 → 変換する(button M)+ ピッチ → 結果(tertiary-container)。
+- **ボイス**(主役 = 一覧): 題の右に「ボイスを追加」(filled)・segmented list(試聴・削除)・空の状態。
+- **デバイス**: ホストの button group・入力と出力の segmented list。
 
 ## 6. モーション
 
-- 方針: M3E の spatial spring(オーバーシュート)≈ GPUI の `bounce(ease_in_out)`。効果は控えめに:
-  1. loading indicator の 3 点の脈動(0.9s・無限・時差)
-  2. REC の点の点滅(0.8s・無限)
-  3. それ以外は静的(hover は即時)。GPUI に暗黙遷移が無いため、これ以上の遷移は作らない。
-- 要求駆動の描画は維持(loading/REC の間だけ animation frame が回る)。
+M3E の spatial spring(行き過ぎて戻る)を `m3::spring` で作る(GPUI の easing は 0..1 に限られるため、
+animator の中で掛ける)。
+
+1. rail の指示子: 選択で幅 32 → 56(450 ms・spring)。
+2. 画面の切り替え: 透明度と 14 px の上昇(260 ms・ease-out)。
+3. loading indicator: 形の変形と回転(読み込み・変換の間だけ)。
+4. 録音中の点の脈動。
+5. 押下: 角が締まる(即時)。
+
+描画は要求駆動のまま(動いている間だけ animation frame を回す)。
 
 ## 7. 検証
 
-- 3 タブのスクリーンショット(docs/screenshots/m3e_realtime.png・m3e_voices.png)で確認済み(2026-11-22):
-  主役カードが明るさ・文字・位置の 3 軸で支配すること、button group の選択肢の膨らみ
-  (タブ・Pitch・threads・Buffer の 4 箇所で同じ扱い)、診断カードの白い四角の緊張、
-  Target の「✓ chip」、メーターの停止ドット、日本語の描画(tofu なし)。
-- `cargo build --release -p lightvc-app`・`cargo clippy -p lightvc-app --release` 通過。
+- `powershell -File tools\snap_tabs.ps1 -Prefix m3e_v5`(デモ表示で 4 画面を撮る。`-Theme dark` でダーク、
+  `LVC_DEMO_STATE=loading` で読み込み中)。`docs/screenshots/m3e_v5_{realtime,offline,voices,devices}.png` と
+  `m3e_v5_realtime_dark.png` で確認済み(2026-11-22): rail の指示子・hero の階層・button group の角・
+  segmented list の選択行・ダークの配色・loading indicator の描画・日本語の描画。
+- 画面で確認していないもの: 停止中 / バイパス中の hero・録音中・snackbar・変換結果・空のボイス一覧
+  (デモ表示では出ない状態)。
+- `cargo build --release -p lightvc-app` 通過・`cargo clippy -p lightvc-app` で ui.rs / m3.rs の警告なし。

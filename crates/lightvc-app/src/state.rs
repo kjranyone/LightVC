@@ -113,7 +113,7 @@ impl AppState {
             voices: Vec::new(),
             selected_voice: None,
             error: None,
-            status: "Ready".to_string(),
+            status: "準備完了".to_string(),
             offline_result: None,
             rt_control_tx: None,
             rt_metrics_rx: None,
@@ -191,7 +191,7 @@ pub fn load_engine(state: &Arc<Mutex<AppState>>) {
         }
         let target: Vec<PathBuf> = s.selected_voice.and_then(|i| s.voices.get(i)).map(|v| vec![v.path.clone()]).unwrap_or_default();
         s.loading = true;
-        s.status = "Loading model and enrolling...".to_string();
+        s.status = "モデルを読み込み、登録しています…".to_string();
         s.error = None;
         (s.settings.clone(), target)
     };
@@ -206,12 +206,12 @@ pub fn load_engine(state: &Arc<Mutex<AppState>>) {
                 let sent = s.rt_control_tx.as_ref().map(|tx| tx.send(RtControl::Stream(Box::new(engine))).is_ok()).unwrap_or(false);
                 if sent {
                     s.model_loaded = true;
-                    s.status = format!("Model loaded・enrolled in {:.1} s", t0.elapsed().as_secs_f64());
+                    s.status = format!("モデルを読み込みました(登録 {:.1} 秒)", t0.elapsed().as_secs_f64());
                 } else {
-                    s.error = Some("Load failed: realtime thread is gone".to_string());
+                    s.error = Some("読み込みに失敗: リアルタイムの処理が止まっています".to_string());
                 }
             }
-            Err(e) => s.error = Some(format!("Load failed: {e}")),
+            Err(e) => s.error = Some(format!("読み込みに失敗: {e}")),
         }
     });
 }

@@ -42,6 +42,8 @@ Third-party licenses
   - "VST" is a trademark of Steinberg Media Technologies GmbH. This
     distribution is not affiliated with or endorsed by Steinberg.
   - Plugin framework nice-plug / nice-plug-egui: ISC
+  - GUI icons: Material Symbols (Google; Apache-2.0), embedded from
+    crates/lightvc-app/assets/icons/*.svg.
   - Other Rust crates: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Zlib,
     Unicode-3.0 or CC0-1.0. self_cell is dual-licensed (Apache-2.0 OR GPL-2.0-only)
     and is used under Apache-2.0.

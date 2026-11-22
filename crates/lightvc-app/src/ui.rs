@@ -1,82 +1,29 @@
-//! LightVC の GUI(GPUI・Material 3 Expressive)。3 タブ + 設定 + 状態バー。
+//! LightVC の GUI(GPUI・Material 3 Expressive)。navigation rail + 4 画面。
 //!
-//! デザインの正本は DESIGN.md。実際の Google 製品(Meet・Phone・Gmail)の M3E と同じ手法:
-//! 内容は「容器」(背景と一段トーンが違う面)に載る。白いカードは使わない。
+//! デザインの正本は DESIGN.md。トークンと部品は m3.rs。
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use gpui::{
-    bounce, div, ease_in_out, prelude::*, px, size, Animation, AnimationExt as _, AnyElement,
-    App, Application, Bounds, Context, ElementId, FontWeight, InteractiveElement, Render,
-    SharedString, Stateful, Styled, TitlebarOptions, Window, WindowBounds, WindowOptions,
+    div, prelude::*, px, relative, size, Animation, AnimationExt as _, AnyElement, App, Application,
+    Bounds, Context, Div, FontWeight, Render, Rgba, SharedString, TitlebarOptions, Window,
+    WindowAppearance, WindowBounds, WindowOptions,
 };
 
 use crate::audio_playback::{self, AudioPlayer};
 use crate::file_pick::FilePick;
+use crate::m3::{self, c, icon, shape, Btn, Typo};
 use crate::state::{self, AppState, RtControl, RtMetrics};
 
 const SR: u32 = 48_000;
 const SEMITONES: [(f32, &str); 4] = [(0.0, "+0"), (5.0, "+5"), (7.0, "+7"), (12.0, "+12")];
 const BUFFERS: [u32; 5] = [128, 240, 256, 512, 1024];
-const METER_W: f32 = 180.0;
-
-/// M3 の色ロール。白いカードではなく「トーンの階段」で面を作る(DESIGN.md §1)。
-mod md {
-    use gpui::{hsla, rgb, Hsla, Rgba};
-
-    // 基本(アクション)
-    pub fn primary() -> Rgba { rgb(0xE9_5C_8F) }
-    pub fn on_primary() -> Rgba { rgb(0xFF_FF_FF) }
-    pub fn primary_container() -> Rgba { rgb(0xFD_D8_E4) }
-    pub fn on_primary_container() -> Rgba { rgb(0x3E_0D_23) }
-    pub fn primary_pressed() -> Rgba { rgb(0xD4_4E_7C) }
-
-    // 第二(バイパス・選択)
-    pub fn secondary() -> Rgba { rgb(0x6D_56_7E) }
-    pub fn secondary_container() -> Rgba { rgb(0xF0_DD_FF) }
-    pub fn on_secondary_container() -> Rgba { rgb(0x27_14_3A) }
-    pub fn secondary_container_pressed() -> Rgba { rgb(0xE0_CB_F2) }
-
-    // 第三(正常系・CONVERTING)
-    pub fn tertiary() -> Rgba { rgb(0x1F_6D_48) }
-    pub fn tertiary_container() -> Rgba { rgb(0xAB_F2_C9) }
-    pub fn on_tertiary_container() -> Rgba { rgb(0x00_24_15) }
-
-    // 異常
-    pub fn error() -> Rgba { rgb(0xB3_26_1E) }
-    pub fn on_error() -> Rgba { rgb(0xFF_FF_FF) }
-    pub fn error_container() -> Rgba { rgb(0xF9_DE_dc) }
-    pub fn on_error_container() -> Rgba { rgb(0x41_0E_0B) }
-
-    // 面のトーンの階段(白いカードは使わない・M3E の「容器」はトーンで差を作る)
-    pub fn surface_dim() -> Rgba { rgb(0xDD_D5_E0) }
-    pub fn surface() -> Rgba { rgb(0xFC_F8_F9) }
-    pub fn surface_bright() -> Rgba { rgb(0xFC_F8_F9) }
-    pub fn surface_container_lowest() -> Rgba { rgb(0xFF_FF_FF) }
-    pub fn surface_container_low() -> Rgba { rgb(0xF6_F2_F4) }
-    pub fn surface_container() -> Rgba { rgb(0xF0_EB_EF) }
-    pub fn surface_container_high() -> Rgba { rgb(0xEA_E4_E9) }
-    pub fn surface_container_highest() -> Rgba { rgb(0xE4_DE_E3) }
-
-    // 文字
-    pub fn on_surface() -> Rgba { rgb(0x1C_1B_1E) }
-    pub fn on_surface_variant() -> Rgba { rgb(0x49_45_4E) }
-
-    // 縁・区切り
-    pub fn outline() -> Hsla { hsla(300.0 / 360.0, 0.02, 0.44, 1.0) }
-    pub fn outline_variant() -> Rgba { rgb(0xCA_C4_CC) }
-    pub fn primary_overlay() -> Rgba { rgb(0xF9_E2_E9) }
-
-    // シェイプ
-    pub const R_XS: f32 = 4.0;
-    pub const R_MD: f32 = 16.0;
-    pub const R_LG: f32 = 28.0;
-}
+const THREADS: [usize; 3] = [1, 2, 4];
 
 #[derive(Copy, Clone, PartialEq)]
-enum Tab { Offline, Realtime, Catalog }
+enum Tab { Realtime, Offline, Voices, Devices }
 
 #[derive(Default)]
 struct OfflineUi {
@@ -113,16 +60,16 @@ impl Picks {
 }
 
 #[derive(Default)]
-struct SettingsCache {
+struct DeviceCache {
     inputs: Vec<lightvc_audio::DeviceInfo>,
     outputs: Vec<lightvc_audio::DeviceInfo>,
-    hosts: Vec<&'static str>,
 }
 
 pub struct LightVcUi {
     state: Arc<Mutex<AppState>>,
     tab: Tab,
     demo: bool,
+    dark_override: Option<bool>,
     rt_running: bool,
     rt_bypass: bool,
     rt_muted: bool,
@@ -131,47 +78,55 @@ pub struct LightVcUi {
     picks: Picks,
     offline: OfflineUi,
     catalog: CatalogUi,
-    settings_open: bool,
-    settings: SettingsCache,
+    devices: DeviceCache,
 }
 
 pub fn run(state: Arc<Mutex<AppState>>, demo: bool) -> anyhow::Result<()> {
-    Application::new().run(move |cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(1040.), px(760.)), cx);
+    Application::new().with_assets(m3::Assets).run(move |cx: &mut App| {
+        let bounds = Bounds::centered(None, size(px(1120.), px(780.)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                window_min_size: Some(size(px(900.), px(600.))),
                 titlebar: Some(TitlebarOptions { title: Some("LightVC".into()), ..Default::default() }),
                 ..Default::default()
             },
-            |_, cx| {
-                cx.new(|_| LightVcUi {
-                    state: state.clone(),
-                    tab: match std::env::var("LVC_TAB").as_deref() {
-                        Ok("voices") => Tab::Catalog,
-                        Ok("realtime") => Tab::Realtime,
-                        Ok("offline") => Tab::Offline,
-                        _ if demo => Tab::Realtime,
-                        _ => Tab::Offline,
-                    },
-                    demo,
-                    rt_running: demo,
-                    rt_bypass: false,
-                    rt_muted: false,
-                    rt_buffer: 256,
-                    metrics: if demo {
-                        RtMetrics {
-                            input_rms: 0.18, output_rms: 0.12, latency_ms: 31.0, rtf: 0.34,
-                            compute_p50: 4.1, compute_p95: 4.6, compute_p99: 4.8,
-                            blocks: 960, gate_open: true, host: "wasapi".into(),
-                            ..Default::default()
-                        }
-                    } else { RtMetrics::default() },
-                    picks: Picks::default(),
-                    offline: OfflineUi::default(),
-                    catalog: CatalogUi::default(),
-                    settings_open: false,
-                    settings: SettingsCache::default(),
+            |window, cx| {
+                cx.new(|cx| {
+                    cx.observe_window_appearance(window, |_, _, cx| cx.notify()).detach();
+                    let mut ui = LightVcUi {
+                        state: state.clone(),
+                        tab: match std::env::var("LVC_TAB").as_deref() {
+                            Ok("voices") => Tab::Voices,
+                            Ok("offline") => Tab::Offline,
+                            Ok("devices") => Tab::Devices,
+                            _ => Tab::Realtime,
+                        },
+                        demo,
+                        dark_override: match std::env::var("LVC_THEME").as_deref() {
+                            Ok("dark") => Some(true),
+                            Ok("light") => Some(false),
+                            _ => None,
+                        },
+                        rt_running: demo,
+                        rt_bypass: false,
+                        rt_muted: false,
+                        rt_buffer: 256,
+                        metrics: if demo {
+                            RtMetrics {
+                                input_rms: 0.11, output_rms: 0.08, latency_ms: 31.0, rtf: 0.34,
+                                compute_p50: 4.1, compute_p95: 4.6, compute_p99: 4.8,
+                                blocks: 960, gate_open: true, host: "wasapi".into(),
+                                ..Default::default()
+                            }
+                        } else { RtMetrics::default() },
+                        picks: Picks::default(),
+                        offline: OfflineUi::default(),
+                        catalog: CatalogUi::default(),
+                        devices: DeviceCache::default(),
+                    };
+                    if ui.tab == Tab::Devices { ui.refresh_devices(); }
+                    ui
                 })
             },
         ).unwrap();
@@ -190,7 +145,8 @@ pub fn enable_demo(state: &Arc<Mutex<AppState>>) {
         state::VoiceEntry { name: "Lyra (soft)".into(), path: "samples/lyra.wav".into() },
     ];
     s.selected_voice = Some(0);
-    s.status = "Demo mode".into();
+    s.status = "デモ表示(模擬の値)".into();
+    if std::env::var("LVC_DEMO_STATE").as_deref() == Ok("loading") { s.loading = true; }
 }
 
 impl LightVcUi {
@@ -204,7 +160,7 @@ impl LightVcUi {
                     self.metrics = m;
                 }
             }
-            if disconnected { s.status = "Audio device disconnected".to_string(); }
+            if disconnected { s.error = Some("オーディオ装置が切断されました".to_string()); }
             if self.offline.converting && (s.status.starts_with("Converted:") || s.error.is_some()) {
                 self.offline.converting = false;
             }
@@ -224,7 +180,7 @@ impl LightVcUi {
     }
 
     fn needs_tick(&self) -> bool {
-        self.demo || self.rt_running || self.picks.any_pending()
+        self.rt_running || self.picks.any_pending()
             || self.state.lock().map(|s| s.loading || s.operator_rec.is_some()).unwrap_or(false)
             || self.offline.converting
             || self.offline.player.as_ref().is_some_and(|p| p.is_playing())
@@ -234,10 +190,12 @@ impl LightVcUi {
     }
 
     fn start(&mut self, cx: &mut Context<Self>) {
-        state::ensure_rt_thread(&self.state);
-        let force = !self.state.lock().unwrap().model_loaded;
-        state::send_control(&self.state, RtControl::Bypass(self.rt_bypass || force));
-        state::send_control(&self.state, state::start_msg(&self.state));
+        if !self.demo {
+            state::ensure_rt_thread(&self.state);
+            let force = !self.state.lock().unwrap().model_loaded;
+            state::send_control(&self.state, RtControl::Bypass(self.rt_bypass || force));
+            state::send_control(&self.state, state::start_msg(&self.state));
+        }
         self.rt_running = true;
         cx.notify();
     }
@@ -248,388 +206,156 @@ impl LightVcUi {
         cx.notify();
     }
 
-    fn pick_settings(&mut self) {
+    fn set_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
+        if tab == Tab::Devices && self.tab != Tab::Devices { self.refresh_devices(); }
+        self.tab = tab;
+        cx.notify();
+    }
+
+    fn refresh_devices(&mut self) {
         let host = lightvc_audio::host::pick(self.state.lock().unwrap().selected_host).unwrap_or_else(|_| cpal::default_host());
-        self.settings.hosts = lightvc_audio::host::available();
-        self.settings.inputs = lightvc_audio::DuplexStream::list_input_devices_on(&host).unwrap_or_default();
-        self.settings.outputs = lightvc_audio::DuplexStream::list_output_devices_on(&host).unwrap_or_default();
+        self.devices.inputs = lightvc_audio::DuplexStream::list_input_devices_on(&host).unwrap_or_default();
+        self.devices.outputs = lightvc_audio::DuplexStream::list_output_devices_on(&host).unwrap_or_default();
+    }
+
+    fn set_semitones(&mut self, k: f32, cx: &mut Context<Self>) {
+        let mut s = self.state.lock().unwrap();
+        s.settings.semitones = k;
+        if let Some(ref tx) = s.rt_control_tx { let _ = tx.send(RtControl::SetSemitones(k)); }
+        cx.notify();
+    }
+
+    fn select_voice(&mut self, i: usize, cx: &mut Context<Self>) {
+        let reload = {
+            let mut s = self.state.lock().unwrap();
+            if s.voices.get(i).is_some() { s.selected_voice = Some(i); }
+            s.model_loaded && !s.settings.operator.is_empty()
+        };
+        if reload && !self.demo { state::load_engine(&self.state); }
+        cx.notify();
+    }
+
+    fn pitch_group(&self, prefix: &'static str, semitones: f32, cx: &mut Context<Self>) -> Div {
+        let mut group = m3::segments();
+        for (i, (k, name)) in SEMITONES.iter().enumerate() {
+            let k = *k;
+            group = group.child(
+                m3::segment(SharedString::from(format!("{prefix}_{i}")), *name, semitones == k, i == 0, i == SEMITONES.len() - 1)
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_semitones(k, cx))),
+            );
+        }
+        group
     }
 }
 
-// ===== M3E 部品 =====
-
-enum Emph { Filled, Tonal, Outlined, Text }
-
-fn btn(id: impl Into<ElementId>, label: impl Into<SharedString>, e: Emph) -> Stateful<gpui::Div> {
-    div()
-        .id(id)
-        .map(|s| match e {
-            Emph::Filled => s.px_6().py_2().rounded_full().bg(md::primary()).text_color(md::on_primary()),
-            Emph::Tonal => s.px_5().py_2().rounded_full().bg(md::secondary_container()).text_color(md::on_secondary_container()),
-            Emph::Outlined => s.px_5().py_2().rounded_full().text_color(md::primary()).border_1().border_color(md::outline_variant()),
-            Emph::Text => s.px_3().py_1().rounded_full().text_color(md::primary()),
-        })
-        .text_size(px(14.))
-        .font_weight(FontWeight::MEDIUM)
-        .hover(|s| match e {
-            Emph::Filled => s.bg(md::primary_pressed()),
-            Emph::Tonal => s.bg(md::secondary_container_pressed()),
-            Emph::Outlined => s.bg(md::primary_overlay()),
-            Emph::Text => s.bg(md::primary_overlay()),
-        })
-        .child(label.into())
+fn file_name(p: &std::path::Path) -> String {
+    p.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_else(|| p.display().to_string())
 }
 
-fn group_seg(id: impl Into<ElementId>, label: impl Into<SharedString>, selected: bool) -> Stateful<gpui::Div> {
-    div()
-        .id(id)
-        .rounded_full()
-        .text_size(px(13.))
-        .font_weight(FontWeight::MEDIUM)
-        .map(|s| {
-            if selected { s.px_5().py_2().bg(md::primary()).text_color(md::on_primary()) }
-            else { s.px_4().py_2().text_color(md::on_surface()) }
-        })
-        .hover(|s| if selected { s.bg(md::primary_pressed()) } else { s.bg(md::primary_overlay()) })
-        .child(label.into())
+fn stop_player(slot: &mut Option<AudioPlayer>) {
+    if let Some(p) = slot.take() { p.stop(); }
 }
 
-fn group_container() -> gpui::Div {
-    div().flex().items_center().gap_1().px_1().py_1().rounded_full().bg(md::surface_container_high())
-}
-
-fn chip(id: impl Into<ElementId>, label: impl Into<SharedString>, selected: bool) -> Stateful<gpui::Div> {
-    let label: SharedString = label.into();
-    let text: SharedString = if selected { format!("✓ {label}").into() } else { label };
-    div()
-        .id(id)
-        .px_4().py_2().rounded_full()
-        .text_size(px(13.)).font_weight(FontWeight::MEDIUM)
-        .map(|s| {
-            if selected { s.bg(md::secondary_container()).text_color(md::on_secondary_container()) }
-            else { s.text_color(md::on_surface()).border_1().border_color(md::outline_variant()) }
-        })
-        .hover(|s| s.bg(md::secondary_container_pressed()))
-        .child(text)
-}
-
-fn badge(text: &str, kind: BadgeKind) -> gpui::Div {
-    let (bg, fg) = match kind {
-        BadgeKind::Good => (md::tertiary(), md::on_primary()),
-        BadgeKind::Mid => (md::secondary(), md::on_primary()),
-        BadgeKind::Off => (md::surface_container_highest(), md::on_surface()),
-    };
-    div().px_4().py_2().rounded_full().text_size(px(12.)).font_weight(FontWeight::BOLD).bg(bg).text_color(fg).child(text.to_string())
-}
-
-enum BadgeKind { Good, Mid, Off }
-
-fn loading_dot(id: &'static str, dur: f32) -> gpui::AnimationElement<gpui::Div> {
-    div()
-        .size(px(8.)).rounded_full().bg(md::primary())
-        .with_animation(id, Animation::new(Duration::from_secs_f32(dur)).repeat().with_easing(bounce(ease_in_out)),
-            |el, delta| el.size(px(6.0 + 6.0 * delta)).opacity(0.3 + 0.7 * delta))
-}
-
-fn loading(text: &str) -> gpui::Div {
-    div().flex().items_center().gap_3()
-        .child(div().flex().items_center().gap_1().child(loading_dot("ld0", 0.80)).child(loading_dot("ld1", 0.95)).child(loading_dot("ld2", 1.10)))
-        .child(div().text_size(px(13.)).text_color(md::on_surface_variant()).child(text.to_string()))
-}
-
-fn rec_dot() -> gpui::AnimationElement<gpui::Div> {
-    div().size(px(12.)).rounded_full().bg(md::error())
-        .with_animation("rec", Animation::new(Duration::from_millis(800)).repeat().with_easing(bounce(ease_in_out)),
-            |el, delta| el.size(px(10.0 + 6.0 * delta)).opacity(0.5 + 0.5 * delta))
-}
-
-fn meter(level: f32, color: gpui::Rgba) -> gpui::Div {
-    let w = (METER_W * level.clamp(0.0, 1.0)).max(4.0);
-    div().flex().items_center().gap_2()
-        .child(div().w(px(METER_W)).h(px(8.)).rounded_full().bg(md::surface_container_highest())
-            .child(div().w(px(w)).h_full().rounded_full().bg(color)))
-        .child(div().size(px(4.)).rounded_full().bg(color))
-}
-
-/// 主役の数値(M3E display・36px bold)。
-fn stat(value: String, unit: &str, color: gpui::Rgba) -> gpui::Div {
-    div().flex().items_baseline().gap_1()
-        .child(div().text_size(px(36.)).font_weight(FontWeight::BOLD).text_color(color).child(value))
-        .child(div().text_size(px(12.)).text_color(md::on_surface_variant()).child(unit.to_string()))
-}
-
-fn heading(text: &str) -> gpui::Div {
-    div().text_size(px(16.)).text_color(md::on_surface()).font_weight(FontWeight::SEMIBOLD).child(text.to_string())
-}
-
-fn subtext(text: impl Into<SharedString>) -> gpui::Div {
-    div().text_size(px(13.)).text_color(md::on_surface_variant()).child(text.into())
-}
-
-/// M3E の「容器」= トーンの一段濃い面(白いカードではない)。
-fn container() -> gpui::Div {
-    div().bg(md::surface_container_low()).rounded(px(md::R_MD)).p_5().flex().flex_col().gap_3()
-}
-
-fn toggle_stop(player_slot: &mut Option<AudioPlayer>) {
-    if let Some(p) = player_slot.take() { p.stop(); }
-}
-
-fn play_path(player_slot: &mut Option<AudioPlayer>, path: &PathBuf) -> anyhow::Result<()> {
+fn play_path(slot: &mut Option<AudioPlayer>, path: &std::path::Path) -> anyhow::Result<()> {
     let (wav, sr) = audio_playback::load_wav_mono(path).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
     let wav44 = audio_playback::resample_linear(&wav, sr);
-    *player_slot = Some(AudioPlayer::play(wav44)?);
+    *slot = Some(AudioPlayer::play(wav44)?);
     Ok(())
+}
+
+fn section_title(text: &str) -> Div {
+    div().title_m().text_color(c::on_surface()).child(text.to_string())
+}
+
+fn supporting(text: impl Into<SharedString>) -> Div {
+    div().body_s().text_color(c::on_surface_variant()).child(text.into())
+}
+
+fn field_label(text: &str) -> Div {
+    div().label_l().text_color(c::on_surface_variant()).child(text.to_string())
+}
+
+fn page_header(title: &str, subtitle: &str) -> Div {
+    div().flex().items_center().gap_4().min_h(px(56.))
+        .child(
+            div().flex().flex_col().flex_none()
+                .child(div().headline_s().text_color(c::on_surface()).child(title.to_string()))
+                .child(div().body_m().text_color(c::on_surface_variant()).child(subtitle.to_string())),
+        )
+        .child(div().flex_1())
+}
+
+/// 補助の数値(ラベル + headline)。
+fn stat(label: &str, value: String, unit: &str, fg: Rgba) -> Div {
+    div().flex().flex_col().flex_none()
+        .child(div().label_m().text_color(m3::alpha(fg, 0.72)).child(label.to_string()))
+        .child(
+            div().flex().items_baseline().gap_1()
+                .child(div().headline_s().text_color(fg).child(value))
+                .child(div().label_m().text_color(m3::alpha(fg, 0.72)).child(unit.to_string())),
+        )
 }
 
 impl Render for LightVcUi {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        m3::set_dark(self.dark_override.unwrap_or(matches!(window.appearance(), WindowAppearance::Dark | WindowAppearance::VibrantDark)));
         self.pump();
         if self.needs_tick() { window.request_animation_frame(); }
 
-        let root = div().id("root").size_full().flex().flex_col().bg(md::surface());
-
         let tab = self.tab;
-        let bar = div()
-            .flex().items_center().gap_4().px_6().py_3()
-            .child(div().text_size(px(28.)).font_weight(FontWeight::BOLD).text_color(md::primary()).child("✦ LightVC"))
-            .child(
-                group_container()
-                    .child(group_seg("tab_off", "Offline", tab == Tab::Offline).on_click(cx.listener(|this, _, _, cx| { this.tab = Tab::Offline; cx.notify(); })))
-                    .child(group_seg("tab_rt", "Realtime", tab == Tab::Realtime).on_click(cx.listener(|this, _, _, cx| { this.tab = Tab::Realtime; cx.notify(); })))
-                    .child(group_seg("tab_vo", "Voices", tab == Tab::Catalog).on_click(cx.listener(|this, _, _, cx| { this.tab = Tab::Catalog; cx.notify(); }))),
-            )
+        let rail = div()
+            .w(px(96.)).h_full().flex_none().flex().flex_col().items_center().py_4().gap_2()
+            .child(div().size(px(48.)).mb_3().flex().items_center().justify_center().rounded(px(shape::LG)).bg(c::primary_container())
+                .child(icon("auto_awesome_fill1", 26., c::on_primary_container())))
+            .child(m3::nav_item("nav_rt", "graphic_eq", "リアルタイム", tab == Tab::Realtime).on_click(cx.listener(|this, _, _, cx| this.set_tab(Tab::Realtime, cx))))
+            .child(m3::nav_item("nav_off", "audio_file", "ファイル変換", tab == Tab::Offline).on_click(cx.listener(|this, _, _, cx| this.set_tab(Tab::Offline, cx))))
+            .child(m3::nav_item("nav_vo", "record_voice_over", "ボイス", tab == Tab::Voices).on_click(cx.listener(|this, _, _, cx| this.set_tab(Tab::Voices, cx))))
             .child(div().flex_1())
-            .child(btn("settings", "⚙ Devices", Emph::Outlined).on_click(cx.listener(|this, _, _, cx| {
-                if !this.settings_open { this.pick_settings(); }
-                this.settings_open = !this.settings_open;
-                cx.notify();
-            })));
+            .child(m3::nav_item("nav_dev", "settings", "デバイス", tab == Tab::Devices).on_click(cx.listener(|this, _, _, cx| this.set_tab(Tab::Devices, cx))));
 
-        let (status_line, status_color, err) = {
+        let (status, error) = {
             let s = self.state.lock().unwrap();
-            (s.status.clone(), if s.error.is_some() { md::error() } else { md::tertiary() }, s.error.clone())
+            (s.status.clone(), s.error.clone())
         };
 
-        let bottom = div()
-            .flex().items_center().gap_3().px_6().py_2()
-            .bg(md::surface_container())
-            .child(div().text_size(px(12.)).text_color(status_color).child(format!("● {}", err.unwrap_or(status_line))))
-            .child(div().flex_1())
-            .child(subtext("Out"))
-            .child(meter(self.metrics.output_rms * 6.0, md::tertiary()));
-
-        let content: AnyElement = match self.tab {
-            Tab::Offline => self.render_offline(cx),
-            Tab::Realtime => self.render_realtime(cx),
-            Tab::Catalog => self.render_catalog(cx),
+        let page: AnyElement = match tab {
+            Tab::Realtime => self.render_realtime(&status, cx),
+            Tab::Offline => self.render_offline(&status, cx),
+            Tab::Voices => self.render_voices(&status, cx),
+            Tab::Devices => self.render_devices(&status, cx),
         };
+        let page = div().w_full().p_6().child(page).with_animation(("page", tab as usize), Animation::new(Duration::from_millis(260)), |el, d| {
+            let e = 1.0 - (1.0 - d).powi(3);
+            el.opacity(e).pt(px(24.0 + 14.0 * (1.0 - e)))
+        });
 
-        let content = div().id("content").flex_1().flex().flex_col().px_6().py_4().gap_4().child(if self.settings_open {
-            div().flex().flex_col().gap_4().child(self.render_settings(cx)).child(content).into_any_element()
-        } else { content });
+        let mut pane = div().relative().size_full().flex().flex_col().overflow_hidden().rounded(px(shape::XL)).bg(c::surface())
+            .child(div().id("scroll").flex_1().min_h_0().overflow_y_scroll().child(page));
+        if let Some(err) = error {
+            pane = pane.child(
+                div().absolute().bottom_4().left_0().right_0().flex().justify_center().px_4().child(
+                    div().max_w(px(640.)).min_h(px(48.)).pl_4().pr_1().py_1().flex().items_center().gap_3()
+                        .rounded(px(shape::XS)).bg(c::inverse_surface()).shadow_lg()
+                        .child(icon("error", 20., c::inverse_primary()))
+                        .child(div().flex_1().body_m().text_color(c::inverse_on_surface()).child(err))
+                        .child(m3::icon_button("snack_close", "close", false, c::inverse_on_surface()).on_click(cx.listener(|this, _, _, cx| {
+                            this.state.lock().unwrap().error = None;
+                            cx.notify();
+                        }))),
+                ),
+            );
+        }
 
-        root.child(bar).child(content).child(bottom)
+        div().id("root").size_full().flex().bg(c::surface_container()).text_color(c::on_surface())
+            .child(rail)
+            .child(div().flex_1().min_w_0().h_full().py_2().pr_2().child(pane))
     }
 }
 
 impl LightVcUi {
-    fn render_settings(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let (sel_in, sel_out, sel_host) = {
-            let s = self.state.lock().unwrap();
-            (s.selected_input, s.selected_output, s.selected_host)
-        };
-        let mut el = container().child(heading("Audio Devices"));
-        let mut host_row = group_container();
-        let mut host_pills: Vec<(String, lightvc_audio::HostPref)> = vec![("default".to_string(), lightvc_audio::HostPref::Default)];
-        for h in lightvc_audio::host::available() {
-            if let Ok(p) = lightvc_audio::HostPref::parse(h) { host_pills.push((h.to_string(), p)); }
-        }
-        for (i, (label, pref)) in host_pills.iter().enumerate() {
-            let selected = *pref == sel_host;
-            let pref = *pref;
-            host_row = host_row.child(
-                group_seg(SharedString::from(format!("host_{i}")), label.clone(), selected).on_click(cx.listener(move |this, _, _, cx| {
-                    this.state.lock().unwrap().selected_host = pref;
-                    this.pick_settings();
-                    cx.notify();
-                })),
-            );
-        }
-        el = el.child(div().flex().items_center().gap_3().child(subtext("Host")).child(host_row));
+    // ===== リアルタイム =====
 
-        let mut device_rows = div().flex().flex_col().gap_1();
-        device_rows = device_rows.child(subtext("Input"));
-        let inputs = self.settings.inputs.clone();
-        for (i, d) in inputs.iter().enumerate() {
-            let sel = sel_in == Some(i);
-            device_rows = device_rows.child(
-                div().id(SharedString::from(format!("in_{i}")))
-                    .px_3().py_2().rounded(px(md::R_XS)).text_size(px(13.))
-                    .map(move |s| if sel { s.bg(md::primary_container()).text_color(md::on_primary_container()) } else { s.text_color(md::on_surface()) })
-                    .hover(|s| s.bg(md::surface_container_high()))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.state.lock().unwrap().selected_input = Some(i);
-                        cx.notify();
-                    }))
-                    .child(format!("in  {i}: {} ({}Hz, {}ch)", d.name, d.sample_rate, d.channels)),
-            );
-        }
-        device_rows = device_rows.child(subtext("Output"));
-        let outputs = self.settings.outputs.clone();
-        for (i, d) in outputs.iter().enumerate() {
-            let sel = sel_out == Some(i);
-            device_rows = device_rows.child(
-                div().id(SharedString::from(format!("out_{i}")))
-                    .px_3().py_2().rounded(px(md::R_XS)).text_size(px(13.))
-                    .map(move |s| if sel { s.bg(md::primary_container()).text_color(md::on_primary_container()) } else { s.text_color(md::on_surface()) })
-                    .hover(|s| s.bg(md::surface_container_high()))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.state.lock().unwrap().selected_output = Some(i);
-                        cx.notify();
-                    }))
-                    .child(format!("out {i}: {} ({}Hz, {}ch)", d.name, d.sample_rate, d.channels)),
-            );
-        }
-        el.child(device_rows).into_any_element()
-    }
-
-    fn render_offline(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let (semitones, has_operator, voices, selected_voice) = {
-            let s = self.state.lock().unwrap();
-            (s.settings.semitones, !s.settings.operator.is_empty(), s.voices.iter().map(|v| v.name.clone()).collect::<Vec<_>>(), s.selected_voice)
-        };
-        let mut el = div().flex().flex_col().gap_4().w_full();
-
-        let src_label = self.offline.source.as_ref().map(|p| p.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default()).unwrap_or_else(|| "(未選択)".into());
-        let src_playing = self.offline.source_preview.as_ref().is_some_and(|p| p.is_playing());
-        el = el.child(
-            container().child(heading("Source")).child(
-                div().flex().items_center().gap_3()
-                    .child(div().flex_1().text_size(px(14.)).text_color(md::on_surface()).child(src_label))
-                    .child(btn("src_play", if src_playing { "Stop" } else { "Play" }, Emph::Tonal).on_click(cx.listener(|this, _, _, cx| {
-                        if this.offline.source_preview.is_some() {
-                            toggle_stop(&mut this.offline.source_preview);
-                        } else if let Some(p) = this.offline.source.clone() {
-                            match play_path(&mut this.offline.source_preview, &p) {
-                                Ok(()) => this.state.lock().unwrap().status = format!("再生中: {}", p.display()),
-                                Err(e) => this.state.lock().unwrap().error = Some(format!("再生できない: {e}")),
-                            }
-                        }
-                        cx.notify();
-                    })))
-                    .child(btn("src_browse", "Browse", Emph::Outlined).on_click(cx.listener(|this, _, _, cx| {
-                        this.picks.source.open();
-                        cx.notify();
-                    }))),
-            ),
-        );
-
-        let ref_label = self.offline.reference.as_ref().map(|p| p.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default()).unwrap_or_else(|| "(未選択)".into());
-        let ref_playing = self.offline.reference_preview.as_ref().is_some_and(|p| p.is_playing());
-        el = el.child(
-            container().child(heading("Reference (目標の声・20 秒以上)")).child(
-                div().flex().items_center().gap_3()
-                    .child(div().flex_1().text_size(px(14.)).text_color(md::on_surface()).child(ref_label))
-                    .child(btn("ref_play", if ref_playing { "Stop" } else { "Play" }, Emph::Tonal).on_click(cx.listener(|this, _, _, cx| {
-                        if this.offline.reference_preview.is_some() {
-                            toggle_stop(&mut this.offline.reference_preview);
-                        } else if let Some(p) = this.offline.reference.clone() {
-                            match play_path(&mut this.offline.reference_preview, &p) {
-                                Ok(()) => this.state.lock().unwrap().status = format!("再生中: {}", p.display()),
-                                Err(e) => this.state.lock().unwrap().error = Some(format!("再生できない: {e}")),
-                            }
-                        }
-                        cx.notify();
-                    })))
-                    .child(btn("ref_browse", "Browse", Emph::Outlined).on_click(cx.listener(|this, _, _, cx| {
-                        this.picks.reference.open();
-                        cx.notify();
-                    }))),
-            ),
-        );
-
-        if !voices.is_empty() {
-            let mut row = div().flex().flex_wrap().items_center().gap_2().child(subtext("Or pick from Voice Catalog"));
-            for (i, name) in voices.iter().enumerate() {
-                let selected = selected_voice == Some(i) && self.offline.reference.is_none();
-                row = row.child(
-                    chip(SharedString::from(format!("cat_{i}")), name.clone(), selected).on_click(cx.listener(move |this, _, _, cx| {
-                        let p = this.state.lock().unwrap().voices.get(i).map(|v| v.path.clone());
-                        if let Some(p) = p { this.offline.reference = Some(p); }
-                        cx.notify();
-                    })),
-                );
-            }
-            el = el.child(row);
-        }
-
-        let mut pitch_group = group_container();
-        for (i, (k, name)) in SEMITONES.iter().enumerate() {
-            let selected = semitones == *k;
-            let k = *k;
-            pitch_group = pitch_group.child(
-                group_seg(SharedString::from(format!("pitch_{i}")), *name, selected).on_click(cx.listener(move |this, _, _, cx| {
-                    let mut s = this.state.lock().unwrap();
-                    s.settings.semitones = k;
-                    if let Some(ref tx) = s.rt_control_tx { let _ = tx.send(RtControl::SetSemitones(k)); }
-                    cx.notify();
-                })),
-            );
-        }
-        el = el.child(container().child(div().flex().flex_wrap().items_center().gap_3().child(subtext("Pitch (固定の半音)")).child(pitch_group)));
-
-        let can = self.offline.source.is_some() && self.offline.reference.is_some() && has_operator && !self.offline.converting;
-        el = el.child(
-            div().flex().items_center().gap_4()
-                .child(btn("convert", if self.offline.converting { "Converting…" } else { "Convert" }, if can { Emph::Filled } else { Emph::Outlined }).on_click(cx.listener(move |this, _, _, cx| {
-                    if this.offline.source.is_none() || this.offline.reference.is_none() || this.offline.converting { return; }
-                    let (src, refp) = (this.offline.source.clone().unwrap(), this.offline.reference.clone().unwrap());
-                    { let mut s = this.state.lock().unwrap(); s.offline_result = None; s.error = None; s.status = "Converting...".to_string(); }
-                    this.offline.converted = None;
-                    this.offline.player = None;
-                    this.offline.converting = true;
-                    let st = this.state.clone();
-                    std::thread::spawn(move || crate::offline_tab::run_offline_conversion(st, src, refp));
-                    cx.notify();
-                })))
-                .when(self.offline.converting, |r| r.child(loading("変換中…"))),
-        );
-
-        if let Some(samples) = &self.offline.converted {
-            let out_playing = self.offline.player.as_ref().is_some_and(|p| p.is_playing());
-            let seconds = samples.len() as f32 / SR as f32;
-            el = el.child(
-                container().child(heading("Output"))
-                    .child(stat(format!("{seconds:.1}"), "s・48 kHz", md::tertiary()))
-                    .child(div().flex().gap_3()
-                        .child(btn("out_play", if out_playing { "Stop" } else { "Play Output" }, Emph::Tonal).on_click(cx.listener(|this, _, _, cx| {
-                            if this.offline.player.is_some() {
-                                toggle_stop(&mut this.offline.player);
-                            } else if let Some(samples) = this.offline.converted.clone() {
-                                let wav44 = audio_playback::resample_linear(&samples, SR);
-                                this.offline.player = AudioPlayer::play(wav44).ok();
-                            }
-                            cx.notify();
-                        })))
-                        .child(btn("out_save", "Save As…", Emph::Outlined).on_click(cx.listener(|this, _, _, cx| {
-                            if let Some(samples) = this.offline.converted.clone() {
-                                if let Some(path) = rfd::FileDialog::new().save_file() {
-                                    let _ = audio_playback::save_wav_mono(&path, &samples, SR);
-                                    this.state.lock().unwrap().status = format!("保存した: {}", path.display());
-                                }
-                            }
-                            cx.notify();
-                        })))),
-            );
-        }
-        if !has_operator {
-            el = el.child(div().text_size(px(14.)).text_color(md::error()).child("操作者の登録がありません(Realtime タブで追加)"));
-        }
-        el.into_any_element()
-    }
-
-    fn render_realtime(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_realtime(&mut self, status: &str, cx: &mut Context<Self>) -> AnyElement {
         let m = self.metrics.clone();
         let (has_engine, is_loading, cfg, voices, selected_voice, rec) = {
             let s = self.state.lock().unwrap();
@@ -637,204 +363,129 @@ impl LightVcUi {
              s.operator_rec.as_ref().map(|r| r.seconds.saturating_sub(r.started.elapsed().as_secs() as u32)))
         };
         let force_bypass = !has_engine;
-        let ref_name = selected_voice.and_then(|i| voices.get(i).cloned());
+        let voice_name = selected_voice.and_then(|i| voices.get(i).cloned());
+        let converting = self.rt_running && !self.rt_bypass && !force_bypass;
 
-        let mut el = div().flex().flex_col().gap_4().w_full();
-
-        // ===== hero: 大胆な原色ブロック(M3E の Google Meet 流)=====
-        let (status_label, status_kind, hero_bg, hero_fg) = if self.rt_running {
-            if self.rt_bypass || force_bypass {
-                ("BYPASS", BadgeKind::Mid, md::secondary_container(), md::on_secondary_container())
-            } else {
-                ("CONVERTING", BadgeKind::Good, md::tertiary_container(), md::on_tertiary_container())
-            }
+        // ---- hero: 状態で色が替わる主役の容器 ----
+        let (state_label, state_icon, bg, fg) = if !self.rt_running {
+            ("停止中", "stop_fill1", c::surface_container_high(), c::on_surface())
+        } else if converting {
+            ("変換中", "graphic_eq", c::primary_container(), c::on_primary_container())
         } else {
-            ("STOPPED", BadgeKind::Off, md::surface_container_high(), md::on_surface())
+            ("バイパス中", "alt_route", c::tertiary_container(), c::on_tertiary_container())
         };
+        let dim = m3::alpha(fg, 0.72);
 
-        let mut hero = div().bg(hero_bg).rounded(px(md::R_LG)).p_6().flex().flex_col().gap_4();
-        hero = hero.child(
-            div().flex().flex_wrap().items_center().gap_3()
-                .child(badge(status_label, status_kind))
-                .child(div().text_size(px(18.)).font_weight(FontWeight::SEMIBOLD).text_color(hero_fg)
-                    .child(format!("> {}", ref_name.clone().unwrap_or_else(|| "no voice".into()))))
-                .when(self.rt_running && !self.rt_bypass && has_engine, |r| {
-                    r.child(div().flex_1())
-                     .child(div().text_size(px(14.)).font_weight(FontWeight::BOLD)
-                         .text_color(if m.gate_open { md::tertiary() } else { md::on_surface_variant() })
-                         .child(if m.gate_open { "GATE" } else { "gate" }))
-                }),
-        );
-
-        let measuring = m.blocks > 0 || m.compute_p99 > 0.0;
-        hero = hero.child(
-            div().flex().flex_wrap().items_baseline().gap_8()
-                .child(stat(format!("{:.0}", m.latency_ms), "ms E2E", hero_fg))
-                .child(stat(if measuring { format!("{:.2}", m.compute_p99) } else { "—".into() }, "p99 ms", hero_fg))
-                .child(stat(format!("{:.2}", m.rtf), "RTF", hero_fg)),
-        );
-        hero = hero.child(
-            div().flex().flex_wrap().items_center().gap_3()
-                .child(div().text_size(px(13.)).text_color(hero_fg).child(
-                    if measuring { format!("p50 {:.2}  p95 {:.2}  host {}", m.compute_p50, m.compute_p95, if m.host.is_empty() { "-" } else { &m.host }) }
-                    else { format!("host {}", if m.host.is_empty() { "-" } else { &m.host }) }))
-                .when(m.overrun > 0 || m.underrun > 0, |r| {
-                    r.child(div().text_size(px(13.)).text_color(md::error()).child(format!("in:{} out:{}", m.overrun, m.underrun)))
-                }),
-        );
-
-        let mut pitch_group = group_container();
-        for (i, (k, name)) in SEMITONES.iter().enumerate() {
-            let selected = cfg.semitones == *k;
-            let k = *k;
-            pitch_group = pitch_group.child(
-                group_seg(SharedString::from(format!("rt_pitch_{i}")), *name, selected).on_click(cx.listener(move |this, _, _, cx| {
-                    let mut s = this.state.lock().unwrap();
-                    s.settings.semitones = k;
-                    if let Some(ref tx) = s.rt_control_tx { let _ = tx.send(RtControl::SetSemitones(k)); }
-                    cx.notify();
-                })),
+        let mut top = div().flex().items_center().gap_3()
+            .child(
+                div().h(px(32.)).pl_3().pr_4().flex().flex_none().items_center().gap_2().rounded_full().bg(fg)
+                    .child(icon(state_icon, 18., bg))
+                    .child(div().label_l().font_weight(FontWeight::BOLD).text_color(bg).child(state_label)),
+            )
+            .child(div().flex_1());
+        if m.overrun > 0 || m.underrun > 0 {
+            top = top.child(
+                div().h(px(32.)).px_3().flex().flex_none().items_center().gap_2().rounded(px(shape::SM)).bg(c::error_container())
+                    .child(icon("error", 18., c::on_error_container()))
+                    .child(div().label_l().text_color(c::on_error_container()).child(format!("音切れ 入力 {}・出力 {}", m.overrun, m.underrun))),
+            );
+        }
+        if converting {
+            top = top.child(
+                div().h(px(32.)).px_3().flex().flex_none().items_center().gap_2().rounded(px(shape::SM)).border_1().border_color(m3::alpha(fg, 0.3))
+                    .child(div().size(px(8.)).rounded_full().bg(if m.gate_open { fg } else { m3::alpha(fg, 0.3) }))
+                    .child(div().label_l().text_color(fg).child(if m.gate_open { "ゲート 開" } else { "ゲート 閉" })),
             );
         }
 
-        let mut transport = div().flex().flex_wrap().items_center().gap_2();
-        if !force_bypass {
-            transport = transport
-                .child(btn("bypass", if self.rt_bypass { "BYPASS" } else { "Bypass" }, if self.rt_bypass { Emph::Filled } else { Emph::Outlined }).on_click(cx.listener(|this, _, _, cx| {
+        let route = div().flex().items_center().gap_2()
+            .child(icon("mic", 22., dim))
+            .child(div().title_l().text_color(dim).child("あなた"))
+            .child(icon("arrow_forward", 22., dim))
+            .child(div().title_l().font_weight(FontWeight::BOLD).text_color(fg).truncate().child(voice_name.clone().unwrap_or_else(|| "目標の声が未選択".into())));
+
+        let measuring = m.blocks > 0 || m.compute_p99 > 0.0;
+        let verdict = if !self.rt_running || m.latency_ms <= 0.0 { None }
+            else if m.latency_ms < 30.0 { Some(("目標 30 ms 以内", false)) }
+            else if m.latency_ms < 50.0 { Some(("目標 30 ms を超過", false)) }
+            else { Some(("上限 50 ms を超過", true)) };
+        let latency = div().flex().flex_col().flex_none()
+            .child(div().label_l().text_color(dim).child("E2E 遅延"))
+            .child(
+                div().flex().items_baseline().gap_2()
+                    .child(div().display_l().text_color(fg).child(if m.latency_ms > 0.0 { format!("{:.0}", m.latency_ms) } else { "—".into() }))
+                    .child(div().title_l().text_color(dim).child("ms")),
+            )
+            .when_some(verdict, |s, (text, bad)| s.child(div().label_m().text_color(if bad { c::error() } else { dim }).child(text)));
+        let stats = div().flex().flex_wrap().items_end().gap_x_8().gap_y_3()
+            .child(latency)
+            .child(div().flex().flex_wrap().gap_x_8().gap_y_3().pb(px(18.))
+                .child(stat("計算 p99", if measuring { format!("{:.2}", m.compute_p99) } else { "—".into() }, "ms", fg))
+                .child(stat("RTF", if measuring { format!("{:.2}", m.rtf) } else { "—".into() }, "", fg))
+                .child(stat("ホスト", if m.host.is_empty() { "—".into() } else { m.host.clone() }, "", fg)));
+
+        let buf_ms = self.rt_buffer as f32 * 1000.0 / 48_000.0;
+        let resamp_ms = 3.0;
+        let algo_ms = lightvc_core::snv_stream::SnvStream::LATENCY_SAMPLES as f32 / 48.0;
+        let total = (buf_ms * 2.0 + resamp_ms * 2.0 + algo_ms).max(0.001);
+        let parts: [(&str, f32, f32); 3] = [("バッファ(入出力)", buf_ms * 2.0, 0.45), ("リサンプル", resamp_ms * 2.0, 0.25), ("モデル", algo_ms, 1.0)];
+        let mut bar = div().w_full().h(px(8.)).flex().gap(px(2.));
+        let mut legend = div().flex().flex_wrap().gap_x_4().gap_y_1();
+        for (name, ms, a) in parts {
+            bar = bar.child(div().h_full().rounded_full().bg(m3::alpha(fg, a)).w(relative(ms / total * 0.99)));
+            legend = legend.child(
+                div().flex().items_center().gap(px(6.))
+                    .child(div().size(px(8.)).rounded_full().bg(m3::alpha(fg, a)))
+                    .child(div().body_s().text_color(dim).child(format!("{name} {ms:.1} ms"))),
+            );
+        }
+        let budget = div().flex().flex_col().gap_2()
+            .child(div().label_m().text_color(dim).child(format!("遅延の内訳(設計値 {total:.0} ms)")))
+            .child(bar)
+            .child(legend);
+
+        let track = m3::alpha(fg, 0.16);
+        let meters = div().flex().gap_6()
+            .child(div().flex_1().flex().items_center().gap_3().child(div().label_m().flex_none().text_color(dim).child("入力")).child(m3::meter(m.input_rms * 6.0, fg, track)))
+            .child(div().flex_1().flex().items_center().gap_3().child(div().label_m().flex_none().text_color(dim).child("出力")).child(m3::meter(m.output_rms * 6.0, fg, track)));
+
+        let hero = div().bg(bg).rounded(px(shape::XL)).p_6().flex().flex_col().gap_5()
+            .child(top).child(route).child(stats).child(budget).child(meters);
+
+        // ---- 操作: toolbar + 主役のボタン ----
+        let mut toolbar = div().h(px(64.)).px_3().flex().items_center().gap_2().rounded_full().bg(c::surface_container_high());
+        if force_bypass {
+            toolbar = toolbar.flex_1().min_w_0().child(div().px_2().flex().items_center().gap_2()
+                .child(icon("info", 20., c::on_surface_variant()))
+                .child(div().body_m().text_color(c::on_surface_variant()).child("モデル未読み込み — 開始すると素通し(バイパス)で動きます")));
+        } else {
+            toolbar = toolbar
+                .child(m3::toggle_button("bypass", "alt_route", "バイパス", self.rt_bypass).on_click(cx.listener(|this, _, _, cx| {
                     this.rt_bypass = !this.rt_bypass;
                     state::send_control(&this.state, RtControl::Bypass(this.rt_bypass));
                     cx.notify();
                 })))
-                .child(btn("mute", if self.rt_muted { "MUTED" } else { "Mute" }, if self.rt_muted { Emph::Filled } else { Emph::Outlined }).on_click(cx.listener(|this, _, _, cx| {
+                .child(m3::toggle_button("mute", if self.rt_muted { "volume_off" } else { "volume_up" }, "ミュート", self.rt_muted).on_click(cx.listener(|this, _, _, cx| {
                     this.rt_muted = !this.rt_muted;
                     state::send_control(&this.state, RtControl::Mute(this.rt_muted));
                     cx.notify();
                 })));
         }
-        transport = transport.child(subtext("Pitch")).child(pitch_group).child(div().flex_1());
-        if self.rt_running {
-            transport = transport.child(btn("stop_btn", "■ Stop", Emph::Filled).on_click(cx.listener(|this, _, _, cx| { this.stop(cx); })));
+        let main_btn = if self.rt_running {
+            m3::button_m("stop_btn", "stop_fill1", "停止", c::tertiary(), c::on_tertiary(), true, true).on_click(cx.listener(|this, _, _, cx| this.stop(cx)))
         } else {
-            transport = transport.child(btn("start_btn", "▶ Start", Emph::Filled).on_click(cx.listener(|this, _, _, cx| { this.start(cx); })));
-        }
-        hero = hero.child(transport);
-        el = el.child(hero);
+            m3::button_m("start_btn", "play_arrow_fill1", "開始", c::primary(), c::on_primary(), false, true).on_click(cx.listener(|this, _, _, cx| this.start(cx)))
+        };
+        let controls = div().flex().items_center().gap_3().child(toolbar).when(!force_bypass, |s| s.child(div().flex_1())).child(main_btn);
 
-        // ===== 登録 =====
-        let mut model_card = container().child(heading("登録"));
-        let mut ex_row = div().flex().flex_wrap().items_center().gap_2();
-        for (id, label, cur) in [("front", "front", cfg.front.clone()), ("model", "E / C", cfg.model.clone()), ("voc", "voc", cfg.voc.clone())] {
-            let short = std::path::Path::new(&cur).file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or(cur.clone());
-            ex_row = ex_row.child(
-                div().flex().items_center().gap_1()
-                    .child(subtext(format!("{label}: {short}")))
-                    .child(btn(SharedString::from(format!("pick_{id}")), "…", Emph::Text).on_click({
-                        let id = id.to_string();
-                        cx.listener(move |this, _, _, cx| {
-                            match id.as_str() {
-                                "front" => this.picks.front.open(),
-                                "model" => this.picks.model.open(),
-                                _ => this.picks.voc.open(),
-                            }
-                            cx.notify();
-                        })
-                    })),
-            );
-        }
-        model_card = model_card.child(ex_row);
-
-        let mut th_group = group_container();
-        for n in [1usize, 2, 4] {
-            let selected = cfg.threads == n;
-            th_group = th_group.child(
-                group_seg(SharedString::from(format!("th_{n}")), n.to_string(), selected).on_click(cx.listener(move |this, _, _, cx| {
-                    this.state.lock().unwrap().settings.threads = n;
-                    cx.notify();
-                })),
-            );
-        }
-        model_card = model_card.child(div().flex().flex_wrap().items_center().gap_3().child(subtext("threads")).child(th_group));
-        model_card = model_card.child(subtext(format!("Operator: {} 本", cfg.operator.len())));
-
-        let mut op_row = div().flex().flex_wrap().items_center().gap_2();
-        op_row = op_row.child(btn("op_add", "Add operator WAV", Emph::Tonal).on_click(cx.listener(|this, _, _, cx| {
-            this.picks.operator.open();
-            cx.notify();
-        })));
-        if let Some(rem) = rec {
-            op_row = op_row
-                .child(div().flex().items_center().gap_2()
-                    .child(rec_dot())
-                    .child(div().text_size(px(14.)).font_weight(FontWeight::BOLD).text_color(md::error()).child(format!("REC 残り {rem} s"))))
-                .child(btn("op_cancel", "Cancel", Emph::Text).on_click(cx.listener(|this, _, _, cx| {
-                    if let Some(r) = this.state.lock().unwrap().operator_rec.as_ref() {
-                        r.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-                    }
-                    cx.notify();
-                })));
-        } else {
-            op_row = op_row.child(btn("op_rec", "Record operator (30 s)", Emph::Tonal).on_click(cx.listener(|this, _, _, cx| {
-                if !this.rt_running { state::record_operator(&this.state, 30); }
-                cx.notify();
-            })));
-        }
-        if !cfg.operator.is_empty() {
-            op_row = op_row.child(btn("op_clear", "Clear", Emph::Text).on_click(cx.listener(|this, _, _, cx| {
-                this.state.lock().unwrap().settings.operator.clear();
-                cx.notify();
-            })));
-        }
-        model_card = model_card.child(op_row);
-
-        let can_load = !cfg.operator.is_empty() && ref_name.is_some() && !is_loading;
-        model_card = model_card.child(
-            div().flex().flex_wrap().items_center().gap_3()
-                .child(btn("load", if has_engine { "Reload" } else { "Load" }, if can_load { Emph::Tonal } else { Emph::Outlined }).on_click(cx.listener(|this, _, _, cx| {
-                    let ok = { let s = this.state.lock().unwrap(); !s.settings.operator.is_empty() && s.selected_voice.is_some() };
-                    if ok { state::load_engine(&this.state); }
-                    cx.notify();
-                })))
-                .when(is_loading, |r| r.child(loading("モデルを読み込み中…")))
-                .when(ref_name.is_none(), |r| r.child(div().text_size(px(13.)).text_color(md::error()).child("Target で目標を選ぶ"))),
-        );
-
-        let mut target_row = div().flex().flex_wrap().items_center().gap_2().child(subtext("Target"));
-        if voices.is_empty() {
-            target_row = target_row.child(
-                btn("tgt_open", "Open Voices →", Emph::Tonal).on_click(cx.listener(|this, _, _, cx| { this.tab = Tab::Catalog; cx.notify(); })),
-            );
-        } else {
-            for (i, name) in voices.iter().enumerate() {
-                let selected = selected_voice == Some(i);
-                target_row = target_row.child(
-                    chip(SharedString::from(format!("tgt_{i}")), name.clone(), selected).on_click(cx.listener(move |this, _, _, cx| {
-                        let reload = { let mut s = this.state.lock().unwrap(); if s.voices.get(i).is_some() { s.selected_voice = Some(i); } s.model_loaded && !s.settings.operator.is_empty() };
-                        if reload { state::load_engine(&this.state); }
-                        cx.notify();
-                    })),
-                );
-            }
-            target_row = target_row.child(
-                div().id("tgt_manage").px_3().text_size(px(13.)).text_color(md::secondary())
-                    .hover(|s| s.text_color(md::primary()))
-                    .on_click(cx.listener(|this, _, _, cx| { this.tab = Tab::Catalog; cx.notify(); }))
-                    .child("管理…"),
-            );
-        }
-        model_card = model_card.child(target_row);
-        el = el.child(model_card);
-
-        // ===== 診断(tension・四角)=====
-        let mut diag = div().bg(md::surface_container_lowest()).border_1().border_color(md::outline_variant()).rounded(px(md::R_XS)).p_5().flex().flex_col().gap_3();
-        diag = diag.child(div().flex().flex_wrap().items_center().gap_4().child(subtext("Input")).child(meter(self.metrics.input_rms * 6.0, md::primary())));
-        let mut buf_group = group_container();
-        for n in BUFFERS {
-            let selected = self.rt_buffer == n;
+        // ---- 調整 ----
+        let mut buf_group = m3::segments();
+        for (i, n) in BUFFERS.into_iter().enumerate() {
             buf_group = buf_group.child(
-                group_seg(SharedString::from(format!("buf_{n}")), n.to_string(), selected).on_click(cx.listener(move |this, _, _, cx| {
+                m3::segment(SharedString::from(format!("buf_{n}")), n.to_string(), self.rt_buffer == n, i == 0, i == BUFFERS.len() - 1).on_click(cx.listener(move |this, _, _, cx| {
                     state::send_control(&this.state, RtControl::SetBufferSize(n));
                     this.rt_buffer = n;
-                    if this.rt_running {
+                    if this.rt_running && !this.demo {
                         state::send_control(&this.state, RtControl::Stop);
                         state::send_control(&this.state, state::start_msg(&this.state));
                     }
@@ -842,103 +493,410 @@ impl LightVcUi {
                 })),
             );
         }
-        diag = diag.child(div().flex().flex_wrap().items_center().gap_3().child(subtext("Buffer")).child(buf_group));
-        let buf_ms = self.rt_buffer as f32 * 1000.0 / 48_000.0;
-        let resamp_ms = 3.0;
-        let algo_ms = lightvc_core::snv_stream::SnvStream::LATENCY_SAMPLES as f32 / 48.0;
-        let total = (buf_ms * 2.0 + resamp_ms * 2.0 + algo_ms).max(0.001);
-        let segs: [(f32, gpui::Rgba); 5] = [(buf_ms, md::secondary()), (resamp_ms, md::tertiary()), (algo_ms, md::primary()), (resamp_ms, md::tertiary()), (buf_ms, md::secondary())];
-        let mut seg_row = div().flex().w_full().h(px(10.)).rounded_full().overflow_hidden().bg(md::surface_container_highest());
-        for (ms, c) in segs {
-            seg_row = seg_row.child(div().h_full().bg(c).map(move |s| s.w(px(600.0 * ms / total))));
-        }
-        diag = diag.child(seg_row);
-        diag = diag.child(div().flex().gap_3().child(subtext("往復")).child(subtext("buf")).child(subtext("↓")).child(subtext("resamp")).child(subtext("↓")).child(subtext("algo")).child(subtext("↓")).child(subtext("resamp")).child(subtext("buf")));
-        el = el.child(diag);
+        let tuning = m3::card_outlined()
+            .child(div().flex().flex_wrap().items_center().gap_3()
+                .child(div().w(px(88.)).flex_none().child(field_label("ピッチ")))
+                .child(self.pitch_group("rt_pitch", cfg.semitones, cx))
+                .child(supporting("半音・固定")))
+            .child(div().flex().flex_wrap().items_center().gap_3()
+                .child(div().w(px(88.)).flex_none().child(field_label("バッファ")))
+                .child(buf_group)
+                .child(supporting(format!("{buf_ms:.1} ms / 片道"))))
+            .when(measuring, |s| s.child(supporting(format!("計算時間 p50 {:.2} ms・p95 {:.2} ms・p99 {:.2} ms(直近 5 秒)", m.compute_p50, m.compute_p95, m.compute_p99))));
 
+        let main = div().flex_1().min_w_0().flex().flex_col().gap_4().child(hero).child(controls).child(tuning);
+
+        // ---- 補助の列: 目標の声・操作者・モデル ----
+        let mut target = m3::card().child(
+            div().flex().items_center()
+                .child(section_title("目標の声"))
+                .child(div().flex_1())
+                .child(m3::button("tgt_manage", None, "管理", Btn::Text, true).on_click(cx.listener(|this, _, _, cx| this.set_tab(Tab::Voices, cx)))),
+        );
+        if voices.is_empty() {
+            target = target
+                .child(supporting("まだ登録がありません。ボイスの画面で参照の WAV を追加します。"))
+                .child(div().flex().child(m3::button("tgt_open", Some("add"), "ボイスを追加", Btn::Tonal, true).on_click(cx.listener(|this, _, _, cx| this.set_tab(Tab::Voices, cx)))));
+        } else {
+            let mut chips = div().flex().flex_wrap().gap_2();
+            for (i, name) in voices.iter().enumerate() {
+                chips = chips.child(
+                    m3::chip(SharedString::from(format!("tgt_{i}")), name.clone(), selected_voice == Some(i))
+                        .on_click(cx.listener(move |this, _, _, cx| this.select_voice(i, cx))),
+                );
+            }
+            target = target.child(chips);
+        }
+
+        let mut operator = m3::card().child(
+            div().flex().items_center().gap_3()
+                .child(section_title("操作者"))
+                .child(div().flex_1())
+                .child(supporting(if cfg.operator.is_empty() { "未登録".to_string() } else { format!("{} 本を登録済み", cfg.operator.len()) })),
+        );
+        operator = operator.child(supporting("自分の普通の発話を 30 秒ほど登録します。"));
+        let mut op_row = div().flex().flex_wrap().items_center().gap_2();
+        if let Some(rem) = rec {
+            op_row = op_row
+                .child(div().h(px(40.)).px_4().flex().items_center().gap_2().rounded_full().bg(c::error_container())
+                    .child(m3::rec_dot())
+                    .child(div().label_l().text_color(c::on_error_container()).child(format!("録音中 残り {rem} 秒"))))
+                .child(m3::button("op_cancel", None, "中止", Btn::Text, true).on_click(cx.listener(|this, _, _, cx| {
+                    if let Some(r) = this.state.lock().unwrap().operator_rec.as_ref() {
+                        r.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    cx.notify();
+                })));
+        } else {
+            let can_rec = !self.rt_running;
+            op_row = op_row
+                .child(m3::button("op_rec", Some("mic"), "録音", Btn::Tonal, can_rec).on_click(cx.listener(|this, _, _, cx| {
+                    if !this.rt_running && !this.demo { state::record_operator(&this.state, 30); }
+                    cx.notify();
+                })))
+                .child(m3::button("op_add", Some("folder_open"), "WAV", Btn::Outlined, true).on_click(cx.listener(|this, _, _, cx| {
+                    this.picks.operator.open();
+                    cx.notify();
+                })));
+            if !cfg.operator.is_empty() {
+                op_row = op_row.child(m3::button("op_clear", None, "消去", Btn::Text, true).on_click(cx.listener(|this, _, _, cx| {
+                    this.state.lock().unwrap().settings.operator.clear();
+                    cx.notify();
+                })));
+            }
+        }
+        operator = operator.child(op_row);
+
+        let mut model = m3::card().child(section_title("モデル"));
+        let mut paths = div().flex().flex_col();
+        for (id, label, cur) in [("front", "前段", cfg.front.clone()), ("model", "変換", cfg.model.clone()), ("voc", "出力部", cfg.voc.clone())] {
+            paths = paths.child(
+                div().h(px(40.)).flex().items_center().gap_2()
+                    .child(div().w(px(48.)).flex_none().label_m().text_color(c::on_surface_variant()).child(label))
+                    .child(div().flex_1().min_w_0().body_m().text_color(c::on_surface()).truncate().child(file_name(std::path::Path::new(&cur))))
+                    .child(m3::icon_button(SharedString::from(format!("pick_{id}")), "folder_open", false, c::on_surface_variant()).on_click(cx.listener(move |this, _, _, cx| {
+                        match id {
+                            "front" => this.picks.front.open(),
+                            "model" => this.picks.model.open(),
+                            _ => this.picks.voc.open(),
+                        }
+                        cx.notify();
+                    }))),
+            );
+        }
+        model = model.child(paths);
+        let mut th_group = m3::segments();
+        for (i, n) in THREADS.into_iter().enumerate() {
+            th_group = th_group.child(
+                m3::segment(SharedString::from(format!("th_{n}")), n.to_string(), cfg.threads == n, i == 0, i == THREADS.len() - 1).on_click(cx.listener(move |this, _, _, cx| {
+                    this.state.lock().unwrap().settings.threads = n;
+                    cx.notify();
+                })),
+            );
+        }
+        model = model.child(div().flex().items_center().gap_3().child(field_label("スレッド")).child(div().flex_1()).child(th_group));
+        let can_load = !cfg.operator.is_empty() && voice_name.is_some() && !is_loading;
+        let hint = if is_loading { status.to_string() }
+            else if cfg.operator.is_empty() { "操作者の登録が必要です".into() }
+            else if voice_name.is_none() { "目標の声を選んでください".into() }
+            else if has_engine { "読み込み済み".into() }
+            else { "準備ができました".into() };
+        model = model.child(
+            div().flex().items_center().gap_3()
+                .child(m3::button("load", Some("refresh"), if has_engine { "再読み込み" } else { "読み込む" }, if has_engine { Btn::Tonal } else { Btn::Filled }, can_load).on_click(cx.listener(|this, _, _, cx| {
+                    let ok = { let s = this.state.lock().unwrap(); !s.settings.operator.is_empty() && s.selected_voice.is_some() && !s.loading };
+                    if ok && !this.demo { state::load_engine(&this.state); }
+                    cx.notify();
+                })))
+                .when(is_loading, |s| s.child(m3::loading_indicator(32.)))
+                .child(div().flex_1().min_w_0().child(supporting(hint))),
+        );
+
+        let side = div().w(px(320.)).flex_none().flex().flex_col().gap_3().child(target).child(operator).child(model);
+
+        div().flex().flex_col().gap_4()
+            .child(page_header("リアルタイム変換", "マイクの声を目標の声へ、その場で変換します"))
+            .child(div().flex().items_start().gap_4().child(main).child(side))
+            .into_any_element()
+    }
+
+    // ===== ファイル変換 =====
+
+    fn render_offline(&mut self, status: &str, cx: &mut Context<Self>) -> AnyElement {
+        let (semitones, has_operator, voices) = {
+            let s = self.state.lock().unwrap();
+            (s.settings.semitones, !s.settings.operator.is_empty(), s.voices.iter().map(|v| v.name.clone()).collect::<Vec<_>>())
+        };
+
+        let slot = |title: &str, sub: &str, glyph: &str, path: &Option<PathBuf>| {
+            m3::card().flex_1().min_w_0().gap_4()
+                .child(div().flex().items_center().gap_3()
+                    .child(m3::avatar(glyph, c::primary_container(), c::on_primary_container()))
+                    .child(div().flex().flex_col().child(section_title(title)).child(supporting(sub.to_string()))))
+                .child(match path {
+                    Some(p) => div().body_l().text_color(c::on_surface()).truncate().child(file_name(p)),
+                    None => div().body_l().text_color(c::on_surface_variant()).child("未選択"),
+                })
+        };
+
+        let src_playing = self.offline.source_preview.as_ref().is_some_and(|p| p.is_playing());
+        let source = slot("変換元", "変換したい音声(WAV)", "audio_file", &self.offline.source).child(
+            div().flex().gap_2()
+                .child(m3::button("src_browse", Some("folder_open"), "選ぶ", Btn::Tonal, true).on_click(cx.listener(|this, _, _, cx| {
+                    this.picks.source.open();
+                    cx.notify();
+                })))
+                .child(m3::button("src_play", Some(if src_playing { "stop_fill1" } else { "play_arrow_fill1" }), if src_playing { "停止" } else { "試聴" }, Btn::Outlined, self.offline.source.is_some()).on_click(cx.listener(|this, _, _, cx| {
+                    if this.offline.source_preview.is_some() {
+                        stop_player(&mut this.offline.source_preview);
+                    } else if let Some(p) = this.offline.source.clone()
+                        && let Err(e) = play_path(&mut this.offline.source_preview, &p)
+                    {
+                        this.state.lock().unwrap().error = Some(format!("再生できません: {e}"));
+                    }
+                    cx.notify();
+                }))),
+        );
+
+        let ref_playing = self.offline.reference_preview.as_ref().is_some_and(|p| p.is_playing());
+        let mut reference = slot("目標の声", "普通の発話を 20 秒以上", "record_voice_over", &self.offline.reference).child(
+            div().flex().gap_2()
+                .child(m3::button("ref_browse", Some("folder_open"), "選ぶ", Btn::Tonal, true).on_click(cx.listener(|this, _, _, cx| {
+                    this.picks.reference.open();
+                    cx.notify();
+                })))
+                .child(m3::button("ref_play", Some(if ref_playing { "stop_fill1" } else { "play_arrow_fill1" }), if ref_playing { "停止" } else { "試聴" }, Btn::Outlined, self.offline.reference.is_some()).on_click(cx.listener(|this, _, _, cx| {
+                    if this.offline.reference_preview.is_some() {
+                        stop_player(&mut this.offline.reference_preview);
+                    } else if let Some(p) = this.offline.reference.clone()
+                        && let Err(e) = play_path(&mut this.offline.reference_preview, &p)
+                    {
+                        this.state.lock().unwrap().error = Some(format!("再生できません: {e}"));
+                    }
+                    cx.notify();
+                }))),
+        );
+        if !voices.is_empty() {
+            let current = self.offline.reference.clone();
+            let paths: Vec<PathBuf> = self.state.lock().unwrap().voices.iter().map(|v| v.path.clone()).collect();
+            let mut chips = div().flex().flex_wrap().gap_2();
+            for (i, name) in voices.iter().enumerate() {
+                let selected = current.as_ref().is_some_and(|p| paths.get(i) == Some(p));
+                chips = chips.child(
+                    m3::chip(SharedString::from(format!("cat_{i}")), name.clone(), selected).on_click(cx.listener(move |this, _, _, cx| {
+                        let p = this.state.lock().unwrap().voices.get(i).map(|v| v.path.clone());
+                        if let Some(p) = p { this.offline.reference = Some(p); }
+                        cx.notify();
+                    })),
+                );
+            }
+            reference = reference.child(div().flex().flex_col().gap_2().child(supporting("登録済みのボイスから選ぶ")).child(chips));
+        }
+
+        let can = self.offline.source.is_some() && self.offline.reference.is_some() && has_operator && !self.offline.converting;
+        let hint = if self.offline.converting { "変換しています…".to_string() }
+            else if !has_operator { "操作者の登録がありません(リアルタイムの画面で登録します)".into() }
+            else if self.offline.source.is_none() { "変換元を選んでください".into() }
+            else if self.offline.reference.is_none() { "目標の声を選んでください".into() }
+            else { status.to_string() };
+        let action = div().flex().flex_wrap().items_center().gap_4()
+            .child(m3::button_m("convert", "auto_awesome_fill1", "変換する", c::primary(), c::on_primary(), false, can).on_click(cx.listener(|this, _, _, cx| {
+                let has_operator = !this.state.lock().unwrap().settings.operator.is_empty();
+                if this.offline.source.is_none() || this.offline.reference.is_none() || this.offline.converting || !has_operator || this.demo { return; }
+                let (src, refp) = (this.offline.source.clone().unwrap(), this.offline.reference.clone().unwrap());
+                { let mut s = this.state.lock().unwrap(); s.offline_result = None; s.error = None; s.status = "Converting...".to_string(); }
+                this.offline.converted = None;
+                this.offline.player = None;
+                this.offline.converting = true;
+                let st = this.state.clone();
+                std::thread::spawn(move || crate::offline_tab::run_offline_conversion(st, src, refp));
+                cx.notify();
+            })))
+            .when(self.offline.converting, |s| s.child(m3::loading_indicator(40.)))
+            .child(div().flex().items_center().gap_3().child(field_label("ピッチ")).child(self.pitch_group("off_pitch", semitones, cx)))
+            .child(div().flex_1().min_w_0().child(supporting(hint)));
+
+        let mut el = div().flex().flex_col().gap_4()
+            .child(page_header("ファイル変換", "録音済みの音声を目標の声に変換します"))
+            .child(div().flex().gap_4().child(source).child(reference))
+            .child(action);
+
+        if let Some(samples) = &self.offline.converted {
+            let out_playing = self.offline.player.as_ref().is_some_and(|p| p.is_playing());
+            let seconds = samples.len() as f32 / SR as f32;
+            let fg = c::on_tertiary_container();
+            el = el.child(
+                div().bg(c::tertiary_container()).rounded(px(shape::XL)).p_6().flex().flex_wrap().items_center().gap_6()
+                    .child(m3::avatar("check", fg, c::tertiary_container()))
+                    .child(stat("変換結果", format!("{seconds:.1}"), "秒・48 kHz", fg))
+                    .child(div().flex_1())
+                    .child(m3::button("out_play", Some(if out_playing { "stop_fill1" } else { "play_arrow_fill1" }), if out_playing { "停止" } else { "再生" }, Btn::Filled, true).on_click(cx.listener(|this, _, _, cx| {
+                        if this.offline.player.is_some() {
+                            stop_player(&mut this.offline.player);
+                        } else if let Some(samples) = this.offline.converted.clone() {
+                            let wav44 = audio_playback::resample_linear(&samples, SR);
+                            this.offline.player = AudioPlayer::play(wav44).ok();
+                        }
+                        cx.notify();
+                    })))
+                    .child(m3::button("out_save", Some("download"), "保存", Btn::Tonal, true).on_click(cx.listener(|this, _, _, cx| {
+                        if let Some(samples) = this.offline.converted.clone()
+                            && let Some(path) = rfd::FileDialog::new().save_file()
+                        {
+                            let mut s = this.state.lock().unwrap();
+                            match audio_playback::save_wav_mono(&path, &samples, SR) {
+                                Ok(()) => s.status = format!("保存しました: {}", path.display()),
+                                Err(e) => s.error = Some(format!("保存できません: {e}")),
+                            }
+                        }
+                        cx.notify();
+                    }))),
+            );
+        }
         el.into_any_element()
     }
 
-    fn render_catalog(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    // ===== ボイス =====
+
+    fn render_voices(&mut self, _status: &str, cx: &mut Context<Self>) -> AnyElement {
         let (voices, selected_voice) = {
             let s = self.state.lock().unwrap();
             (s.voices.iter().map(|v| (v.name.clone(), v.path.clone())).collect::<Vec<_>>(), s.selected_voice)
         };
-        let mut el = div().flex().flex_col().gap_4().w_full();
-        el = el.child(subtext("目標の声の参照を登録する(zero-shot・普通の発話 20 秒以上)"));
-
-        el = el.child(
-            container().child(heading("Add Voice")).child(
-                div().flex().items_center().gap_3()
-                    .child(subtext("WAV を選ぶとファイル名で登録します"))
-                    .child(btn("voice_add", "Browse…", Emph::Tonal).on_click(cx.listener(|this, _, _, cx| { this.picks.add.open(); cx.notify(); }))),
-            ),
-        );
+        let header = page_header("ボイス", "目標の声の参照(普通の発話 20 秒以上の WAV)を登録します")
+            .child(m3::button("voice_add", Some("add"), "ボイスを追加", Btn::Filled, true).on_click(cx.listener(|this, _, _, cx| {
+                this.picks.add.open();
+                cx.notify();
+            })));
+        let mut el = div().flex().flex_col().gap_4().child(header);
 
         if voices.is_empty() {
-            el = el.child(container().child(div().py_8().flex().justify_center().child(subtext("まだ登録がありません"))));
-        } else {
-            let mut list = container().child(heading("Voices"));
-            for (i, (name, path)) in voices.iter().enumerate() {
-                let selected = selected_voice == Some(i);
-                let playing = self.catalog.playing == Some(i) && self.catalog.player.as_ref().is_some_and(|p| p.is_playing());
-                let path2 = path.clone();
-                list = list.child(
-                    div().id(SharedString::from(format!("voice_{i}")))
-                        .flex().items_center().gap_3().px_3().py_2().rounded_full()
-                        .map(move |s| if selected { s.bg(md::primary_container()) } else { s })
-                        .hover(|s| s.bg(md::primary_container()))
-                        .child(
-                            div().id(SharedString::from(format!("voice_sel_{i}")))
-                                .flex().flex_1().items_center().gap_3()
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    let reload = { let mut s = this.state.lock().unwrap(); s.selected_voice = Some(i); s.model_loaded && !s.settings.operator.is_empty() };
-                                    if reload { state::load_engine(&this.state); }
-                                    cx.notify();
-                                }))
-                                .child(div().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(if selected { md::on_primary_container() } else { md::on_surface() })
-                                    .child(name.clone()))
-                                .child(div().flex_1().text_size(px(12.)).text_color(md::on_surface_variant()).child(path.display().to_string())),
-                        )
-                        .child(btn(SharedString::from(format!("voice_play_{i}")), if playing { "Stop" } else { "Play" }, Emph::Tonal).on_click({
-                            let path = path2.clone();
-                            cx.listener(move |this, _, _, cx| {
-                                if this.catalog.playing == Some(i) && this.catalog.player.is_some() {
-                                    toggle_stop(&mut this.catalog.player);
-                                    this.catalog.playing = None;
-                                } else {
-                                    toggle_stop(&mut this.catalog.player);
-                                    match play_path(&mut this.catalog.player, &path) {
-                                        Ok(()) => {
-                                            this.catalog.playing = Some(i);
-                                            let mut s = this.state.lock().unwrap();
-                                            s.error = None;
-                                            s.status = format!("再生中: {}", path.display());
-                                        }
-                                        Err(e) => {
-                                            this.catalog.playing = None;
-                                            this.state.lock().unwrap().error = Some(format!("再生できない: {e}"));
-                                        }
-                                    }
+            return el.child(
+                div().py_16().flex().flex_col().items_center().gap_3().rounded(px(shape::XL)).bg(c::surface_container())
+                    .child(div().size(px(72.)).flex().items_center().justify_center().rounded(px(shape::XL)).bg(c::primary_container())
+                        .child(icon("record_voice_over", 36., c::on_primary_container())))
+                    .child(div().title_l().text_color(c::on_surface()).child("まだボイスがありません"))
+                    .child(div().body_m().text_color(c::on_surface_variant()).child("WAV を選ぶと、ファイル名で登録されます")),
+            ).into_any_element();
+        }
+
+        let mut list = m3::list();
+        let n = voices.len();
+        for (i, (name, path)) in voices.iter().enumerate() {
+            let selected = selected_voice == Some(i);
+            let playing = self.catalog.playing == Some(i) && self.catalog.player.as_ref().is_some_and(|p| p.is_playing());
+            let path = path.clone();
+            let sub = if selected { c::on_secondary_container() } else { c::on_surface_variant() };
+            list = list.child(
+                m3::list_item(SharedString::from(format!("voice_{i}")), selected, i == 0, i == n - 1).min_h(px(72.))
+                    .child(
+                        div().id(SharedString::from(format!("voice_sel_{i}"))).flex_1().min_w_0().flex().items_center().gap_4().cursor_pointer()
+                            .on_click(cx.listener(move |this, _, _, cx| this.select_voice(i, cx)))
+                            .child(if selected { m3::avatar("check", c::secondary(), c::on_secondary()) } else { m3::avatar("person", c::primary_container(), c::on_primary_container()) })
+                            .child(div().flex_1().min_w_0().flex().flex_col()
+                                .child(div().body_l().font_weight(FontWeight::MEDIUM).truncate().child(name.clone()))
+                                .child(div().body_m().text_color(sub).truncate().child(path.display().to_string())))
+                            .when(selected, |s| s.child(div().label_m().flex_none().text_color(sub).child("使用中"))),
+                    )
+                    .child(m3::icon_button(SharedString::from(format!("voice_play_{i}")), if playing { "stop_fill1" } else { "play_arrow_fill1" }, true, sub).on_click(cx.listener(move |this, _, _, cx| {
+                        let was_playing = this.catalog.playing == Some(i) && this.catalog.player.is_some();
+                        stop_player(&mut this.catalog.player);
+                        this.catalog.playing = None;
+                        if !was_playing {
+                            match play_path(&mut this.catalog.player, &path) {
+                                Ok(()) => {
+                                    this.catalog.playing = Some(i);
+                                    this.state.lock().unwrap().error = None;
                                 }
-                                cx.notify();
-                            })
-                        }))
-                        .child(btn(SharedString::from(format!("voice_del_{i}")), "✕", Emph::Text).on_click(cx.listener(move |this, _, _, cx| {
-                            toggle_stop(&mut this.catalog.player);
-                            let mut s = this.state.lock().unwrap();
-                            if s.voices.len() == 1 { s.voices.clear(); s.selected_voice = None; }
-                            else if let Some(sel) = s.selected_voice {
-                                s.voices.remove(i);
-                                s.selected_voice = if sel == i { None } else if sel > i { Some(sel - 1) } else { Some(sel) };
+                                Err(e) => this.state.lock().unwrap().error = Some(format!("再生できません: {e}")),
                             }
+                        }
+                        cx.notify();
+                    })))
+                    .child(m3::icon_button(SharedString::from(format!("voice_del_{i}")), "delete", false, sub).on_click(cx.listener(move |this, _, _, cx| {
+                        stop_player(&mut this.catalog.player);
+                        this.catalog.playing = None;
+                        let mut s = this.state.lock().unwrap();
+                        if i < s.voices.len() {
+                            s.voices.remove(i);
+                            s.selected_voice = match s.selected_voice {
+                                Some(sel) if sel == i => None,
+                                Some(sel) if sel > i => Some(sel - 1),
+                                other => other,
+                            };
+                        }
+                        cx.notify();
+                    }))),
+            );
+        }
+        el = el.child(list);
+        el.into_any_element()
+    }
+
+    // ===== デバイス =====
+
+    fn render_devices(&mut self, _status: &str, cx: &mut Context<Self>) -> AnyElement {
+        let (sel_in, sel_out, sel_host) = {
+            let s = self.state.lock().unwrap();
+            (s.selected_input, s.selected_output, s.selected_host)
+        };
+        let mut hosts: Vec<(String, lightvc_audio::HostPref)> = vec![("既定".to_string(), lightvc_audio::HostPref::Default)];
+        for h in lightvc_audio::host::available() {
+            if let Ok(p) = lightvc_audio::HostPref::parse(h) { hosts.push((h.to_uppercase(), p)); }
+        }
+        let mut host_group = m3::segments();
+        let n = hosts.len();
+        for (i, (label, pref)) in hosts.into_iter().enumerate() {
+            host_group = host_group.child(
+                m3::segment(SharedString::from(format!("host_{i}")), label, pref == sel_host, i == 0, i == n - 1).on_click(cx.listener(move |this, _, _, cx| {
+                    this.state.lock().unwrap().selected_host = pref;
+                    this.refresh_devices();
+                    cx.notify();
+                })),
+            );
+        }
+        let host_card = m3::card_outlined().child(
+            div().flex().flex_wrap().items_center().gap_4()
+                .child(field_label("ホスト"))
+                .child(host_group)
+                .child(supporting("30 ms 級の遅延には ASIO が必要です(WASAPI 共有は固定バッファが効きません)")),
+        );
+
+        let column = |title: &str, glyph: &str, input: bool, devices: &[lightvc_audio::DeviceInfo], sel: Option<usize>, cx: &mut Context<Self>| {
+            let mut list = m3::list();
+            let n = devices.len();
+            for (i, d) in devices.iter().enumerate() {
+                let selected = sel == Some(i);
+                let sub = if selected { c::on_secondary_container() } else { c::on_surface_variant() };
+                list = list.child(
+                    m3::list_item(SharedString::from(format!("{}_{i}", if input { "in" } else { "out" })), selected, i == 0, i == n - 1).cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let mut s = this.state.lock().unwrap();
+                            if input { s.selected_input = Some(i) } else { s.selected_output = Some(i) }
                             cx.notify();
-                        }))),
+                        }))
+                        .child(div().flex_1().min_w_0().flex().flex_col()
+                            .child(div().body_l().truncate().child(d.name.clone()))
+                            .child(div().body_s().text_color(sub).child(format!("{} Hz・{} ch", d.sample_rate, d.channels))))
+                        .when(selected, |s| s.child(icon("check", 24., sub))),
                 );
             }
-            el = el.child(list);
-        }
-        el.into_any_element()
+            div().flex_1().min_w_0().flex().flex_col().gap_3()
+                .child(div().flex().items_center().gap_2().child(icon(glyph, 22., c::on_surface_variant())).child(section_title(title))
+                    .child(div().flex_1()).child(supporting(if sel.is_none() { "システムの既定を使用" } else { "" })))
+                .when(devices.is_empty(), |s| s.child(m3::card().child(supporting("装置が見つかりません"))))
+                .child(list)
+        };
+        let inputs = self.devices.inputs.clone();
+        let outputs = self.devices.outputs.clone();
+        let lists = div().flex().items_start().gap_4()
+            .child(column("入力", "mic", true, &inputs, sel_in, cx))
+            .child(column("出力", "volume_up", false, &outputs, sel_out, cx));
+
+        div().flex().flex_col().gap_4()
+            .child(page_header("デバイス", "音声の入出力とホストを選びます"))
+            .child(host_card)
+            .child(lists)
+            .into_any_element()
     }
 }
