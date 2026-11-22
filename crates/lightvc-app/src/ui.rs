@@ -1,8 +1,7 @@
-//! LightVC の GUI(GPUI・Material 3 Expressive 準拠)。3 タブ + 設定 + 状態バー。
-//! デザインの正本は DESIGN.md(色のロール・タイプスケール・シェイプ・コンポーネントの写像)。
+//! LightVC の GUI(GPUI・Material 3 Expressive)。3 タブ + 設定 + 状態バー。
 //!
-//! 描画は要求駆動: 動作中(リアルタイム・読み込み・録音・変換・試聴・ダイアログ)だけ
-//! request_animation_frame で次フレームを要求し、止まっているときは再描画しない。
+//! デザインの正本は DESIGN.md。実際の Google 製品(Meet・Phone・Gmail)の M3E と同じ手法:
+//! 内容は「容器」(背景と一段トーンが違う面)に載る。白いカードは使わない。
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -23,103 +22,61 @@ const SEMITONES: [(f32, &str); 4] = [(0.0, "+0"), (5.0, "+5"), (7.0, "+7"), (12.
 const BUFFERS: [u32; 5] = [128, 240, 256, 512, 1024];
 const METER_W: f32 = 180.0;
 
-/// M3E の色ロール・シェイプ(DESIGN.md §1〜§3)。seed = きゃわわピンク/ラベンダン。
-/// rgb/hsla は const fn ではないので関数で持つ。hover は M3 の state layer
-/// (部品自身の色を 8〜12% 重ねる)を固定色で emulation した物。
+/// M3 の色ロール。白いカードではなく「トーンの階段」で面を作る(DESIGN.md §1)。
 mod md {
     use gpui::{hsla, rgb, Hsla, Rgba};
 
-    pub fn primary() -> Rgba {
-        rgb(0xE0_5A_8A)
-    }
-    pub fn on_primary() -> Rgba {
-        rgb(0xFF_FF_FF)
-    }
-    pub fn primary_container() -> Rgba {
-        rgb(0xFB_D9_E5)
-    }
-    pub fn on_primary_container() -> Rgba {
-        rgb(0x4A_1B_31)
-    }
-    /// filled button の state layer(primary を 12% 濃く)
-    pub fn primary_pressed() -> Rgba {
-        rgb(0xC9_4A_78)
-    }
-    pub fn secondary() -> Rgba {
-        rgb(0x7C_68_BE)
-    }
-    pub fn secondary_container() -> Rgba {
-        rgb(0xE7_DF_F8)
-    }
-    pub fn on_secondary_container() -> Rgba {
-        rgb(0x2A_20_50)
-    }
-    /// tonal button の state layer
-    pub fn secondary_container_pressed() -> Rgba {
-        rgb(0xD5_C9_F0)
-    }
-    pub fn tertiary() -> Rgba {
-        rgb(0x2E_B8_8C)
-    }
-    pub fn tertiary_container() -> Rgba {
-        rgb(0xCC_F1_E2)
-    }
-    pub fn on_tertiary_container() -> Rgba {
-        rgb(0x06_38_28)
-    }
-    pub fn error() -> Rgba {
-        rgb(0xC0_3B_5E)
-    }
-    pub fn on_error() -> Rgba {
-        rgb(0xFF_FF_FF)
-    }
-    pub fn error_container() -> Rgba {
-        rgb(0xF9_D6_DF)
-    }
-    pub fn on_error_container() -> Rgba {
-        rgb(0x45_09_0F)
-    }
-    pub fn surface() -> Rgba {
-        rgb(0xF3_ED_F7)
-    }
-    pub fn surface_low() -> Rgba {
-        rgb(0xF7_F2_FA)
-    }
-    pub fn surface_high() -> Rgba {
-        rgb(0xE6_DC_EB)
-    }
-    pub fn surface_lowest() -> Rgba {
-        rgb(0xFF_FF_FF)
-    }
-    pub fn on_surface() -> Rgba {
-        rgb(0x2B_22_33)
-    }
-    pub fn on_surface_variant() -> Rgba {
-        rgb(0x5D_52_66)
-    }
-    pub fn outline() -> Hsla {
-        hsla(280.0 / 360.0, 0.14, 0.55, 1.0)
-    }
-    pub fn outline_variant() -> Rgba {
-        rgb(0xE0_D5_E8)
-    }
-    /// outlined/text button の state layer(primary を 8%)
-    pub fn primary_overlay() -> Rgba {
-        rgb(0xF9_E5_EC)
-    }
+    // 基本(アクション)
+    pub fn primary() -> Rgba { rgb(0xE9_5C_8F) }
+    pub fn on_primary() -> Rgba { rgb(0xFF_FF_FF) }
+    pub fn primary_container() -> Rgba { rgb(0xFD_D8_E4) }
+    pub fn on_primary_container() -> Rgba { rgb(0x3E_0D_23) }
+    pub fn primary_pressed() -> Rgba { rgb(0xD4_4E_7C) }
 
-    // シェイプスケール(§3)。tension = 診断だけ四角。
-    pub const SHAPE_XS: f32 = 4.0;
-    pub const SHAPE_MD: f32 = 16.0;
-    pub const SHAPE_LG: f32 = 28.0;
+    // 第二(バイパス・選択)
+    pub fn secondary() -> Rgba { rgb(0x6D_56_7E) }
+    pub fn secondary_container() -> Rgba { rgb(0xF0_DD_FF) }
+    pub fn on_secondary_container() -> Rgba { rgb(0x27_14_3A) }
+    pub fn secondary_container_pressed() -> Rgba { rgb(0xE0_CB_F2) }
+
+    // 第三(正常系・CONVERTING)
+    pub fn tertiary() -> Rgba { rgb(0x1F_6D_48) }
+    pub fn tertiary_container() -> Rgba { rgb(0xAB_F2_C9) }
+    pub fn on_tertiary_container() -> Rgba { rgb(0x00_24_15) }
+
+    // 異常
+    pub fn error() -> Rgba { rgb(0xB3_26_1E) }
+    pub fn on_error() -> Rgba { rgb(0xFF_FF_FF) }
+    pub fn error_container() -> Rgba { rgb(0xF9_DE_dc) }
+    pub fn on_error_container() -> Rgba { rgb(0x41_0E_0B) }
+
+    // 面のトーンの階段(白いカードは使わない・M3E の「容器」はトーンで差を作る)
+    pub fn surface_dim() -> Rgba { rgb(0xDD_D5_E0) }
+    pub fn surface() -> Rgba { rgb(0xFC_F8_F9) }
+    pub fn surface_bright() -> Rgba { rgb(0xFC_F8_F9) }
+    pub fn surface_container_lowest() -> Rgba { rgb(0xFF_FF_FF) }
+    pub fn surface_container_low() -> Rgba { rgb(0xF6_F2_F4) }
+    pub fn surface_container() -> Rgba { rgb(0xF0_EB_EF) }
+    pub fn surface_container_high() -> Rgba { rgb(0xEA_E4_E9) }
+    pub fn surface_container_highest() -> Rgba { rgb(0xE4_DE_E3) }
+
+    // 文字
+    pub fn on_surface() -> Rgba { rgb(0x1C_1B_1E) }
+    pub fn on_surface_variant() -> Rgba { rgb(0x49_45_4E) }
+
+    // 縁・区切り
+    pub fn outline() -> Hsla { hsla(300.0 / 360.0, 0.02, 0.44, 1.0) }
+    pub fn outline_variant() -> Rgba { rgb(0xCA_C4_CC) }
+    pub fn primary_overlay() -> Rgba { rgb(0xF9_E2_E9) }
+
+    // シェイプ
+    pub const R_XS: f32 = 4.0;
+    pub const R_MD: f32 = 16.0;
+    pub const R_LG: f32 = 28.0;
 }
 
 #[derive(Copy, Clone, PartialEq)]
-enum Tab {
-    Offline,
-    Realtime,
-    Catalog,
-}
+enum Tab { Offline, Realtime, Catalog }
 
 #[derive(Default)]
 struct OfflineUi {
@@ -204,21 +161,12 @@ pub fn run(state: Arc<Mutex<AppState>>, demo: bool) -> anyhow::Result<()> {
                     rt_buffer: 256,
                     metrics: if demo {
                         RtMetrics {
-                            input_rms: 0.18,
-                            output_rms: 0.12,
-                            latency_ms: 31.0,
-                            rtf: 0.34,
-                            compute_p50: 4.1,
-                            compute_p95: 4.6,
-                            compute_p99: 4.8,
-                            blocks: 960,
-                            gate_open: true,
-                            host: "wasapi".into(),
+                            input_rms: 0.18, output_rms: 0.12, latency_ms: 31.0, rtf: 0.34,
+                            compute_p50: 4.1, compute_p95: 4.6, compute_p99: 4.8,
+                            blocks: 960, gate_open: true, host: "wasapi".into(),
                             ..Default::default()
                         }
-                    } else {
-                        RtMetrics::default()
-                    },
+                    } else { RtMetrics::default() },
                     picks: Picks::default(),
                     offline: OfflineUi::default(),
                     catalog: CatalogUi::default(),
@@ -226,14 +174,12 @@ pub fn run(state: Arc<Mutex<AppState>>, demo: bool) -> anyhow::Result<()> {
                     settings: SettingsCache::default(),
                 })
             },
-        )
-        .unwrap();
+        ).unwrap();
         cx.activate(true);
     });
     Ok(())
 }
 
-/// デモ値を入れる(スクリーンショット撮影用・モデルも装置も要らない)。
 pub fn enable_demo(state: &Arc<Mutex<AppState>>) {
     let mut s = state.lock().unwrap();
     s.model_loaded = true;
@@ -248,7 +194,6 @@ pub fn enable_demo(state: &Arc<Mutex<AppState>>) {
 }
 
 impl LightVcUi {
-    // ---- 台帳の汲み上げ(描画の頭でまとめて) ----
     fn pump(&mut self) {
         let mut disconnected = false;
         {
@@ -259,37 +204,19 @@ impl LightVcUi {
                     self.metrics = m;
                 }
             }
-            if disconnected {
-                s.status = "Audio device disconnected".to_string();
-            }
+            if disconnected { s.status = "Audio device disconnected".to_string(); }
             if self.offline.converting && (s.status.starts_with("Converted:") || s.error.is_some()) {
                 self.offline.converting = false;
             }
-            if let Some(r) = s.offline_result.take() {
-                self.offline.converted = Some(r);
-            }
+            if let Some(r) = s.offline_result.take() { self.offline.converted = Some(r); }
         }
-        if disconnected {
-            self.rt_running = false;
-        }
-        if let Some(p) = self.picks.source.take() {
-            self.offline.source = Some(p);
-        }
-        if let Some(p) = self.picks.reference.take() {
-            self.offline.reference = Some(p);
-        }
-        if let Some(p) = self.picks.operator.take() {
-            self.state.lock().unwrap().settings.operator.push(p);
-        }
-        if let Some(p) = self.picks.front.take() {
-            self.state.lock().unwrap().settings.front = p.display().to_string();
-        }
-        if let Some(p) = self.picks.model.take() {
-            self.state.lock().unwrap().settings.model = p.display().to_string();
-        }
-        if let Some(p) = self.picks.voc.take() {
-            self.state.lock().unwrap().settings.voc = p.display().to_string();
-        }
+        if disconnected { self.rt_running = false; }
+        if let Some(p) = self.picks.source.take() { self.offline.source = Some(p); }
+        if let Some(p) = self.picks.reference.take() { self.offline.reference = Some(p); }
+        if let Some(p) = self.picks.operator.take() { self.state.lock().unwrap().settings.operator.push(p); }
+        if let Some(p) = self.picks.front.take() { self.state.lock().unwrap().settings.front = p.display().to_string(); }
+        if let Some(p) = self.picks.model.take() { self.state.lock().unwrap().settings.model = p.display().to_string(); }
+        if let Some(p) = self.picks.voc.take() { self.state.lock().unwrap().settings.voc = p.display().to_string(); }
         if let Some(p) = self.picks.add.take() {
             let name = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
             self.state.lock().unwrap().voices.push(state::VoiceEntry { name, path: p });
@@ -297,9 +224,7 @@ impl LightVcUi {
     }
 
     fn needs_tick(&self) -> bool {
-        self.demo
-            || self.rt_running
-            || self.picks.any_pending()
+        self.demo || self.rt_running || self.picks.any_pending()
             || self.state.lock().map(|s| s.loading || s.operator_rec.is_some()).unwrap_or(false)
             || self.offline.converting
             || self.offline.player.as_ref().is_some_and(|p| p.is_playing())
@@ -331,27 +256,20 @@ impl LightVcUi {
     }
 }
 
-// ---- M3E 部品キット(DESIGN.md §4) ------------------------------------------------
+// ===== M3E 部品 =====
 
-/// 強調の階層。filled = 高(画面に 1 個)・tonal = 中・outlined = 低付き枠・text = 最低。
-/// hover は M3 の state layer(部品自身の色を重ねる)に相当する固定色。
-enum Emph {
-    Filled,
-    Tonal,
-    Outlined,
-    Text,
-}
+enum Emph { Filled, Tonal, Outlined, Text }
 
 fn btn(id: impl Into<ElementId>, label: impl Into<SharedString>, e: Emph) -> Stateful<gpui::Div> {
     div()
         .id(id)
         .map(|s| match e {
-            Emph::Filled => s.px_5().py_2().rounded_full().bg(md::primary()).text_color(md::on_primary()),
-            Emph::Tonal => s.px_4().py_2().rounded_full().bg(md::secondary_container()).text_color(md::on_secondary_container()),
-            Emph::Outlined => s.px_4().py_2().rounded_full().bg(gpui::transparent_black()).text_color(md::primary()).border_1().border_color(md::outline_variant()),
-            Emph::Text => s.px_2().py_1().rounded_md().bg(gpui::transparent_black()).text_color(md::primary()),
+            Emph::Filled => s.px_6().py_2().rounded_full().bg(md::primary()).text_color(md::on_primary()),
+            Emph::Tonal => s.px_5().py_2().rounded_full().bg(md::secondary_container()).text_color(md::on_secondary_container()),
+            Emph::Outlined => s.px_5().py_2().rounded_full().text_color(md::primary()).border_1().border_color(md::outline_variant()),
+            Emph::Text => s.px_3().py_1().rounded_full().text_color(md::primary()),
         })
-        .text_size(px(13.))
+        .text_size(px(14.))
         .font_weight(FontWeight::MEDIUM)
         .hover(|s| match e {
             Emph::Filled => s.bg(md::primary_pressed()),
@@ -362,45 +280,34 @@ fn btn(id: impl Into<ElementId>, label: impl Into<SharedString>, e: Emph) -> Sta
         .child(label.into())
 }
 
-/// connected button group の一肢。選択肢だけ膨らみ・primary を纏う(M3E の shape/width 変化)。
 fn group_seg(id: impl Into<ElementId>, label: impl Into<SharedString>, selected: bool) -> Stateful<gpui::Div> {
     div()
         .id(id)
         .rounded_full()
-        .text_size(px(12.))
+        .text_size(px(13.))
         .font_weight(FontWeight::MEDIUM)
         .map(|s| {
-            if selected {
-                s.px_5().py_1().bg(md::primary()).text_color(md::on_primary())
-            } else {
-                s.px_3().py_1().text_color(md::on_surface_variant())
-            }
+            if selected { s.px_5().py_2().bg(md::primary()).text_color(md::on_primary()) }
+            else { s.px_4().py_2().text_color(md::on_surface()) }
         })
         .hover(|s| if selected { s.bg(md::primary_pressed()) } else { s.bg(md::primary_overlay()) })
         .child(label.into())
 }
 
 fn group_container() -> gpui::Div {
-    div().flex().items_center().gap_1().px_1().py_1().rounded_full().bg(md::surface_high())
+    div().flex().items_center().gap_1().px_1().py_1().rounded_full().bg(md::surface_container_high())
 }
 
-/// filter chip。選択 = secondary-container + ✓(M3 の filter chip 仕様)。
 fn chip(id: impl Into<ElementId>, label: impl Into<SharedString>, selected: bool) -> Stateful<gpui::Div> {
     let label: SharedString = label.into();
     let text: SharedString = if selected { format!("✓ {label}").into() } else { label };
     div()
         .id(id)
-        .px_3()
-        .py_1()
-        .rounded_full()
-        .text_size(px(12.))
-        .font_weight(FontWeight::MEDIUM)
+        .px_4().py_2().rounded_full()
+        .text_size(px(13.)).font_weight(FontWeight::MEDIUM)
         .map(|s| {
-            if selected {
-                s.bg(md::secondary_container()).text_color(md::on_secondary_container()).border_1().border_color(md::secondary())
-            } else {
-                s.bg(md::surface_lowest()).text_color(md::on_surface_variant()).border_1().border_color(md::outline_variant())
-            }
+            if selected { s.bg(md::secondary_container()).text_color(md::on_secondary_container()) }
+            else { s.text_color(md::on_surface()).border_1().border_color(md::outline_variant()) }
         })
         .hover(|s| s.bg(md::secondary_container_pressed()))
         .child(text)
@@ -408,93 +315,64 @@ fn chip(id: impl Into<ElementId>, label: impl Into<SharedString>, selected: bool
 
 fn badge(text: &str, kind: BadgeKind) -> gpui::Div {
     let (bg, fg) = match kind {
-        BadgeKind::Good => (md::tertiary(), md::on_error()),
-        BadgeKind::Mid => (md::secondary(), md::on_error()),
-        BadgeKind::Off => (md::surface_high(), md::on_surface_variant()),
+        BadgeKind::Good => (md::tertiary(), md::on_primary()),
+        BadgeKind::Mid => (md::secondary(), md::on_primary()),
+        BadgeKind::Off => (md::surface_container_highest(), md::on_surface()),
     };
-    div().px_3().py_1().rounded_full().text_size(px(11.)).font_weight(FontWeight::BOLD).bg(bg).text_color(fg).child(text.to_string())
+    div().px_4().py_2().rounded_full().text_size(px(12.)).font_weight(FontWeight::BOLD).bg(bg).text_color(fg).child(text.to_string())
 }
 
-enum BadgeKind {
-    Good,
-    Mid,
-    Off,
-}
+enum BadgeKind { Good, Mid, Off }
 
-/// M3E loading indicator の一肢(大きさと不透明度を bounce で脈動)。GPUI の Div は
-/// transformation を持てないため、M3E の "capture attention" をサイズの脈動で表す。
-fn loading_dot(id: &'static str, dur: f32, color: gpui::Rgba) -> gpui::AnimationElement<gpui::Div> {
+fn loading_dot(id: &'static str, dur: f32) -> gpui::AnimationElement<gpui::Div> {
     div()
-        .size(px(7.))
-        .rounded_full()
-        .bg(color)
-        .with_animation(
-            id,
-            Animation::new(Duration::from_secs_f32(dur)).repeat().with_easing(bounce(ease_in_out)),
-            |el, delta| el.size(px(5.0 + 5.0 * delta)).opacity(0.35 + 0.65 * delta),
-        )
+        .size(px(8.)).rounded_full().bg(md::primary())
+        .with_animation(id, Animation::new(Duration::from_secs_f32(dur)).repeat().with_easing(bounce(ease_in_out)),
+            |el, delta| el.size(px(6.0 + 6.0 * delta)).opacity(0.3 + 0.7 * delta))
 }
 
 fn loading(text: &str) -> gpui::Div {
-    div()
-        .flex()
-        .items_center()
-        .gap_2()
-        .child(div().flex().items_center().gap_1().child(loading_dot("ld0", 0.80, md::primary())).child(loading_dot("ld1", 0.95, md::primary())).child(loading_dot("ld2", 1.10, md::primary())))
-        .child(div().text_size(px(12.)).text_color(md::on_surface_variant()).child(text.to_string()))
+    div().flex().items_center().gap_3()
+        .child(div().flex().items_center().gap_1().child(loading_dot("ld0", 0.80)).child(loading_dot("ld1", 0.95)).child(loading_dot("ld2", 1.10)))
+        .child(div().text_size(px(13.)).text_color(md::on_surface_variant()).child(text.to_string()))
 }
 
-/// REC の点滅(error の点が bounce で脈動)。
 fn rec_dot() -> gpui::AnimationElement<gpui::Div> {
-    div()
-        .size(px(10.))
-        .rounded_full()
-        .bg(md::error())
-        .with_animation(
-            "rec",
-            Animation::new(Duration::from_millis(800)).repeat().with_easing(bounce(ease_in_out)),
-            |el, delta| el.size(px(8.0 + 5.0 * delta)).opacity(0.55 + 0.45 * delta),
-        )
+    div().size(px(12.)).rounded_full().bg(md::error())
+        .with_animation("rec", Animation::new(Duration::from_millis(800)).repeat().with_easing(bounce(ease_in_out)),
+            |el, delta| el.size(px(10.0 + 6.0 * delta)).opacity(0.5 + 0.5 * delta))
 }
 
-/// M3 の linear progress: 溝 + 針 + 末端の停止ドット。
 fn meter(level: f32, color: gpui::Rgba) -> gpui::Div {
-    let w = (METER_W * level.clamp(0.0, 1.0)).max(3.0);
-    div()
-        .flex()
-        .items_center()
-        .gap_1()
-        .child(div().w(px(METER_W)).h(px(6.)).rounded_full().bg(md::outline_variant()).child(div().w(px(w)).h_full().rounded_full().bg(color)))
-        .child(div().size(px(3.)).rounded_full().bg(color))
+    let w = (METER_W * level.clamp(0.0, 1.0)).max(4.0);
+    div().flex().items_center().gap_2()
+        .child(div().w(px(METER_W)).h(px(8.)).rounded_full().bg(md::surface_container_highest())
+            .child(div().w(px(w)).h_full().rounded_full().bg(color)))
+        .child(div().size(px(4.)).rounded_full().bg(color))
 }
 
-/// 見出し(title-medium)。
-fn heading(text: &str) -> gpui::Div {
-    div().text_size(px(15.)).text_color(md::on_surface()).font_weight(FontWeight::SEMIBOLD).child(text.to_string())
-}
-
-/// 主役の数値(headline-emphasis 32px・単位は label-small で薄く)。
+/// 主役の数値(M3E display・36px bold)。
 fn stat(value: String, unit: &str, color: gpui::Rgba) -> gpui::Div {
-    div()
-        .flex()
-        .items_baseline()
-        .gap_1()
-        .child(div().text_size(px(32.)).font_weight(FontWeight::BOLD).text_color(color).child(value))
-        .child(div().text_size(px(11.)).text_color(md::on_surface_variant()).child(unit.to_string()))
+    div().flex().items_baseline().gap_1()
+        .child(div().text_size(px(36.)).font_weight(FontWeight::BOLD).text_color(color).child(value))
+        .child(div().text_size(px(12.)).text_color(md::on_surface_variant()).child(unit.to_string()))
+}
+
+fn heading(text: &str) -> gpui::Div {
+    div().text_size(px(16.)).text_color(md::on_surface()).font_weight(FontWeight::SEMIBOLD).child(text.to_string())
 }
 
 fn subtext(text: impl Into<SharedString>) -> gpui::Div {
-    div().text_size(px(11.)).text_color(md::on_surface_variant()).child(text.into())
+    div().text_size(px(13.)).text_color(md::on_surface_variant()).child(text.into())
 }
 
-fn card() -> gpui::Div {
-    div().bg(md::surface_lowest()).rounded(px(md::SHAPE_MD)).p_4().flex().flex_col().gap_2()
+/// M3E の「容器」= トーンの一段濃い面(白いカードではない)。
+fn container() -> gpui::Div {
+    div().bg(md::surface_container_low()).rounded(px(md::R_MD)).p_5().flex().flex_col().gap_3()
 }
 
 fn toggle_stop(player_slot: &mut Option<AudioPlayer>) {
-    if let Some(p) = player_slot.take() {
-        p.stop();
-    }
+    if let Some(p) = player_slot.take() { p.stop(); }
 }
 
 fn play_path(player_slot: &mut Option<AudioPlayer>, path: &PathBuf) -> anyhow::Result<()> {
@@ -507,35 +385,23 @@ fn play_path(player_slot: &mut Option<AudioPlayer>, path: &PathBuf) -> anyhow::R
 impl Render for LightVcUi {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.pump();
-        if self.needs_tick() {
-            window.request_animation_frame();
-        }
+        if self.needs_tick() { window.request_animation_frame(); }
 
         let root = div().id("root").size_full().flex().flex_col().bg(md::surface());
 
         let tab = self.tab;
         let bar = div()
-            .flex()
-            .items_center()
-            .gap_4()
-            .px_5()
-            .py_3()
-            .child(div().text_size(px(24.)).font_weight(FontWeight::BOLD).text_color(md::primary()).child("✦ LightVC"))
-            .child(group_container().child(group_seg("tab_off", "Offline", tab == Tab::Offline).on_click(cx.listener(|this, _, _, cx| {
-                this.tab = Tab::Offline;
-                cx.notify();
-            }))).child(group_seg("tab_rt", "Realtime", tab == Tab::Realtime).on_click(cx.listener(|this, _, _, cx| {
-                this.tab = Tab::Realtime;
-                cx.notify();
-            }))).child(group_seg("tab_vo", "Voices", tab == Tab::Catalog).on_click(cx.listener(|this, _, _, cx| {
-                this.tab = Tab::Catalog;
-                cx.notify();
-            }))))
+            .flex().items_center().gap_4().px_6().py_3()
+            .child(div().text_size(px(28.)).font_weight(FontWeight::BOLD).text_color(md::primary()).child("✦ LightVC"))
+            .child(
+                group_container()
+                    .child(group_seg("tab_off", "Offline", tab == Tab::Offline).on_click(cx.listener(|this, _, _, cx| { this.tab = Tab::Offline; cx.notify(); })))
+                    .child(group_seg("tab_rt", "Realtime", tab == Tab::Realtime).on_click(cx.listener(|this, _, _, cx| { this.tab = Tab::Realtime; cx.notify(); })))
+                    .child(group_seg("tab_vo", "Voices", tab == Tab::Catalog).on_click(cx.listener(|this, _, _, cx| { this.tab = Tab::Catalog; cx.notify(); }))),
+            )
             .child(div().flex_1())
             .child(btn("settings", "⚙ Devices", Emph::Outlined).on_click(cx.listener(|this, _, _, cx| {
-                if !this.settings_open {
-                    this.pick_settings();
-                }
+                if !this.settings_open { this.pick_settings(); }
                 this.settings_open = !this.settings_open;
                 cx.notify();
             })));
@@ -546,15 +412,9 @@ impl Render for LightVcUi {
         };
 
         let bottom = div()
-            .flex()
-            .items_center()
-            .gap_3()
-            .px_5()
-            .py_2()
-            .bg(md::surface_lowest())
-            .border_t_1()
-            .border_color(md::outline_variant())
-            .child(div().text_size(px(11.)).text_color(status_color).child(format!("● {}", err.unwrap_or(status_line))))
+            .flex().items_center().gap_3().px_6().py_2()
+            .bg(md::surface_container())
+            .child(div().text_size(px(12.)).text_color(status_color).child(format!("● {}", err.unwrap_or(status_line))))
             .child(div().flex_1())
             .child(subtext("Out"))
             .child(meter(self.metrics.output_rms * 6.0, md::tertiary()));
@@ -565,11 +425,9 @@ impl Render for LightVcUi {
             Tab::Catalog => self.render_catalog(cx),
         };
 
-        let content = div().id("content").flex_1().flex().flex_col().px_5().py_3().gap_3().child(if self.settings_open {
-            div().flex().flex_col().gap_3().child(self.render_settings(cx)).child(content).into_any_element()
-        } else {
-            content
-        });
+        let content = div().id("content").flex_1().flex().flex_col().px_6().py_4().gap_4().child(if self.settings_open {
+            div().flex().flex_col().gap_4().child(self.render_settings(cx)).child(content).into_any_element()
+        } else { content });
 
         root.child(bar).child(content).child(bottom)
     }
@@ -581,14 +439,11 @@ impl LightVcUi {
             let s = self.state.lock().unwrap();
             (s.selected_input, s.selected_output, s.selected_host)
         };
-        let mut el = card().child(heading("Audio Devices"));
-
-        let mut host_row = div().flex().flex_wrap().items_center().gap_2().child(subtext("Host"));
+        let mut el = container().child(heading("Audio Devices"));
+        let mut host_row = group_container();
         let mut host_pills: Vec<(String, lightvc_audio::HostPref)> = vec![("default".to_string(), lightvc_audio::HostPref::Default)];
         for h in lightvc_audio::host::available() {
-            if let Ok(p) = lightvc_audio::HostPref::parse(h) {
-                host_pills.push((h.to_string(), p));
-            }
+            if let Ok(p) = lightvc_audio::HostPref::parse(h) { host_pills.push((h.to_string(), p)); }
         }
         for (i, (label, pref)) in host_pills.iter().enumerate() {
             let selected = *pref == sel_host;
@@ -601,7 +456,7 @@ impl LightVcUi {
                 })),
             );
         }
-        el = el.child(div().flex().items_center().gap_2().child(subtext("Host")).child(host_row));
+        el = el.child(div().flex().items_center().gap_3().child(subtext("Host")).child(host_row));
 
         let mut device_rows = div().flex().flex_col().gap_1();
         device_rows = device_rows.child(subtext("Input"));
@@ -609,14 +464,10 @@ impl LightVcUi {
         for (i, d) in inputs.iter().enumerate() {
             let sel = sel_in == Some(i);
             device_rows = device_rows.child(
-                div()
-                    .id(SharedString::from(format!("in_{i}")))
-                    .px_2()
-                    .py_1()
-                    .rounded(px(md::SHAPE_XS))
-                    .text_size(px(11.))
-                    .map(move |s| if sel { s.bg(md::primary_container()).text_color(md::on_primary_container()) } else { s.text_color(md::on_surface_variant()) })
-                    .hover(|s| s.bg(md::surface_high()))
+                div().id(SharedString::from(format!("in_{i}")))
+                    .px_3().py_2().rounded(px(md::R_XS)).text_size(px(13.))
+                    .map(move |s| if sel { s.bg(md::primary_container()).text_color(md::on_primary_container()) } else { s.text_color(md::on_surface()) })
+                    .hover(|s| s.bg(md::surface_container_high()))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.state.lock().unwrap().selected_input = Some(i);
                         cx.notify();
@@ -629,14 +480,10 @@ impl LightVcUi {
         for (i, d) in outputs.iter().enumerate() {
             let sel = sel_out == Some(i);
             device_rows = device_rows.child(
-                div()
-                    .id(SharedString::from(format!("out_{i}")))
-                    .px_2()
-                    .py_1()
-                    .rounded(px(md::SHAPE_XS))
-                    .text_size(px(11.))
-                    .map(move |s| if sel { s.bg(md::primary_container()).text_color(md::on_primary_container()) } else { s.text_color(md::on_surface_variant()) })
-                    .hover(|s| s.bg(md::surface_high()))
+                div().id(SharedString::from(format!("out_{i}")))
+                    .px_3().py_2().rounded(px(md::R_XS)).text_size(px(13.))
+                    .map(move |s| if sel { s.bg(md::primary_container()).text_color(md::on_primary_container()) } else { s.text_color(md::on_surface()) })
+                    .hover(|s| s.bg(md::surface_container_high()))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.state.lock().unwrap().selected_output = Some(i);
                         cx.notify();
@@ -652,18 +499,14 @@ impl LightVcUi {
             let s = self.state.lock().unwrap();
             (s.settings.semitones, !s.settings.operator.is_empty(), s.voices.iter().map(|v| v.name.clone()).collect::<Vec<_>>(), s.selected_voice)
         };
-
-        let mut el = div().flex().flex_col().gap_3().w_full();
+        let mut el = div().flex().flex_col().gap_4().w_full();
 
         let src_label = self.offline.source.as_ref().map(|p| p.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default()).unwrap_or_else(|| "(未選択)".into());
         let src_playing = self.offline.source_preview.as_ref().is_some_and(|p| p.is_playing());
         el = el.child(
-            card().child(heading("Source")).child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(div().flex_1().text_size(px(13.)).text_color(md::on_surface()).child(src_label))
+            container().child(heading("Source")).child(
+                div().flex().items_center().gap_3()
+                    .child(div().flex_1().text_size(px(14.)).text_color(md::on_surface()).child(src_label))
                     .child(btn("src_play", if src_playing { "Stop" } else { "Play" }, Emph::Tonal).on_click(cx.listener(|this, _, _, cx| {
                         if this.offline.source_preview.is_some() {
                             toggle_stop(&mut this.offline.source_preview);
@@ -685,12 +528,9 @@ impl LightVcUi {
         let ref_label = self.offline.reference.as_ref().map(|p| p.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default()).unwrap_or_else(|| "(未選択)".into());
         let ref_playing = self.offline.reference_preview.as_ref().is_some_and(|p| p.is_playing());
         el = el.child(
-            card().child(heading("Reference (目標の声・20 秒以上)")).child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(div().flex_1().text_size(px(13.)).text_color(md::on_surface()).child(ref_label))
+            container().child(heading("Reference (目標の声・20 秒以上)")).child(
+                div().flex().items_center().gap_3()
+                    .child(div().flex_1().text_size(px(14.)).text_color(md::on_surface()).child(ref_label))
                     .child(btn("ref_play", if ref_playing { "Stop" } else { "Play" }, Emph::Tonal).on_click(cx.listener(|this, _, _, cx| {
                         if this.offline.reference_preview.is_some() {
                             toggle_stop(&mut this.offline.reference_preview);
@@ -716,9 +556,7 @@ impl LightVcUi {
                 row = row.child(
                     chip(SharedString::from(format!("cat_{i}")), name.clone(), selected).on_click(cx.listener(move |this, _, _, cx| {
                         let p = this.state.lock().unwrap().voices.get(i).map(|v| v.path.clone());
-                        if let Some(p) = p {
-                            this.offline.reference = Some(p);
-                        }
+                        if let Some(p) = p { this.offline.reference = Some(p); }
                         cx.notify();
                     })),
                 );
@@ -734,41 +572,27 @@ impl LightVcUi {
                 group_seg(SharedString::from(format!("pitch_{i}")), *name, selected).on_click(cx.listener(move |this, _, _, cx| {
                     let mut s = this.state.lock().unwrap();
                     s.settings.semitones = k;
-                    if let Some(ref tx) = s.rt_control_tx {
-                        let _ = tx.send(RtControl::SetSemitones(k));
-                    }
+                    if let Some(ref tx) = s.rt_control_tx { let _ = tx.send(RtControl::SetSemitones(k)); }
                     cx.notify();
                 })),
             );
         }
-        el = el.child(card().child(div().flex().flex_wrap().items_center().gap_3().child(subtext("Pitch (固定の半音)")).child(pitch_group)));
+        el = el.child(container().child(div().flex().flex_wrap().items_center().gap_3().child(subtext("Pitch (固定の半音)")).child(pitch_group)));
 
         let can = self.offline.source.is_some() && self.offline.reference.is_some() && has_operator && !self.offline.converting;
         el = el.child(
-            div()
-                .flex()
-                .items_center()
-                .gap_4()
-                .child(
-                    btn("convert", if self.offline.converting { "Converting…" } else { "Convert" }, if can { Emph::Filled } else { Emph::Outlined }).on_click(cx.listener(move |this, _, _, cx| {
-                        if this.offline.source.is_none() || this.offline.reference.is_none() || this.offline.converting {
-                            return;
-                        }
-                        let (src, refp) = (this.offline.source.clone().unwrap(), this.offline.reference.clone().unwrap());
-                        {
-                            let mut s = this.state.lock().unwrap();
-                            s.offline_result = None;
-                            s.error = None;
-                            s.status = "Converting...".to_string();
-                        }
-                        this.offline.converted = None;
-                        this.offline.player = None;
-                        this.offline.converting = true;
-                        let st = this.state.clone();
-                        std::thread::spawn(move || crate::offline_tab::run_offline_conversion(st, src, refp));
-                        cx.notify();
-                    }))
-                )
+            div().flex().items_center().gap_4()
+                .child(btn("convert", if self.offline.converting { "Converting…" } else { "Convert" }, if can { Emph::Filled } else { Emph::Outlined }).on_click(cx.listener(move |this, _, _, cx| {
+                    if this.offline.source.is_none() || this.offline.reference.is_none() || this.offline.converting { return; }
+                    let (src, refp) = (this.offline.source.clone().unwrap(), this.offline.reference.clone().unwrap());
+                    { let mut s = this.state.lock().unwrap(); s.offline_result = None; s.error = None; s.status = "Converting...".to_string(); }
+                    this.offline.converted = None;
+                    this.offline.player = None;
+                    this.offline.converting = true;
+                    let st = this.state.clone();
+                    std::thread::spawn(move || crate::offline_tab::run_offline_conversion(st, src, refp));
+                    cx.notify();
+                })))
                 .when(self.offline.converting, |r| r.child(loading("変換中…"))),
         );
 
@@ -776,42 +600,31 @@ impl LightVcUi {
             let out_playing = self.offline.player.as_ref().is_some_and(|p| p.is_playing());
             let seconds = samples.len() as f32 / SR as f32;
             el = el.child(
-                div()
-                    .bg(md::surface_lowest())
-                    .rounded(px(md::SHAPE_XS))
-                    .p_4()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(heading("Output"))
+                container().child(heading("Output"))
                     .child(stat(format!("{seconds:.1}"), "s・48 kHz", md::tertiary()))
-                    .child(
-                        div()
-                            .flex()
-                            .gap_3()
-                            .child(btn("out_play", if out_playing { "Stop" } else { "Play Output" }, Emph::Tonal).on_click(cx.listener(|this, _, _, cx| {
-                                if this.offline.player.is_some() {
-                                    toggle_stop(&mut this.offline.player);
-                                } else if let Some(samples) = this.offline.converted.clone() {
-                                    let wav44 = audio_playback::resample_linear(&samples, SR);
-                                    this.offline.player = AudioPlayer::play(wav44).ok();
+                    .child(div().flex().gap_3()
+                        .child(btn("out_play", if out_playing { "Stop" } else { "Play Output" }, Emph::Tonal).on_click(cx.listener(|this, _, _, cx| {
+                            if this.offline.player.is_some() {
+                                toggle_stop(&mut this.offline.player);
+                            } else if let Some(samples) = this.offline.converted.clone() {
+                                let wav44 = audio_playback::resample_linear(&samples, SR);
+                                this.offline.player = AudioPlayer::play(wav44).ok();
+                            }
+                            cx.notify();
+                        })))
+                        .child(btn("out_save", "Save As…", Emph::Outlined).on_click(cx.listener(|this, _, _, cx| {
+                            if let Some(samples) = this.offline.converted.clone() {
+                                if let Some(path) = rfd::FileDialog::new().save_file() {
+                                    let _ = audio_playback::save_wav_mono(&path, &samples, SR);
+                                    this.state.lock().unwrap().status = format!("保存した: {}", path.display());
                                 }
-                                cx.notify();
-                            })))
-                            .child(btn("out_save", "Save As…", Emph::Outlined).on_click(cx.listener(|this, _, _, cx| {
-                                if let Some(samples) = this.offline.converted.clone() {
-                                    if let Some(path) = rfd::FileDialog::new().save_file() {
-                                        let _ = audio_playback::save_wav_mono(&path, &samples, SR);
-                                        this.state.lock().unwrap().status = format!("保存した: {}", path.display());
-                                    }
-                                }
-                                cx.notify();
-                            }))),
-                    ),
+                            }
+                            cx.notify();
+                        })))),
             );
         }
         if !has_operator {
-            el = el.child(div().text_size(px(12.)).text_color(md::error()).child("操作者の登録がありません(Realtime タブで追加)"));
+            el = el.child(div().text_size(px(14.)).text_color(md::error()).child("操作者の登録がありません(Realtime タブで追加)"));
         }
         el.into_any_element()
     }
@@ -820,80 +633,56 @@ impl LightVcUi {
         let m = self.metrics.clone();
         let (has_engine, is_loading, cfg, voices, selected_voice, rec) = {
             let s = self.state.lock().unwrap();
-            (
-                s.model_loaded,
-                s.loading,
-                s.settings.clone(),
-                s.voices.iter().map(|v| v.name.clone()).collect::<Vec<_>>(),
-                s.selected_voice,
-                s.operator_rec.as_ref().map(|r| r.seconds.saturating_sub(r.started.elapsed().as_secs() as u32)),
-            )
+            (s.model_loaded, s.loading, s.settings.clone(), s.voices.iter().map(|v| v.name.clone()).collect::<Vec<_>>(), s.selected_voice,
+             s.operator_rec.as_ref().map(|r| r.seconds.saturating_sub(r.started.elapsed().as_secs() as u32)))
         };
         let force_bypass = !has_engine;
         let ref_name = selected_voice.and_then(|i| voices.get(i).cloned());
 
-        let mut el = div().flex().flex_col().gap_3().w_full();
+        let mut el = div().flex().flex_col().gap_4().w_full();
 
-        // ===== 1. 運用(hero)= 状態が色を駆動する M3E の色ブロック =====
-        // CONVERTING=tertiary-container / BYPASS=secondary-container / STOPPED=surface-high。
-        let (status_label, status_kind) = if self.rt_running {
-            if self.rt_bypass || force_bypass { ("BYPASS", BadgeKind::Mid) } else { ("CONVERTING", BadgeKind::Good) }
-        } else {
-            ("STOPPED", BadgeKind::Off)
-        };
-        let (hero_bg, hero_fg) = if self.rt_running {
+        // ===== hero: 大胆な原色ブロック(M3E の Google Meet 流)=====
+        let (status_label, status_kind, hero_bg, hero_fg) = if self.rt_running {
             if self.rt_bypass || force_bypass {
-                (md::secondary_container(), md::on_secondary_container())
+                ("BYPASS", BadgeKind::Mid, md::secondary_container(), md::on_secondary_container())
             } else {
-                (md::tertiary_container(), md::on_tertiary_container())
+                ("CONVERTING", BadgeKind::Good, md::tertiary_container(), md::on_tertiary_container())
             }
         } else {
-            (md::surface_high(), md::on_surface())
+            ("STOPPED", BadgeKind::Off, md::surface_container_high(), md::on_surface())
         };
-        let mut hero = div()
-            .bg(hero_bg)
-            .rounded(px(md::SHAPE_LG))
-            .p_6()
-            .flex()
-            .flex_col()
-            .gap_4();
 
+        let mut hero = div().bg(hero_bg).rounded(px(md::R_LG)).p_6().flex().flex_col().gap_4();
         hero = hero.child(
-            div().flex().flex_wrap().items_center().gap_3().child(badge(status_label, status_kind)).child(
-                div().text_size(px(16.)).font_weight(FontWeight::SEMIBOLD).text_color(hero_fg).child(format!("> {}", ref_name.clone().unwrap_or_else(|| "no voice".into()))),
-            ).when(self.rt_running && !self.rt_bypass && has_engine, |r| {
-                r.child(div().flex_1()).child(div().text_size(px(11.)).font_weight(FontWeight::BOLD).text_color(if m.gate_open { md::tertiary() } else { md::on_surface_variant() }).child(if m.gate_open { "GATE" } else { "gate" }))
-            }),
+            div().flex().flex_wrap().items_center().gap_3()
+                .child(badge(status_label, status_kind))
+                .child(div().text_size(px(18.)).font_weight(FontWeight::SEMIBOLD).text_color(hero_fg)
+                    .child(format!("> {}", ref_name.clone().unwrap_or_else(|| "no voice".into()))))
+                .when(self.rt_running && !self.rt_bypass && has_engine, |r| {
+                    r.child(div().flex_1())
+                     .child(div().text_size(px(14.)).font_weight(FontWeight::BOLD)
+                         .text_color(if m.gate_open { md::tertiary() } else { md::on_surface_variant() })
+                         .child(if m.gate_open { "GATE" } else { "gate" }))
+                }),
         );
 
         let measuring = m.blocks > 0 || m.compute_p99 > 0.0;
         hero = hero.child(
-            div()
-                .flex()
-                .flex_wrap()
-                .items_baseline()
-                .gap_8()
+            div().flex().flex_wrap().items_baseline().gap_8()
                 .child(stat(format!("{:.0}", m.latency_ms), "ms E2E", hero_fg))
-                .child(stat(if measuring { format!("{:.2}", m.compute_p99) } else { "—".into() }, "compute p99 ms", hero_fg))
+                .child(stat(if measuring { format!("{:.2}", m.compute_p99) } else { "—".into() }, "p99 ms", hero_fg))
                 .child(stat(format!("{:.2}", m.rtf), "RTF", hero_fg)),
         );
         hero = hero.child(
-            div()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap_2()
-                .child(div().text_size(px(11.)).text_color(hero_fg).child("p50"))
-                .child(div().text_size(px(11.)).text_color(hero_fg).child(if measuring { format!("{:.2}", m.compute_p50) } else { "—".into() }))
-                .child(div().text_size(px(11.)).text_color(hero_fg).child("p95"))
-                .child(div().text_size(px(11.)).text_color(if measuring && m.compute_p95 >= 5.0 { md::error() } else { hero_fg }).child(if measuring { format!("{:.2}", m.compute_p95) } else { "—".into() }))
-                .child(div().text_size(px(11.)).text_color(hero_fg).child(format!("host {}", if m.host.is_empty() { "-" } else { &m.host })))
+            div().flex().flex_wrap().items_center().gap_3()
+                .child(div().text_size(px(13.)).text_color(hero_fg).child(
+                    if measuring { format!("p50 {:.2}  p95 {:.2}  host {}", m.compute_p50, m.compute_p95, if m.host.is_empty() { "-" } else { &m.host }) }
+                    else { format!("host {}", if m.host.is_empty() { "-" } else { &m.host }) }))
                 .when(m.overrun > 0 || m.underrun > 0, |r| {
-                    r.child(div().text_size(px(11.)).text_color(md::error()).child(format!("in:{} out:{}", m.overrun, m.underrun)))
+                    r.child(div().text_size(px(13.)).text_color(md::error()).child(format!("in:{} out:{}", m.overrun, m.underrun)))
                 }),
         );
 
-        // 輸送バー: Pitch = connected group・Start = filled(画面で 1 個の高強調)・Stop = error filled
         let mut pitch_group = group_container();
         for (i, (k, name)) in SEMITONES.iter().enumerate() {
             let selected = cfg.semitones == *k;
@@ -902,13 +691,12 @@ impl LightVcUi {
                 group_seg(SharedString::from(format!("rt_pitch_{i}")), *name, selected).on_click(cx.listener(move |this, _, _, cx| {
                     let mut s = this.state.lock().unwrap();
                     s.settings.semitones = k;
-                    if let Some(ref tx) = s.rt_control_tx {
-                        let _ = tx.send(RtControl::SetSemitones(k));
-                    }
+                    if let Some(ref tx) = s.rt_control_tx { let _ = tx.send(RtControl::SetSemitones(k)); }
                     cx.notify();
                 })),
             );
         }
+
         let mut transport = div().flex().flex_wrap().items_center().gap_2();
         if !force_bypass {
             transport = transport
@@ -925,25 +713,22 @@ impl LightVcUi {
         }
         transport = transport.child(subtext("Pitch")).child(pitch_group).child(div().flex_1());
         if self.rt_running {
-            transport = transport.child(btn("stop_btn", "■ Stop", Emph::Filled).on_click(cx.listener(|this, _, _, cx| {
-                this.stop(cx);
-            })));
+            transport = transport.child(btn("stop_btn", "■ Stop", Emph::Filled).on_click(cx.listener(|this, _, _, cx| { this.stop(cx); })));
         } else {
-            transport = transport.child(btn("start_btn", "▶ Start", Emph::Filled).on_click(cx.listener(|this, _, _, cx| {
-                this.start(cx);
-            })));
+            transport = transport.child(btn("start_btn", "▶ Start", Emph::Filled).on_click(cx.listener(|this, _, _, cx| { this.start(cx); })));
         }
         hero = hero.child(transport);
         el = el.child(hero);
 
-        // ===== 2. 登録(low)=====
-        let mut model_card = card().child(heading("登録"));
+        // ===== 登録 =====
+        let mut model_card = container().child(heading("登録"));
         let mut ex_row = div().flex().flex_wrap().items_center().gap_2();
         for (id, label, cur) in [("front", "front", cfg.front.clone()), ("model", "E / C", cfg.model.clone()), ("voc", "voc", cfg.voc.clone())] {
             let short = std::path::Path::new(&cur).file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or(cur.clone());
             ex_row = ex_row.child(
-                div().flex().items_center().gap_1().child(subtext(format!("{label}: {short}"))).child(
-                    btn(SharedString::from(format!("pick_{id}")), "…", Emph::Text).on_click({
+                div().flex().items_center().gap_1()
+                    .child(subtext(format!("{label}: {short}")))
+                    .child(btn(SharedString::from(format!("pick_{id}")), "…", Emph::Text).on_click({
                         let id = id.to_string();
                         cx.listener(move |this, _, _, cx| {
                             match id.as_str() {
@@ -953,11 +738,11 @@ impl LightVcUi {
                             }
                             cx.notify();
                         })
-                    }),
-                ),
+                    })),
             );
         }
         model_card = model_card.child(ex_row);
+
         let mut th_group = group_container();
         for n in [1usize, 2, 4] {
             let selected = cfg.threads == n;
@@ -970,6 +755,7 @@ impl LightVcUi {
         }
         model_card = model_card.child(div().flex().flex_wrap().items_center().gap_3().child(subtext("threads")).child(th_group));
         model_card = model_card.child(subtext(format!("Operator: {} 本", cfg.operator.len())));
+
         let mut op_row = div().flex().flex_wrap().items_center().gap_2();
         op_row = op_row.child(btn("op_add", "Add operator WAV", Emph::Tonal).on_click(cx.listener(|this, _, _, cx| {
             this.picks.operator.open();
@@ -977,7 +763,9 @@ impl LightVcUi {
         })));
         if let Some(rem) = rec {
             op_row = op_row
-                .child(div().flex().items_center().gap_2().child(rec_dot()).child(div().text_size(px(12.)).font_weight(FontWeight::BOLD).text_color(md::error()).child(format!("REC 残り {rem} s"))))
+                .child(div().flex().items_center().gap_2()
+                    .child(rec_dot())
+                    .child(div().text_size(px(14.)).font_weight(FontWeight::BOLD).text_color(md::error()).child(format!("REC 残り {rem} s"))))
                 .child(btn("op_cancel", "Cancel", Emph::Text).on_click(cx.listener(|this, _, _, cx| {
                     if let Some(r) = this.state.lock().unwrap().operator_rec.as_ref() {
                         r.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -986,9 +774,7 @@ impl LightVcUi {
                 })));
         } else {
             op_row = op_row.child(btn("op_rec", "Record operator (30 s)", Emph::Tonal).on_click(cx.listener(|this, _, _, cx| {
-                if !this.rt_running {
-                    state::record_operator(&this.state, 30);
-                }
+                if !this.rt_running { state::record_operator(&this.state, 30); }
                 cx.notify();
             })));
         }
@@ -999,82 +785,47 @@ impl LightVcUi {
             })));
         }
         model_card = model_card.child(op_row);
+
         let can_load = !cfg.operator.is_empty() && ref_name.is_some() && !is_loading;
         model_card = model_card.child(
-            div()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap_3()
+            div().flex().flex_wrap().items_center().gap_3()
                 .child(btn("load", if has_engine { "Reload" } else { "Load" }, if can_load { Emph::Tonal } else { Emph::Outlined }).on_click(cx.listener(|this, _, _, cx| {
-                    let ok = {
-                        let s = this.state.lock().unwrap();
-                        !s.settings.operator.is_empty() && s.selected_voice.is_some()
-                    };
-                    if ok {
-                        state::load_engine(&this.state);
-                    }
+                    let ok = { let s = this.state.lock().unwrap(); !s.settings.operator.is_empty() && s.selected_voice.is_some() };
+                    if ok { state::load_engine(&this.state); }
                     cx.notify();
                 })))
                 .when(is_loading, |r| r.child(loading("モデルを読み込み中…")))
-                .when(ref_name.is_none(), |r| r.child(div().text_size(px(11.)).text_color(md::error()).child("Target で目標を選ぶ"))),
+                .when(ref_name.is_none(), |r| r.child(div().text_size(px(13.)).text_color(md::error()).child("Target で目標を選ぶ"))),
         );
 
-        // Target(chips)
         let mut target_row = div().flex().flex_wrap().items_center().gap_2().child(subtext("Target"));
         if voices.is_empty() {
             target_row = target_row.child(
-                btn("tgt_open", "Open Voices →", Emph::Tonal).on_click(cx.listener(|this, _, _, cx| {
-                    this.tab = Tab::Catalog;
-                    cx.notify();
-                })),
+                btn("tgt_open", "Open Voices →", Emph::Tonal).on_click(cx.listener(|this, _, _, cx| { this.tab = Tab::Catalog; cx.notify(); })),
             );
         } else {
             for (i, name) in voices.iter().enumerate() {
                 let selected = selected_voice == Some(i);
                 target_row = target_row.child(
                     chip(SharedString::from(format!("tgt_{i}")), name.clone(), selected).on_click(cx.listener(move |this, _, _, cx| {
-                        let reload = {
-                            let mut s = this.state.lock().unwrap();
-                            if s.voices.get(i).is_some() {
-                                s.selected_voice = Some(i);
-                            }
-                            s.model_loaded && !s.settings.operator.is_empty()
-                        };
-                        if reload {
-                            state::load_engine(&this.state);
-                        }
+                        let reload = { let mut s = this.state.lock().unwrap(); if s.voices.get(i).is_some() { s.selected_voice = Some(i); } s.model_loaded && !s.settings.operator.is_empty() };
+                        if reload { state::load_engine(&this.state); }
                         cx.notify();
                     })),
                 );
             }
             target_row = target_row.child(
-                div()
-                    .id("tgt_manage")
-                    .px_2()
-                    .text_size(px(11.))
-                    .text_color(md::secondary())
+                div().id("tgt_manage").px_3().text_size(px(13.)).text_color(md::secondary())
                     .hover(|s| s.text_color(md::primary()))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.tab = Tab::Catalog;
-                        cx.notify();
-                    }))
+                    .on_click(cx.listener(|this, _, _, cx| { this.tab = Tab::Catalog; cx.notify(); }))
                     .child("管理…"),
             );
         }
         model_card = model_card.child(target_row);
         el = el.child(model_card);
 
-        // ===== 3. 診断(白・四角 = tension・計器らしい髪の縁)=====
-        let mut diag = div()
-            .bg(md::surface_lowest())
-            .border_1()
-            .border_color(md::outline_variant())
-            .rounded(px(md::SHAPE_XS))
-            .p_5()
-            .flex()
-            .flex_col()
-            .gap_3();
+        // ===== 診断(tension・四角)=====
+        let mut diag = div().bg(md::surface_container_lowest()).border_1().border_color(md::outline_variant()).rounded(px(md::R_XS)).p_5().flex().flex_col().gap_3();
         diag = diag.child(div().flex().flex_wrap().items_center().gap_4().child(subtext("Input")).child(meter(self.metrics.input_rms * 6.0, md::primary())));
         let mut buf_group = group_container();
         for n in BUFFERS {
@@ -1097,7 +848,7 @@ impl LightVcUi {
         let algo_ms = lightvc_core::snv_stream::SnvStream::LATENCY_SAMPLES as f32 / 48.0;
         let total = (buf_ms * 2.0 + resamp_ms * 2.0 + algo_ms).max(0.001);
         let segs: [(f32, gpui::Rgba); 5] = [(buf_ms, md::secondary()), (resamp_ms, md::tertiary()), (algo_ms, md::primary()), (resamp_ms, md::tertiary()), (buf_ms, md::secondary())];
-        let mut seg_row = div().flex().w_full().h(px(8.)).rounded_full().overflow_hidden().bg(md::surface_high());
+        let mut seg_row = div().flex().w_full().h(px(10.)).rounded_full().overflow_hidden().bg(md::surface_container_highest());
         for (ms, c) in segs {
             seg_row = seg_row.child(div().h_full().bg(c).map(move |s| s.w(px(600.0 * ms / total))));
         }
@@ -1113,57 +864,42 @@ impl LightVcUi {
             let s = self.state.lock().unwrap();
             (s.voices.iter().map(|v| (v.name.clone(), v.path.clone())).collect::<Vec<_>>(), s.selected_voice)
         };
-        let mut el = div().flex().flex_col().gap_3().w_full();
+        let mut el = div().flex().flex_col().gap_4().w_full();
         el = el.child(subtext("目標の声の参照を登録する(zero-shot・普通の発話 20 秒以上)"));
 
         el = el.child(
-            card().child(heading("Add Voice")).child(
-                div().flex().items_center().gap_3().child(subtext("WAV を選ぶとファイル名で登録します")).child(btn("voice_add", "Browse…", Emph::Tonal).on_click(cx.listener(|this, _, _, cx| {
-                    this.picks.add.open();
-                    cx.notify();
-                }))),
+            container().child(heading("Add Voice")).child(
+                div().flex().items_center().gap_3()
+                    .child(subtext("WAV を選ぶとファイル名で登録します"))
+                    .child(btn("voice_add", "Browse…", Emph::Tonal).on_click(cx.listener(|this, _, _, cx| { this.picks.add.open(); cx.notify(); }))),
             ),
         );
 
         if voices.is_empty() {
-            el = el.child(card().child(div().py_6().flex().justify_center().child(subtext("まだ登録がありません"))));
+            el = el.child(container().child(div().py_8().flex().justify_center().child(subtext("まだ登録がありません"))));
         } else {
-            let mut list = card().child(heading("Voices"));
+            let mut list = container().child(heading("Voices"));
             for (i, (name, path)) in voices.iter().enumerate() {
                 let selected = selected_voice == Some(i);
                 let playing = self.catalog.playing == Some(i) && self.catalog.player.as_ref().is_some_and(|p| p.is_playing());
                 let path2 = path.clone();
                 list = list.child(
-                    div()
-                        .id(SharedString::from(format!("voice_{i}")))
-                        .flex()
-                        .items_center()
-                        .gap_3()
-                        .px_2()
-                        .py_1()
-                        .rounded_full()
+                    div().id(SharedString::from(format!("voice_{i}")))
+                        .flex().items_center().gap_3().px_3().py_2().rounded_full()
                         .map(move |s| if selected { s.bg(md::primary_container()) } else { s })
                         .hover(|s| s.bg(md::primary_container()))
                         .child(
-                            div()
-                                .id(SharedString::from(format!("voice_sel_{i}")))
-                                .flex()
-                                .flex_1()
-                                .items_center()
-                                .gap_3()
+                            div().id(SharedString::from(format!("voice_sel_{i}")))
+                                .flex().flex_1().items_center().gap_3()
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    let reload = {
-                                        let mut s = this.state.lock().unwrap();
-                                        s.selected_voice = Some(i);
-                                        s.model_loaded && !s.settings.operator.is_empty()
-                                    };
-                                    if reload {
-                                        state::load_engine(&this.state);
-                                    }
+                                    let reload = { let mut s = this.state.lock().unwrap(); s.selected_voice = Some(i); s.model_loaded && !s.settings.operator.is_empty() };
+                                    if reload { state::load_engine(&this.state); }
                                     cx.notify();
                                 }))
-                                .child(div().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).text_color(if selected { md::on_primary_container() } else { md::on_surface() }).child(name.clone()))
-                                .child(div().flex_1().text_size(px(10.5)).text_color(md::on_surface_variant()).child(path.display().to_string())),
+                                .child(div().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(if selected { md::on_primary_container() } else { md::on_surface() })
+                                    .child(name.clone()))
+                                .child(div().flex_1().text_size(px(12.)).text_color(md::on_surface_variant()).child(path.display().to_string())),
                         )
                         .child(btn(SharedString::from(format!("voice_play_{i}")), if playing { "Stop" } else { "Play" }, Emph::Tonal).on_click({
                             let path = path2.clone();
@@ -1192,10 +928,8 @@ impl LightVcUi {
                         .child(btn(SharedString::from(format!("voice_del_{i}")), "✕", Emph::Text).on_click(cx.listener(move |this, _, _, cx| {
                             toggle_stop(&mut this.catalog.player);
                             let mut s = this.state.lock().unwrap();
-                            if s.voices.len() == 1 {
-                                s.voices.clear();
-                                s.selected_voice = None;
-                            } else if let Some(sel) = s.selected_voice {
+                            if s.voices.len() == 1 { s.voices.clear(); s.selected_voice = None; }
+                            else if let Some(sel) = s.selected_voice {
                                 s.voices.remove(i);
                                 s.selected_voice = if sel == i { None } else if sel > i { Some(sel - 1) } else { Some(sel) };
                             }
