@@ -1,43 +1,37 @@
-//! Cross-platform file picker built on rfd (native dialogs).
-//!
-//! Replaces egui-file-dialog, which pulled in egui 0.31 alongside the app's
-//! egui 0.34, causing a version split and broken dialogs (update(ctx) was
-//! never called). rfd uses the OS native picker and runs off the UI thread,
-//! so the egui loop is never blocked.
-//!
-//! Completion repaint: the background thread calls `ctx.request_repaint()`
-//! when it stores the result, so non-Realtime tabs (which are event-driven
-//! and would otherwise not poll `take()` until the next incidental repaint)
-//! pick up the chosen path promptly.
+//! Cross-platform file picker built on rfd (native dialogs, off the UI thread).
+//! UI は每フレーム(またはタイマー刻みで)[`take`](Self::take) を呼んで結果を受け取る。
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use eframe::egui;
-
 /// A handle to an in-flight or completed file selection.
-///
-/// Clone-cheap (Arc inside). Poll [`take`](Self::take) each frame; it returns
-/// `Some(path)` once the user has chosen and the background thread finishes.
+/// Clone-cheap (Arc inside). `pending()` tells the UI tick to keep repainting.
 #[derive(Clone, Default)]
 pub struct FilePick {
     result: Arc<Mutex<Option<PathBuf>>>,
+    pending: Arc<AtomicBool>,
 }
 
 impl FilePick {
-    /// Start a file-open dialog in a background thread. When the user
-    /// confirms a choice, `ctx.request_repaint()` is called so that any tab
-    /// (not just the continuously-redrawing Realtime tab) wakes up to poll
-    /// [`take`](Self::take).
-    pub fn open(&self, ctx: &egui::Context) {
+    /// Start a file-open dialog in a background thread.
+    pub fn open(&self) {
+        if self.pending.load(Ordering::Relaxed) {
+            return;
+        }
+        self.pending.store(true, Ordering::Relaxed);
         let r = self.result.clone();
-        let ctx = ctx.clone();
+        let pending = self.pending.clone();
         std::thread::spawn(move || {
             let p = rfd::FileDialog::new().pick_file();
             *r.lock().unwrap() = p;
-            // Wake the UI thread regardless of which tab is active.
-            ctx.request_repaint();
+            pending.store(false, Ordering::Relaxed);
         });
+    }
+
+    /// True while the dialog is open (UI keeps ticking so the result lands promptly).
+    pub fn pending(&self) -> bool {
+        self.pending.load(Ordering::Relaxed)
     }
 
     /// Returns the chosen path if ready, clearing the slot.

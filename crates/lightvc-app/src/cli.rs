@@ -38,23 +38,11 @@ pub struct GuiCmd {
 
 pub fn run_gui(cmd: GuiCmd) -> Result<()> {
     println!("LightVC GUI starting...");
-    let icon = crate::assets::load_icon();
-    let mut app = crate::app::LightVcApp::new();
+    let state = std::sync::Arc::new(std::sync::Mutex::new(crate::state::AppState::new()));
     if cmd.demo {
-        app.enable_demo();
+        crate::ui::enable_demo(&state);
     }
-    let mut viewport = eframe::egui::ViewportBuilder::default()
-        .with_inner_size([800.0, 600.0])
-        .with_title("LightVC");
-    if let Some(icon_data) = icon {
-        viewport = viewport.with_icon(std::sync::Arc::new(icon_data));
-    }
-    let opts = eframe::NativeOptions {
-        viewport,
-        ..Default::default()
-    };
-    eframe::run_native("LightVC", opts, Box::new(move |_cc| Ok(Box::new(app))))?;
-    Ok(())
+    crate::ui::run(state, cmd.demo)
 }
 
 /// paper_snv の製品経路の部品(training/export_{pfront,snv_model,rvoc}.py の出力)と登録の波形(48 kHz)。

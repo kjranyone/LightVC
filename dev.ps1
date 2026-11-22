@@ -237,6 +237,18 @@ $binPath    = Join-Path $repoRoot "target\$profileDir\lightvc-app.exe"
 
 # --- 1. Build ---------------------------------------------------------------
 if (-not $NoBuild) {
+    # gpui の Windows ビルドは fxc.exe(Windows SDK)を PATH に要求する。無ければ SDK の bin を足す。
+    if (-not (Get-Command fxc.exe -ErrorAction SilentlyContinue)) {
+        $sdkFxc = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\fxc.exe' -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | Select-Object -First 1
+        if ($sdkFxc) {
+            $env:PATH = "$(Split-Path $sdkFxc.FullName);$env:PATH"
+            Write-Host "    fxc: $($sdkFxc.FullName)" -ForegroundColor DarkGray
+        } else {
+            Write-Err 'fxc.exe が見つからない(gpui のビルドに Windows SDK が要る)。'
+            exit 1
+        }
+    }
     $buildArgs = @('build', '-p', 'lightvc-app')
     if (-not $DebugBuild) { $buildArgs += '--release' }
     $profileLabel = if ($DebugBuild) { 'debug' } else { 'release' }

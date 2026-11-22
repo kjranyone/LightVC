@@ -3,18 +3,16 @@
 //! Subcommands:
 //!   - `snv`:          paper_snv の製品経路のオフライン変換(WAV 48 kHz → WAV)
 //!   - `realtime-snv`: 同じ経路のリアルタイム変換(マイク → スピーカー)
+//!   - `devices`:      使えるホストと入出力装置の一覧
 //!   - `gui`:          Launch the desktop GUI (3 tabs: offline/realtime/voices)
 
-mod app;
-mod assets;
 mod audio_playback;
 mod cli;
 mod file_pick;
 mod offline_tab;
 mod realtime_tab;
-mod theme;
-mod voice_catalog;
-mod widgets;
+mod state;
+mod ui;
 
 use clap::Parser;
 

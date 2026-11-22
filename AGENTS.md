@@ -153,4 +153,4 @@ GUIレビューが必要な場合のみ、実コードとスクショを確認�
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\snap.ps1 -Out docs/screenshots/live.png
 ```
 
-`dev.ps1` は `-Watch`・`-Demo`・`-Snap`・`-BuildOnly`・通常起動(メニュー [1]/[2])が今のアプリで動く。旧経路の DAC 重みの取得・`-Roundtrip`・`-Cuda` / `-Metal` は 2026-11-22 に削除した。
+`dev.ps1` は `-Watch`・`-Demo`・`-Snap`・`-BuildOnly`・通常起動(メニュー [1]/[2])が今のアプリで動く。旧経路の DAC 重みの取得・`-Roundtrip`・`-Cuda` / `-Metal` は 2026-11-22 に削除した。**GUI は 2026-11-22 に GPUI(gpui 0.2.2)へ書き換えた**(オーナー判断「egui を全て削除し GPUI で書き直す」。egui は VST3 / CLAP プラグインの画面[nice-plug-egui]にのみ残る)。`cargo build -p lightvc-app` には fxc.exe(Windows SDK・dev.ps1 が無ければ自動で PATH に足す)が要る。
