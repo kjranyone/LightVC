@@ -153,4 +153,4 @@ GUIレビューが必要な場合のみ、実コードとスクショを確認�
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\snap.ps1 -Out docs/screenshots/live.png
 ```
 
-`dev.ps1` は `-Watch`・`-Demo`・`-Snap`・`-BuildOnly` が今のアプリで動く。DAC の重みの取得（`-Demo` 以外の起動で走る）・`-Roundtrip`・`-Cuda` / `-Metal` は旧経路の名残で、今のアプリには無い。
+`dev.ps1` は `-Watch`・`-Demo`・`-Snap`・`-BuildOnly`・通常起動(メニュー [1]/[2])が今のアプリで動く。旧経路の DAC 重みの取得・`-Roundtrip`・`-Cuda` / `-Metal` は 2026-11-22 に削除した。

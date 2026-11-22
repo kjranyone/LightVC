@@ -1,96 +1,22 @@
-﻿<#
+<#
 .SYNOPSIS
-    LightVC development helper — one-command GUI launch with auto DAC weights.
+    LightVC development helper — build and launch the GUI.
 
 .DESCRIPTION
-    Builds the standalone app (release), ensures the DAC weights are present
-    at models/dac_44khz.safetensors (downloading ~307 MB from HuggingFace
-    on first run), then launches the GUI.
+    Builds the standalone app (release) and launches the GUI. Converter
+    weights (front gate / K3G / rvoc3hi) are optional — the GUI starts
+    without them; pick the operator WAV and the target voice on the
+    Realtime tab and press Load.
 
-    Converter weights are optional — the GUI starts without them. Load a
-    trained checkpoint later via the "Load Converter" button on the
-    Realtime tab once the training agent finishes.
-
-    Demo mode (--Demo) renders with mock data and needs no DAC weights or
+    Demo mode (--Demo) renders with mock data and needs no weights or
     model, useful for layout review. Tabs are switchable inside the app.
     Use --Snap to capture the running window to PNG on demand.
-
-.PARAMETER NoBuild
-    Skip the cargo build step (use the existing binary).
-
-.PARAMETER BuildOnly
-    Build only, do not launch.
-
-.PARAMETER Cuda
-    Pass --cuda to the app (enables CUDA device).
-
-.PARAMETER Metal
-    Pass --metal to the app (enables Metal device on macOS).
-
-.PARAMETER Roundtrip
-    Run a DAC round-trip test on the given WAV instead of launching GUI.
-
-.PARAMETER Input
-    WAV file for -Roundtrip.
-
-.PARAMETER Demo
-    Launch the GUI in demo mode with mock data. No DAC weights or model
-    required. Tabs are switchable inside the app. The menu entry [3] implies
-    -DebugBuild for fast incremental builds during UI review.
-
-.PARAMETER Snap
-    Capture the running LightVC window to PNG (does not launch the app).
-    Saves to docs/screenshots/snap-<timestamp>.png.
-
-.PARAMETER DebugBuild
-    Build and run the debug binary (target\debug) instead of release.
-    Incremental builds are ~3-5s vs minutes for release. Recommended for UI
-    layout work where inference performance is irrelevant. (Named DebugBuild
-    to avoid clashing with PowerShell's built-in -Debug common parameter.)
-
-.PARAMETER Watch
-    UI review loop: build (debug) + launch in demo mode, then poll
-    crates/lightvc-app/src for .rs edits and automatically rebuild ->
-    relaunch -> re-screenshot. Sub-10s iteration. Ctrl+C to exit.
-
-.EXAMPLE
-    .\dev.ps1
-    Build + download DAC weights + launch GUI.
-
-.EXAMPLE
-    .\dev.ps1 -NoBuild
-    Launch GUI using the existing release binary.
-
-.EXAMPLE
-    .\dev.ps1 -Roundtrip -Input C:\audio\test.wav
-    Validate DAC encode/decode on a sample.
-
-.EXAMPLE
-    .\dev.ps1 -Demo
-    Launch GUI in demo mode (no model/DAC needed). Switch tabs in the app.
-
-.EXAMPLE
-    .\dev.ps1 -DebugBuild -Demo
-    Fast UI review: debug build + demo mode. Use this for layout iteration.
-
-.EXAMPLE
-    .\dev.ps1 -Watch
-    Auto-reload loop: edit .rs -> rebuild -> relaunch -> screenshot.
-    Ideal for AI-assisted GUI layout review.
-
-.EXAMPLE
-    .\dev.ps1 -Snap
-    Capture the running window to docs/screenshots/.
 #>
 [CmdletBinding()]
 param(
     [switch]$NoBuild,
     [switch]$BuildOnly,
-    [switch]$Cuda,
-    [switch]$Metal,
-    [switch]$Roundtrip,
     [switch]$Snap,
-    [string]$Input,
     [string]$Output,
     [switch]$Demo,
     [switch]$DebugBuild,
@@ -100,10 +26,6 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $repoRoot
-
-$modelsDir = Join-Path $repoRoot 'models'
-$dacPath   = Join-Path $modelsDir 'dac_44khz.safetensors'
-$dacUrl    = 'https://huggingface.co/descript/dac_44khz/resolve/main/model.safetensors'
 
 function Write-Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 function Write-Ok($msg)   { Write-Host "    $msg" -ForegroundColor Green }
@@ -117,11 +39,10 @@ function Show-Menu {
     Write-Host '  ║          LightVC Development             ║' -ForegroundColor Magenta
     Write-Host '  ╚══════════════════════════════════════════╝' -ForegroundColor Magenta
     Write-Host ''
-    Write-Menu '  [1] GUI を起動（通常・release・DAC重みDL + ビルド）'
+    Write-Menu '  [1] GUI を起動（通常・release・ビルド）'
     Write-Menu '  [2] GUI を起動（release・ビルドスキップ）'
     Write-Menu '  [3] デモ＋Watch（debug・.rs編集で自動リロード・AI レビュー用）'
-    Write-Menu '  [4] DAC ラウンドトリップテスト'
-    Write-Menu '  [5] ビルドのみ'
+    Write-Menu '  [4] ビルドのみ'
     Write-Menu '  [Q] 終了'
     Write-Host ''
     return (Read-Host '番号を選択')
@@ -279,7 +200,7 @@ function Invoke-WatchLoop {
     }
 }
 
-$hasAction = $BuildOnly -or $Cuda -or $Metal -or $Roundtrip -or $Demo -or $Watch -or $Input -or $Output
+$hasAction = $BuildOnly -or $Demo -or $Watch -or $Output
 if (-not $hasAction) {
     $choice = Show-Menu
     Write-Host ''
@@ -292,10 +213,6 @@ if (-not $hasAction) {
         $Watch = $true
         $action = 'watch'
     } elseif ($choice -eq '4') {
-        $Roundtrip = $true
-        $Input = Read-Host 'WAV ファイルパス'
-        $action = 'roundtrip'
-    } elseif ($choice -eq '5') {
         $BuildOnly = $true
         $action = 'buildonly'
     } elseif ($choice -eq 'q' -or $choice -eq 'Q') {
@@ -304,7 +221,6 @@ if (-not $hasAction) {
         Write-Err ('無効な選択: ' + $choice)
         exit 1
     }
-    if ($action -eq 'roundtrip' -and -not $Input) { exit 1 }
 }
 
 # Watch mode: build + launch demo, then poll for .rs edits and auto-reload.
@@ -313,9 +229,6 @@ if ($Watch) {
     Invoke-WatchLoop
     exit 0
 }
-
-# Demo mode needs neither DAC weights nor a model.
-$skipDac = $Demo
 
 # Binary path depends on build profile. Computed here (after the menu may have
 # set $DebugBuild) so demo mode uses the fast debug binary.
@@ -349,60 +262,14 @@ if (-not (Test-Path $binPath)) {
     exit 1
 }
 
-# --- 2. DAC weights (skipped in demo/screenshot mode) -----------------------
-if (-not $skipDac) {
-    if (-not (Test-Path $dacPath)) {
-        Write-Step "Downloading DAC weights (~307 MB) to models\dac_44khz.safetensors"
-        if (-not (Test-Path $modelsDir)) {
-            New-Item -ItemType Directory -Path $modelsDir | Out-Null
-        }
-        # Use BITS for resumable transfer on Windows; fall back to Invoke-WebRequest.
-        $tmp = "$dacPath.tmp"
-        try {
-            Start-BitsTransfer -Source $dacUrl -Destination $tmp -DisplayName 'LightVC DAC weights'
-            Move-Item -Force $tmp $dacPath
-        } catch {
-            Write-Host '    BITS unavailable, using Invoke-WebRequest...' -ForegroundColor Yellow
-            try {
-                Invoke-WebRequest -Uri $dacUrl -OutFile $tmp -UseBasicParsing
-                Move-Item -Force $tmp $dacPath
-            } catch {
-                Write-Err "Download failed: $_"
-                Write-Err "Manual download: $dacUrl"
-                Write-Err "Place at: $dacPath"
-                exit 1
-            }
-        }
-        Write-Ok 'DAC weights downloaded.'
-    } else {
-        Write-Ok "DAC weights present: $dacPath"
-     }
-}
-
-# --- 3. Roundtrip test ------------------------------------------------------
-if ($Roundtrip) {
-    if (-not $Input) {
-        Write-Err '-Roundtrip requires -Input <wav>'
-        exit 1
-    }
-    $out = if ($Output) { $Output } else { 'roundtrip_output.wav' }
-    Write-Step "Running DAC round-trip: $Input -> $out"
-    & $binPath roundtrip --input $Input --output $out --dac-weights $dacPath
-    exit $LASTEXITCODE
-}
-
-# --- 5. Launch GUI ----------------------------------------------------------
-$deviceFlags = @()
-if ($Cuda)  { $deviceFlags += '--cuda' }
-if ($Metal) { $deviceFlags += '--metal' }
-
+# --- 2. Launch GUI ----------------------------------------------------------
 if ($Demo) {
     Write-Step 'デモモードで起動（自動スクショ付き）'
-    Write-Host  '    (mock data, no model/DAC required; tabs switchable inside the app)' -ForegroundColor DarkGray
-    Invoke-LightvcWithCapture -LaunchArgs (@('gui', '--demo') + $deviceFlags)
+    Write-Host  '    (mock data, no model required; tabs switchable inside the app)' -ForegroundColor DarkGray
+    Invoke-LightvcWithCapture -LaunchArgs @('gui', '--demo')
 } else {
     Write-Step 'Launching LightVC GUI'
-    Write-Host  '    (converter weights optional — load later via Realtime tab)' -ForegroundColor DarkGray
-    & $binPath gui --dac-weights $dacPath @deviceFlags
+    Write-Host  '    (converter weights optional — pick operator + target on the Realtime tab)' -ForegroundColor DarkGray
+    & $binPath gui
 }
 exit $LASTEXITCODE
