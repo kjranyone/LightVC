@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use gpui::{
-    bounce, div, ease_in_out, prelude::*, px, rgb, size, Animation, AnimationExt as _, AnyElement,
+    bounce, div, ease_in_out, prelude::*, px, size, Animation, AnimationExt as _, AnyElement,
     App, Application, Bounds, Context, ElementId, FontWeight, InteractiveElement, Render,
     SharedString, Stateful, Styled, TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
@@ -23,7 +23,9 @@ const SEMITONES: [(f32, &str); 4] = [(0.0, "+0"), (5.0, "+5"), (7.0, "+7"), (12.
 const BUFFERS: [u32; 5] = [128, 240, 256, 512, 1024];
 const METER_W: f32 = 180.0;
 
-/// M3E の色ロール・シェイプ(DESIGN.md §1〜§3)。seed = きゃわわピンク/ラベンダン。rgb/hsla は const fn ではないので関数で持つ。
+/// M3E の色ロール・シェイプ(DESIGN.md §1〜§3)。seed = きゃわわピンク/ラベンダン。
+/// rgb/hsla は const fn ではないので関数で持つ。hover は M3 の state layer
+/// (部品自身の色を 8〜12% 重ねる)を固定色で emulation した物。
 mod md {
     use gpui::{hsla, rgb, Hsla, Rgba};
 
@@ -39,6 +41,10 @@ mod md {
     pub fn on_primary_container() -> Rgba {
         rgb(0x4A_1B_31)
     }
+    /// filled button の state layer(primary を 12% 濃く)
+    pub fn primary_pressed() -> Rgba {
+        rgb(0xC9_4A_78)
+    }
     pub fn secondary() -> Rgba {
         rgb(0x7C_68_BE)
     }
@@ -47,6 +53,10 @@ mod md {
     }
     pub fn on_secondary_container() -> Rgba {
         rgb(0x2A_20_50)
+    }
+    /// tonal button の state layer
+    pub fn secondary_container_pressed() -> Rgba {
+        rgb(0xD5_C9_F0)
     }
     pub fn tertiary() -> Rgba {
         rgb(0x2E_B8_8C)
@@ -70,10 +80,10 @@ mod md {
         rgb(0x45_09_0F)
     }
     pub fn surface() -> Rgba {
-        rgb(0xF7_F1_F9)
+        rgb(0xF3_ED_F7)
     }
     pub fn surface_low() -> Rgba {
-        rgb(0xF2_EB_F5)
+        rgb(0xF7_F2_FA)
     }
     pub fn surface_high() -> Rgba {
         rgb(0xE6_DC_EB)
@@ -91,13 +101,17 @@ mod md {
         hsla(280.0 / 360.0, 0.14, 0.55, 1.0)
     }
     pub fn outline_variant() -> Rgba {
-        rgb(0xD9_CD_DF)
+        rgb(0xE0_D5_E8)
+    }
+    /// outlined/text button の state layer(primary を 8%)
+    pub fn primary_overlay() -> Rgba {
+        rgb(0xF9_E5_EC)
     }
 
     // シェイプスケール(§3)。tension = 診断だけ四角。
     pub const SHAPE_XS: f32 = 4.0;
-    pub const SHAPE_MD: f32 = 10.0;
-    pub const SHAPE_LG: f32 = 14.0;
+    pub const SHAPE_MD: f32 = 16.0;
+    pub const SHAPE_LG: f32 = 28.0;
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -320,6 +334,7 @@ impl LightVcUi {
 // ---- M3E 部品キット(DESIGN.md §4) ------------------------------------------------
 
 /// 強調の階層。filled = 高(画面に 1 個)・tonal = 中・outlined = 低付き枠・text = 最低。
+/// hover は M3 の state layer(部品自身の色を重ねる)に相当する固定色。
 enum Emph {
     Filled,
     Tonal,
@@ -333,16 +348,16 @@ fn btn(id: impl Into<ElementId>, label: impl Into<SharedString>, e: Emph) -> Sta
         .map(|s| match e {
             Emph::Filled => s.px_5().py_2().rounded_full().bg(md::primary()).text_color(md::on_primary()),
             Emph::Tonal => s.px_4().py_2().rounded_full().bg(md::secondary_container()).text_color(md::on_secondary_container()),
-            Emph::Outlined => s.px_4().py_2().rounded_full().bg(gpui::transparent_black()).text_color(md::on_surface()).border_1().border_color(md::outline()),
-            Emph::Text => s.px_2().py_1().rounded_md().bg(gpui::transparent_black()).text_color(md::on_surface_variant()),
+            Emph::Outlined => s.px_4().py_2().rounded_full().bg(gpui::transparent_black()).text_color(md::primary()).border_1().border_color(md::outline_variant()),
+            Emph::Text => s.px_2().py_1().rounded_md().bg(gpui::transparent_black()).text_color(md::primary()),
         })
         .text_size(px(13.))
         .font_weight(FontWeight::MEDIUM)
         .hover(|s| match e {
-            Emph::Filled => s.bg(rgb(0xEC_80_A8)),
-            Emph::Tonal => s.bg(rgb(0xD9_CE_F2)),
-            Emph::Outlined => s.bg(md::surface_low()),
-            Emph::Text => s.bg(md::surface_high()),
+            Emph::Filled => s.bg(md::primary_pressed()),
+            Emph::Tonal => s.bg(md::secondary_container_pressed()),
+            Emph::Outlined => s.bg(md::primary_overlay()),
+            Emph::Text => s.bg(md::primary_overlay()),
         })
         .child(label.into())
 }
@@ -356,12 +371,12 @@ fn group_seg(id: impl Into<ElementId>, label: impl Into<SharedString>, selected:
         .font_weight(FontWeight::MEDIUM)
         .map(|s| {
             if selected {
-                s.px_4().py_1().bg(md::primary()).text_color(md::on_primary())
+                s.px_5().py_1().bg(md::primary()).text_color(md::on_primary())
             } else {
                 s.px_3().py_1().text_color(md::on_surface_variant())
             }
         })
-        .hover(|s| s.bg(md::primary_container()))
+        .hover(|s| if selected { s.bg(md::primary_pressed()) } else { s.bg(md::primary_overlay()) })
         .child(label.into())
 }
 
@@ -369,7 +384,7 @@ fn group_container() -> gpui::Div {
     div().flex().items_center().gap_1().px_1().py_1().rounded_full().bg(md::surface_high())
 }
 
-/// filter chip(選択で primary-container + ✓)。
+/// filter chip。選択 = secondary-container + ✓(M3 の filter chip 仕様)。
 fn chip(id: impl Into<ElementId>, label: impl Into<SharedString>, selected: bool) -> Stateful<gpui::Div> {
     let label: SharedString = label.into();
     let text: SharedString = if selected { format!("✓ {label}").into() } else { label };
@@ -382,20 +397,20 @@ fn chip(id: impl Into<ElementId>, label: impl Into<SharedString>, selected: bool
         .font_weight(FontWeight::MEDIUM)
         .map(|s| {
             if selected {
-                s.bg(md::primary_container()).text_color(md::on_primary_container()).border_1().border_color(md::primary())
+                s.bg(md::secondary_container()).text_color(md::on_secondary_container()).border_1().border_color(md::secondary())
             } else {
                 s.bg(md::surface_lowest()).text_color(md::on_surface_variant()).border_1().border_color(md::outline_variant())
             }
         })
-        .hover(|s| s.bg(md::primary_container()))
+        .hover(|s| s.bg(md::secondary_container_pressed()))
         .child(text)
 }
 
 fn badge(text: &str, kind: BadgeKind) -> gpui::Div {
     let (bg, fg) = match kind {
-        BadgeKind::Good => (md::tertiary(), md::on_primary()),
-        BadgeKind::Mid => (md::secondary(), md::on_primary()),
-        BadgeKind::Off => (md::outline_variant(), md::on_surface_variant()),
+        BadgeKind::Good => (md::tertiary(), md::on_error()),
+        BadgeKind::Mid => (md::secondary(), md::on_error()),
+        BadgeKind::Off => (md::surface_high(), md::on_surface_variant()),
     };
     div().px_3().py_1().rounded_full().text_size(px(11.)).font_weight(FontWeight::BOLD).bg(bg).text_color(fg).child(text.to_string())
 }
@@ -458,14 +473,14 @@ fn heading(text: &str) -> gpui::Div {
     div().text_size(px(15.)).text_color(md::on_surface()).font_weight(FontWeight::SEMIBOLD).child(text.to_string())
 }
 
-/// 主役の数値(headline-emphasis・単位は label-small で薄く)。
+/// 主役の数値(headline-emphasis 32px・単位は label-small で薄く)。
 fn stat(value: String, unit: &str, color: gpui::Rgba) -> gpui::Div {
     div()
         .flex()
         .items_baseline()
         .gap_1()
-        .child(div().text_size(px(24.)).font_weight(FontWeight::BOLD).text_color(color).child(value))
-        .child(div().text_size(px(10.5)).text_color(md::on_surface_variant()).child(unit.to_string()))
+        .child(div().text_size(px(32.)).font_weight(FontWeight::BOLD).text_color(color).child(value))
+        .child(div().text_size(px(11.)).text_color(md::on_surface_variant()).child(unit.to_string()))
 }
 
 fn subtext(text: impl Into<SharedString>) -> gpui::Div {
@@ -473,7 +488,7 @@ fn subtext(text: impl Into<SharedString>) -> gpui::Div {
 }
 
 fn card() -> gpui::Div {
-    div().bg(md::surface_low()).rounded(px(md::SHAPE_MD)).p_4().flex().flex_col().gap_2()
+    div().bg(md::surface_lowest()).rounded(px(md::SHAPE_MD)).p_4().flex().flex_col().gap_2()
 }
 
 fn toggle_stop(player_slot: &mut Option<AudioPlayer>) {
@@ -505,8 +520,7 @@ impl Render for LightVcUi {
             .gap_4()
             .px_5()
             .py_3()
-            .bg(md::surface_low())
-            .child(div().text_size(px(22.)).font_weight(FontWeight::BOLD).text_color(md::primary()).child("✦ LightVC"))
+            .child(div().text_size(px(24.)).font_weight(FontWeight::BOLD).text_color(md::primary()).child("✦ LightVC"))
             .child(group_container().child(group_seg("tab_off", "Offline", tab == Tab::Offline).on_click(cx.listener(|this, _, _, cx| {
                 this.tab = Tab::Offline;
                 cx.notify();
@@ -537,7 +551,9 @@ impl Render for LightVcUi {
             .gap_3()
             .px_5()
             .py_2()
-            .bg(md::surface_low())
+            .bg(md::surface_lowest())
+            .border_t_1()
+            .border_color(md::outline_variant())
             .child(div().text_size(px(11.)).text_color(status_color).child(format!("● {}", err.unwrap_or(status_line))))
             .child(div().flex_1())
             .child(subtext("Out"))
@@ -818,39 +834,48 @@ impl LightVcUi {
 
         let mut el = div().flex().flex_col().gap_3().w_full();
 
-        // ===== 1. 運用(hero・最も明るい器・最も大きく)=====
+        // ===== 1. 運用(hero)= 状態が色を駆動する M3E の色ブロック =====
+        // CONVERTING=tertiary-container / BYPASS=secondary-container / STOPPED=surface-high。
         let (status_label, status_kind) = if self.rt_running {
             if self.rt_bypass || force_bypass { ("BYPASS", BadgeKind::Mid) } else { ("CONVERTING", BadgeKind::Good) }
         } else {
             ("STOPPED", BadgeKind::Off)
         };
+        let (hero_bg, hero_fg) = if self.rt_running {
+            if self.rt_bypass || force_bypass {
+                (md::secondary_container(), md::on_secondary_container())
+            } else {
+                (md::tertiary_container(), md::on_tertiary_container())
+            }
+        } else {
+            (md::surface_high(), md::on_surface())
+        };
         let mut hero = div()
-            .bg(md::surface_high())
+            .bg(hero_bg)
             .rounded(px(md::SHAPE_LG))
-            .p_5()
+            .p_6()
             .flex()
             .flex_col()
-            .gap_3();
+            .gap_4();
 
         hero = hero.child(
             div().flex().flex_wrap().items_center().gap_3().child(badge(status_label, status_kind)).child(
-                div().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).text_color(md::on_surface()).child(format!("> {}", ref_name.clone().unwrap_or_else(|| "no voice".into()))),
+                div().text_size(px(16.)).font_weight(FontWeight::SEMIBOLD).text_color(hero_fg).child(format!("> {}", ref_name.clone().unwrap_or_else(|| "no voice".into()))),
             ).when(self.rt_running && !self.rt_bypass && has_engine, |r| {
                 r.child(div().flex_1()).child(div().text_size(px(11.)).font_weight(FontWeight::BOLD).text_color(if m.gate_open { md::tertiary() } else { md::on_surface_variant() }).child(if m.gate_open { "GATE" } else { "gate" }))
             }),
         );
 
         let measuring = m.blocks > 0 || m.compute_p99 > 0.0;
-        let cc = |v: f32| if !measuring { md::on_surface_variant() } else if v >= 5.0 { md::error() } else { md::tertiary() };
         hero = hero.child(
             div()
                 .flex()
                 .flex_wrap()
                 .items_baseline()
-                .gap_6()
-                .child(stat(format!("{:.0}", m.latency_ms), "ms E2E", md::on_surface()))
-                .child(stat(if measuring { format!("{:.2}", m.compute_p99) } else { "—".into() }, "compute p99 ms", cc(m.compute_p99)))
-                .child(stat(format!("{:.2}", m.rtf), "RTF", md::on_surface())),
+                .gap_8()
+                .child(stat(format!("{:.0}", m.latency_ms), "ms E2E", hero_fg))
+                .child(stat(if measuring { format!("{:.2}", m.compute_p99) } else { "—".into() }, "compute p99 ms", hero_fg))
+                .child(stat(format!("{:.2}", m.rtf), "RTF", hero_fg)),
         );
         hero = hero.child(
             div()
@@ -858,11 +883,11 @@ impl LightVcUi {
                 .flex_wrap()
                 .items_center()
                 .gap_2()
-                .child(subtext("p50"))
-                .child(div().text_size(px(11.)).text_color(cc(m.compute_p50)).child(if measuring { format!("{:.2}", m.compute_p50) } else { "—".into() }))
-                .child(subtext("p95"))
-                .child(div().text_size(px(11.)).text_color(cc(m.compute_p95)).child(if measuring { format!("{:.2}", m.compute_p95) } else { "—".into() }))
-                .child(div().text_size(px(11.)).text_color(md::on_surface_variant()).child(format!("host {}", if m.host.is_empty() { "-" } else { &m.host })))
+                .child(div().text_size(px(11.)).text_color(hero_fg).child("p50"))
+                .child(div().text_size(px(11.)).text_color(hero_fg).child(if measuring { format!("{:.2}", m.compute_p50) } else { "—".into() }))
+                .child(div().text_size(px(11.)).text_color(hero_fg).child("p95"))
+                .child(div().text_size(px(11.)).text_color(if measuring && m.compute_p95 >= 5.0 { md::error() } else { hero_fg }).child(if measuring { format!("{:.2}", m.compute_p95) } else { "—".into() }))
+                .child(div().text_size(px(11.)).text_color(hero_fg).child(format!("host {}", if m.host.is_empty() { "-" } else { &m.host })))
                 .when(m.overrun > 0 || m.underrun > 0, |r| {
                     r.child(div().text_size(px(11.)).text_color(md::error()).child(format!("in:{} out:{}", m.overrun, m.underrun)))
                 }),
@@ -1040,8 +1065,16 @@ impl LightVcUi {
         model_card = model_card.child(target_row);
         el = el.child(model_card);
 
-        // ===== 3. 診断(白・四角 = tension)=====
-        let mut diag = div().bg(md::surface_lowest()).rounded(px(md::SHAPE_XS)).p_4().flex().flex_col().gap_3();
+        // ===== 3. 診断(白・四角 = tension・計器らしい髪の縁)=====
+        let mut diag = div()
+            .bg(md::surface_lowest())
+            .border_1()
+            .border_color(md::outline_variant())
+            .rounded(px(md::SHAPE_XS))
+            .p_5()
+            .flex()
+            .flex_col()
+            .gap_3();
         diag = diag.child(div().flex().flex_wrap().items_center().gap_4().child(subtext("Input")).child(meter(self.metrics.input_rms * 6.0, md::primary())));
         let mut buf_group = group_container();
         for n in BUFFERS {
@@ -1064,12 +1097,12 @@ impl LightVcUi {
         let algo_ms = lightvc_core::snv_stream::SnvStream::LATENCY_SAMPLES as f32 / 48.0;
         let total = (buf_ms * 2.0 + resamp_ms * 2.0 + algo_ms).max(0.001);
         let segs: [(f32, gpui::Rgba); 5] = [(buf_ms, md::secondary()), (resamp_ms, md::tertiary()), (algo_ms, md::primary()), (resamp_ms, md::tertiary()), (buf_ms, md::secondary())];
-        let mut seg_row = div().flex().w_full().h(px(8.));
+        let mut seg_row = div().flex().w_full().h(px(8.)).rounded_full().overflow_hidden().bg(md::surface_high());
         for (ms, c) in segs {
-            seg_row = seg_row.child(div().flex_grow().h_full().bg(c).map(move |s| s.w(px(600.0 * ms / total))));
+            seg_row = seg_row.child(div().h_full().bg(c).map(move |s| s.w(px(600.0 * ms / total))));
         }
         diag = diag.child(seg_row);
-        diag = diag.child(div().flex().gap_4().child(subtext("buf")).child(subtext("resamp")).child(subtext("algo")).child(subtext("E2E の内訳")));
+        diag = diag.child(div().flex().gap_3().child(subtext("往復")).child(subtext("buf")).child(subtext("↓")).child(subtext("resamp")).child(subtext("↓")).child(subtext("algo")).child(subtext("↓")).child(subtext("resamp")).child(subtext("buf")));
         el = el.child(diag);
 
         el.into_any_element()

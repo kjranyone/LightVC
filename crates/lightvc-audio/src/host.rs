@@ -56,7 +56,7 @@ fn from_pref(pref: HostPref) -> Result<cpal::Host> {
         #[cfg(all(windows, feature = "asio"))]
         HostPref::Asio => cpal::host_from_id(cpal::HostId::Asio).map_err(|e| anyhow!("ASIO が開けない(ドライバが無い?): {e}")),
         #[cfg(not(all(windows, feature = "asio")))]
-        HostPref::Asio => Err(anyhow!("このビルドには ASIO が無い(--features asio)")),
+        HostPref::Asio => Err(anyhow!("このビルドには ASIO が無い(ビルド: --features asio・事前検査: tools/setup-asio.ps1・SDK は Steinberg から各自で入手)")),
     }
 }
 

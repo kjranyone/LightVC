@@ -20,7 +20,8 @@ param(
     [string]$Output,
     [switch]$Demo,
     [switch]$DebugBuild,
-    [switch]$Watch
+    [switch]$Watch,
+    [switch]$Asio
 )
 
 $ErrorActionPreference = 'Stop'
@@ -251,6 +252,15 @@ if (-not $NoBuild) {
     }
     $buildArgs = @('build', '-p', 'lightvc-app')
     if (-not $DebugBuild) { $buildArgs += '--release' }
+    if ($Asio) {
+        # cpal/asio は Steinberg の SDK(CPAL_ASIO_DIR)と clang を要求する。事前検査は tools\setup-asio.ps1。
+        if (-not $env:CPAL_ASIO_DIR) {
+            Write-Err 'ASIO ビルドには CPAL_ASIO_DIR が必要。tools\setup-asio.ps1 を参照。'
+            exit 1
+        }
+        $buildArgs += '--features'
+        $buildArgs += 'asio'
+    }
     $profileLabel = if ($DebugBuild) { 'debug' } else { 'release' }
     Write-Step "Building $profileLabel binary (cargo build $buildArgs)"
     $ErrorActionPreference = 'Continue'
