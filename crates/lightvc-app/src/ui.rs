@@ -374,11 +374,11 @@ fn toggle_stop(player_slot: &mut Option<AudioPlayer>) {
     }
 }
 
-fn play_path(player_slot: &mut Option<AudioPlayer>, path: &PathBuf) {
-    if let Ok((wav, sr)) = audio_playback::load_wav_mono(path) {
-        let wav44 = audio_playback::resample_linear(&wav, sr);
-        *player_slot = AudioPlayer::play(wav44).ok();
-    }
+fn play_path(player_slot: &mut Option<AudioPlayer>, path: &PathBuf) -> anyhow::Result<()> {
+    let (wav, sr) = audio_playback::load_wav_mono(path).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+    let wav44 = audio_playback::resample_linear(&wav, sr);
+    *player_slot = Some(AudioPlayer::play(wav44)?);
+    Ok(())
 }
 
 impl Render for LightVcUi {
@@ -565,7 +565,10 @@ impl LightVcUi {
                         if this.offline.source_preview.is_some() {
                             toggle_stop(&mut this.offline.source_preview);
                         } else if let Some(p) = this.offline.source.clone() {
-                            play_path(&mut this.offline.source_preview, &p);
+                            match play_path(&mut this.offline.source_preview, &p) {
+                                Ok(()) => this.state.lock().unwrap().status = format!("再生中: {}", p.display()),
+                                Err(e) => this.state.lock().unwrap().error = Some(format!("再生できない: {e}")),
+                            }
                         }
                         cx.notify();
                     })))
@@ -589,7 +592,10 @@ impl LightVcUi {
                         if this.offline.reference_preview.is_some() {
                             toggle_stop(&mut this.offline.reference_preview);
                         } else if let Some(p) = this.offline.reference.clone() {
-                            play_path(&mut this.offline.reference_preview, &p);
+                            match play_path(&mut this.offline.reference_preview, &p) {
+                                Ok(()) => this.state.lock().unwrap().status = format!("再生中: {}", p.display()),
+                                Err(e) => this.state.lock().unwrap().error = Some(format!("再生できない: {e}")),
+                            }
                         }
                         cx.notify();
                     })))
@@ -1006,19 +1012,27 @@ impl LightVcUi {
                         .rounded_lg()
                         .map(move |s| if selected { s.bg(col::card_tint()) } else { s })
                         .hover(|s| s.bg(col::card_tint()))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            let reload = {
-                                let mut s = this.state.lock().unwrap();
-                                s.selected_voice = Some(i);
-                                s.model_loaded && !s.settings.operator.is_empty()
-                            };
-                            if reload {
-                                state::load_engine(&this.state);
-                            }
-                            cx.notify();
-                        }))
-                        .child(div().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).text_color(if selected { col::pink() } else { col::text() }).child(name.clone()))
-                        .child(div().flex_1().text_size(px(10.)).text_color(col::text_muted()).child(path.display().to_string()))
+                        .child(
+                            div()
+                                .id(SharedString::from(format!("voice_sel_{i}")))
+                                .flex()
+                                .flex_1()
+                                .items_center()
+                                .gap_3()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    let reload = {
+                                        let mut s = this.state.lock().unwrap();
+                                        s.selected_voice = Some(i);
+                                        s.model_loaded && !s.settings.operator.is_empty()
+                                    };
+                                    if reload {
+                                        state::load_engine(&this.state);
+                                    }
+                                    cx.notify();
+                                }))
+                                .child(div().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).text_color(if selected { col::pink() } else { col::text() }).child(name.clone()))
+                                .child(div().flex_1().text_size(px(10.)).text_color(col::text_muted()).child(path.display().to_string())),
+                        )
                         .child(btn(SharedString::from(format!("voice_play_{i}")), if playing { "Stop" } else { "Play" }, Btn::Ghost).on_click({
                             let path = path2.clone();
                             cx.listener(move |this, _, _, cx| {
@@ -1027,8 +1041,18 @@ impl LightVcUi {
                                     this.catalog.playing = None;
                                 } else {
                                     toggle_stop(&mut this.catalog.player);
-                                    play_path(&mut this.catalog.player, &path);
-                                    this.catalog.playing = Some(i);
+                                    match play_path(&mut this.catalog.player, &path) {
+                                        Ok(()) => {
+                                            this.catalog.playing = Some(i);
+                                            let mut s = this.state.lock().unwrap();
+                                            s.error = None;
+                                            s.status = format!("再生中: {}", path.display());
+                                        }
+                                        Err(e) => {
+                                            this.catalog.playing = None;
+                                            this.state.lock().unwrap().error = Some(format!("再生できない: {e}"));
+                                        }
+                                    }
                                 }
                                 cx.notify();
                             })

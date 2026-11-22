@@ -67,6 +67,8 @@ impl AudioPlayer {
                     std::thread::sleep(std::time::Duration::from_millis(50));
                 }
             }
+            // 正常終了でも装置が開けなくても再生中の旗は必ず下ろす(UI が永久に「再生中」を読まないように)。
+            playing_clone.store(false, Ordering::Relaxed);
         });
 
         Ok(Self {
