@@ -32,3 +32,10 @@ hound = "3.5"
 opt-level = 3
 lto = "fat"
 codegen-units = 1
+
+# 人間の動作確認用: release 相当の最適化(実時間推論が動く)のまま LTO を切り、差分ビルドを有効にする
+[profile.dev-release]
+inherits = "release"
+lto = false
+incremental = true
+codegen-units = 256

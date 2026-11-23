@@ -123,6 +123,12 @@ pub struct RealtimeSnvCmd {
     /// オーディオホスト (default / wasapi / asio。未指定なら LVC_HOST → 既定の方針)
     #[arg(long, default_value = "default")]
     pub host: String,
+    /// 入力オーディオホスト (省略時は --host)
+    #[arg(long)]
+    pub input_host: Option<String>,
+    /// 出力オーディオホスト (省略時は --host)
+    #[arg(long)]
+    pub output_host: Option<String>,
     /// 入力装置(`devices` の一覧の番号・未指定 = 既定)
     #[arg(long)]
     pub input: Option<usize>,
@@ -133,18 +139,14 @@ pub struct RealtimeSnvCmd {
 
 pub fn run_devices() -> Result<()> {
     let mut shown = Vec::new();
-    for pref in [lightvc_audio::HostPref::Default, lightvc_audio::HostPref::Wasapi, lightvc_audio::HostPref::Asio] {
-        let Ok(host) = lightvc_audio::host::pick(pref) else { continue };
-        let name = host.id().name().to_ascii_lowercase();
-        if shown.contains(&name) {
-            continue;
-        }
-        shown.push(name.clone());
-        let inputs = lightvc_audio::DuplexStream::list_input_devices_on(&host)?;
-        let outputs = lightvc_audio::DuplexStream::list_output_devices_on(&host)?;
+    for pref in [lightvc_audio::HostPref::Asio, lightvc_audio::HostPref::Wasapi] {
+        let Ok(inputs) = lightvc_audio::DuplexStream::list_inputs(pref) else { continue };
+        let Ok(outputs) = lightvc_audio::DuplexStream::list_outputs(pref) else { continue };
         if inputs.is_empty() && outputs.is_empty() {
             continue;
         }
+        let name = pref.label().to_string();
+        shown.push(name.clone());
         println!("host {name}:");
         for (i, d) in inputs.iter().enumerate() {
             println!("  in  {i}: {} ({}Hz, {}ch)", d.name, d.sample_rate, d.channels);
@@ -213,7 +215,6 @@ pub fn run_snv(cmd: SnvCmd) -> Result<()> {
 }
 
 pub fn run_realtime_snv(cmd: RealtimeSnvCmd) -> Result<()> {
-    use cpal::traits::{DeviceTrait, HostTrait};
     use lightvc_core::snv_stream::SnvStream;
     const HOP: usize = SnvStream::BLOCK;
     const SR: usize = 48_000;
@@ -226,30 +227,15 @@ pub fn run_realtime_snv(cmd: RealtimeSnvCmd) -> Result<()> {
         let mut sink = vec![0f32; HOP];
         vc.process_block(&warm, &mut sink);
     }
-    let host_pref = lightvc_audio::host::HostPref::parse(&cmd.host)?;
-    let host = lightvc_audio::host::pick(host_pref)?;
-    let host_name = host.id().name().to_ascii_lowercase();
-    let pick_dev = |idx: Option<usize>, inputs: bool| {
-        let devs = if inputs { host.input_devices().ok() } else { host.output_devices().ok() };
-        match idx {
-            None => None,
-            Some(i) => devs.and_then(|mut d| d.nth(i)),
-        }
-    };
-    let input = pick_dev(cmd.input, true).or_else(|| host.default_input_device()).ok_or_else(|| anyhow::anyhow!("No input device found ({host_name})"))?;
-    let output = pick_dev(cmd.output, false).or_else(|| host.default_output_device()).ok_or_else(|| anyhow::anyhow!("No output device found ({host_name})"))?;
-    let in_cfg = input.default_input_config()?;
-    let out_cfg = output.default_output_config()?;
-    let buf = if cmd.buffer == 0 { cpal::BufferSize::Default } else { cpal::BufferSize::Fixed(cmd.buffer) };
-    let (engine, mut io) = match lightvc_audio::AudioEngine::start_with(
-        &input, &output, SR as u32, SR as u32, in_cfg.channels(), out_cfg.channels(), buf) {
-        Ok((e, io)) => (e, io),
-        Err(e48) => {
-            // 両方の装置の既定レートで開く(入出力でレートが違っても up/down の変換で繋ぐ)。
-            lightvc_audio::AudioEngine::start_with(&input, &output, in_cfg.sample_rate(), out_cfg.sample_rate(), in_cfg.channels(), out_cfg.channels(), buf)
-                .map_err(|e| anyhow::anyhow!("48 kHz も既定レート({}/{})も開けない: {e48} / {e}", in_cfg.sample_rate(), out_cfg.sample_rate()))?
-        }
-    };
+    let in_host = lightvc_audio::HostPref::parse(cmd.input_host.as_deref().unwrap_or(&cmd.host))?;
+    let out_host = lightvc_audio::HostPref::parse(cmd.output_host.as_deref().unwrap_or(&cmd.host))?;
+    let (engine, mut io) = lightvc_audio::AudioEngine::start_endpoints(
+        lightvc_audio::AudioEndpoint { host: in_host, device_index: cmd.input, device_name: None },
+        lightvc_audio::AudioEndpoint { host: out_host, device_index: cmd.output, device_name: None },
+        SR as u32,
+        cmd.buffer,
+    )?;
+    let host_name = engine.host_label.clone();
     let (csr, psr) = (engine.capture_sample_rate as usize, engine.playback_sample_rate as usize);
     let conv = csr != SR || psr != SR;
     let mk = |a: usize, b: usize| if a == b { Ok(None) } else { lightvc_audio::RateConv::new(a, b, HOP).map(Some) };

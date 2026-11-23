@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
-use lightvc_audio::HostPref;
+use lightvc_audio::{AudioEndpoint, HostPref};
 use lightvc_core::snv_stream::SnvStream;
 
 /// Real-time metrics from inference thread.
@@ -14,9 +14,9 @@ pub struct RtMetrics {
     pub output_rms: f32,
     pub latency_ms: f32,
     pub rtf: f32,
-    /// True when the audio device was lost. The UI should stop and return to
-    /// the device-selection screen.
+    /// True when the audio device was lost or failed to open.
     pub disconnected: bool,
+    pub error: Option<String>,
     pub overrun: u64,
     pub underrun: u64,
     /// 直前の 5 秒の窓の 1 ブロックの計算時間 ms(realtime-snv と同じ定義)。
@@ -27,16 +27,19 @@ pub struct RtMetrics {
     pub blocks: u32,
     /// 直前のブロックで門が開いていたか。
     pub gate_open: bool,
-    /// 使っているホストの名前(default / wasapi / asio)。
+    /// 使っているホストの名前(wasapi / asio / wasapi+asio)。
     pub host: String,
+    pub capture_buffer_frames: u32,
+    pub playback_buffer_frames: u32,
+    pub capture_sample_rate: u32,
+    pub playback_sample_rate: u32,
 }
 
 /// Control messages from UI to the real-time inference thread.
 pub enum RtControl {
     StartWithDevices {
-        host: HostPref,
-        input_idx: Option<usize>,
-        output_idx: Option<usize>,
+        input: AudioEndpoint,
+        output: AudioEndpoint,
     },
     /// 読み込みと登録を済ませた変換器(重い処理は別の糸で・音声の経路にロックを置かない)。
     Stream(Box<SnvStream>),
@@ -92,9 +95,13 @@ pub struct AppState {
     /// 進行中の操作者の録音(無し = 通常)。
     pub operator_rec: Option<OperatorRecording>,
     /// App-wide audio device selection (None = system default).
+    pub selected_input_host: HostPref,
     pub selected_input: Option<usize>,
+    pub selected_input_name: Option<String>,
+    pub selected_output_host: HostPref,
     pub selected_output: Option<usize>,
-    /// App-wide audio host selection (default / wasapi / asio).
+    pub selected_output_name: Option<String>,
+    /// Devices tab filter (Default = all hosts, Wasapi, Asio).
     pub selected_host: HostPref,
 }
 
@@ -119,8 +126,12 @@ impl AppState {
             rt_metrics_rx: None,
             rt_initialized: false,
             operator_rec: None,
+            selected_input_host: HostPref::Default,
             selected_input: None,
+            selected_input_name: None,
+            selected_output_host: HostPref::Default,
             selected_output: None,
+            selected_output_name: None,
             selected_host: HostPref::Default,
         }
     }
@@ -225,13 +236,24 @@ pub fn send_control(state: &Arc<Mutex<AppState>>, ctrl: RtControl) {
 
 pub fn start_msg(state: &Arc<Mutex<AppState>>) -> RtControl {
     let s = state.lock().unwrap();
-    RtControl::StartWithDevices { host: s.selected_host, input_idx: s.selected_input, output_idx: s.selected_output }
+    RtControl::StartWithDevices {
+        input: AudioEndpoint {
+            host: s.selected_input_host,
+            device_index: s.selected_input,
+            device_name: s.selected_input_name.clone(),
+        },
+        output: AudioEndpoint {
+            host: s.selected_output_host,
+            device_index: s.selected_output,
+            device_name: s.selected_output_name.clone(),
+        },
+    }
 }
 
-/// 操作者の発話を既定のマイクから seconds 秒録って 48 kHz の WAV に納め、登録の列に加える。
+/// 操作者の発話を現在の入力装置から seconds 秒録って 48 kHz の WAV に納め、登録の列に加える。
 pub fn record_operator(state: &Arc<Mutex<AppState>>, seconds: u32) {
     use std::sync::atomic::AtomicBool;
-    {
+    let input_ep = {
         let mut s = state.lock().unwrap();
         if s.operator_rec.is_some() || s.loading {
             return;
@@ -244,12 +266,17 @@ pub fn record_operator(state: &Arc<Mutex<AppState>>, seconds: u32) {
             PathBuf::from(format!("operator_{stamp}.wav"))
         };
         s.operator_rec = Some(OperatorRecording { started: std::time::Instant::now(), seconds, path, cancel: Arc::new(AtomicBool::new(false)) });
-    }
+        AudioEndpoint {
+            host: s.selected_input_host,
+            device_index: s.selected_input,
+            device_name: s.selected_input_name.clone(),
+        }
+    };
     let st = state.clone();
     std::thread::spawn(move || {
         let cancel = st.lock().unwrap().operator_rec.as_ref().map(|r| r.cancel.clone());
         let r = (|| -> anyhow::Result<PathBuf> {
-            let (engine, mut io) = lightvc_audio::AudioEngine::start_default_buffered(cpal::BufferSize::Fixed(240))?;
+            let (engine, mut cap_rx) = lightvc_audio::AudioEngine::start_capture_only(input_ep, 48_000, 240)?;
             let dev_sr = engine.capture_sample_rate as usize;
             let want = seconds as usize * dev_sr;
             let mut cap = Vec::with_capacity(want + 4800);
@@ -260,7 +287,7 @@ pub fn record_operator(state: &Arc<Mutex<AppState>>, seconds: u32) {
                 if cancel.as_ref().is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
                     anyhow::bail!("cancelled");
                 }
-                while let Ok(s) = io.capture.pop() {
+                while let Ok(s) = cap_rx.pop() {
                     cap.push(s);
                 }
                 std::thread::sleep(std::time::Duration::from_millis(2));

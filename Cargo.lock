@@ -3651,6 +3651,7 @@ dependencies = [
  "clap",
  "cpal",
  "crossbeam-channel",
+ "embed-resource",
  "gpui",
  "hound",
  "lightvc-audio",

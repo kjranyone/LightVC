@@ -20,6 +20,7 @@ param(
     [string]$Output,
     [switch]$Demo,
     [switch]$DebugBuild,
+    [switch]$Release,
     [switch]$Watch,
     [switch]$Asio
 )
@@ -40,10 +41,10 @@ function Show-Menu {
     Write-Host '  ║          LightVC Development             ║' -ForegroundColor Magenta
     Write-Host '  ╚══════════════════════════════════════════╝' -ForegroundColor Magenta
     Write-Host ''
-    Write-Menu '  [1] GUI を起動（通常・release・ビルド）'
-    Write-Menu '  [2] GUI を起動（release・ビルドスキップ）'
+    Write-Menu '  [1] GUI を起動（通常・dev-release 差分ビルド）'
+    Write-Menu '  [2] GUI を起動（ビルドスキップ）'
     Write-Menu '  [3] デモ＋Watch（debug・.rs編集で自動リロード・AI レビュー用）'
-    Write-Menu '  [4] ビルドのみ'
+    Write-Menu '  [4] ビルドのみ（dev-release・-Release で本番 LTO ビルド）'
     Write-Menu '  [Q] 終了'
     Write-Host ''
     return (Read-Host '番号を選択')
@@ -231,10 +232,13 @@ if ($Watch) {
     exit 0
 }
 
-# Binary path depends on build profile. Computed here (after the menu may have
-# set $DebugBuild) so demo mode uses the fast debug binary.
-$profileDir = if ($DebugBuild) { 'debug' } else { 'release' }
+# Binary path depends on build profile.
+$profileDir = if ($DebugBuild) { 'debug' } elseif ($Release) { 'release' } else { 'dev-release' }
 $binPath    = Join-Path $repoRoot "target\$profileDir\lightvc-app.exe"
+if ($NoBuild -and -not $DebugBuild -and -not $Release -and -not (Test-Path $binPath)) {
+    $relBin = Join-Path $repoRoot 'target\release\lightvc-app.exe'
+    if (Test-Path $relBin) { $binPath = $relBin }
+}
 
 # --- 1. Build ---------------------------------------------------------------
 if (-not $NoBuild) {
@@ -251,18 +255,22 @@ if (-not $NoBuild) {
         }
     }
     $buildArgs = @('build', '-p', 'lightvc-app')
-    if (-not $DebugBuild) { $buildArgs += '--release' }
-    if ($Asio) {
-        # cpal/asio は Steinberg の SDK(CPAL_ASIO_DIR)と clang を要求する。事前検査は tools\setup-asio.ps1。
-        if (-not $env:CPAL_ASIO_DIR) {
-            Write-Err 'ASIO ビルドには CPAL_ASIO_DIR が必要。tools\setup-asio.ps1 を参照。'
-            exit 1
-        }
-        $buildArgs += '--features'
-        $buildArgs += 'asio'
+    if ($Release) {
+        $buildArgs += '--release'
+    } elseif (-not $DebugBuild) {
+        $buildArgs += '--profile'
+        $buildArgs += 'dev-release'
     }
-    $profileLabel = if ($DebugBuild) { 'debug' } else { 'release' }
-    Write-Step "Building $profileLabel binary (cargo build $buildArgs)"
+    if ($Asio) {
+        if ($env:CPAL_ASIO_DIR) {
+            $buildArgs += '--features'
+            $buildArgs += 'asio'
+        } else {
+            Write-Host '    ASIO: ネイティブ COM ASIO 経路が標準で有効です(CPAL_ASIO_DIR 不要)' -ForegroundColor DarkGray
+        }
+    }
+    $profileLabel = if ($DebugBuild) { 'debug' } elseif ($Release) { 'release' } else { 'dev-release' }
+    Write-Step "Building $profileLabel binary (cargo $($buildArgs -join ' '))"
     $ErrorActionPreference = 'Continue'
     & cargo @buildArgs
     $ErrorActionPreference = 'Stop'

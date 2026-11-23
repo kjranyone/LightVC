@@ -3,6 +3,7 @@
 use std::time::Instant;
 
 use crossbeam_channel::{Receiver, Sender};
+use lightvc_audio::AudioEndpoint;
 use lightvc_core::snv_stream::SnvStream;
 
 use crate::state::{RtControl, RtMetrics};
@@ -12,34 +13,6 @@ const HOP: usize = SnvStream::BLOCK;
 
 fn rms(samples: &[f32]) -> f32 {
     (samples.iter().map(|s| s * s).sum::<f32>() / samples.len().max(1) as f32).sqrt()
-}
-
-// =========================================================================
-// Inference thread
-// =========================================================================
-
-fn start_engine(
-    host_pref: lightvc_audio::HostPref,
-    input_idx: Option<usize>,
-    output_idx: Option<usize>,
-    buffer_frames: u32,
-) -> anyhow::Result<(lightvc_audio::AudioEngine, lightvc_audio::AudioBuffers, String)> {
-    use cpal::traits::HostTrait as _;
-    let buf = if buffer_frames == 0 { cpal::BufferSize::Default } else { cpal::BufferSize::Fixed(buffer_frames) };
-    let host = lightvc_audio::host::pick(host_pref)?;
-    let host_name = host.id().name().to_ascii_lowercase();
-    let in_dev = match input_idx {
-        Some(i) => host.input_devices().ok().and_then(|mut d| d.nth(i)),
-        None => host.default_input_device(),
-    };
-    let out_dev = match output_idx {
-        Some(i) => host.output_devices().ok().and_then(|mut d| d.nth(i)),
-        None => host.default_output_device(),
-    };
-    match (in_dev, out_dev) {
-        (Some(i), Some(o)) => lightvc_audio::AudioEngine::start_buffered(&i, &o, buf).map(|(e, b)| (e, b, host_name)),
-        _ => anyhow::bail!("選んだホストに入出力の装置が無い({host_name})"),
-    }
 }
 
 /// Device-rate capture → 48 kHz → SnvStream (240-sample blocks) → device-rate playback.
@@ -67,15 +40,25 @@ pub fn inference_loop(control_rx: Receiver<RtControl>, metrics_tx: Sender<RtMetr
     let mut host_name = String::new();
     let mut last_report = Instant::now();
 
+    let send_err = |msg: String| {
+        eprintln!("Audio: {msg}");
+        let _ = metrics_tx.send(RtMetrics {
+            disconnected: true,
+            error: Some(msg),
+            ..Default::default()
+        });
+    };
+
     loop {
         while let Ok(msg) = control_rx.try_recv() {
             match msg {
-                RtControl::StartWithDevices { host, input_idx, output_idx } => {
+                RtControl::StartWithDevices { input, output } => {
                     if running {
                         continue;
                     }
-                    match start_engine(host, input_idx, output_idx, buffer_frames) {
-                        Ok((eng, bufs, hname)) => {
+                    let _: (&AudioEndpoint, &AudioEndpoint) = (&input, &output);
+                    match lightvc_audio::AudioEngine::start_endpoints(input, output, SR as u32, buffer_frames) {
+                        Ok((eng, bufs)) => {
                             let (csr, psr) = (eng.capture_sample_rate as usize, eng.playback_sample_rate as usize);
                             let mk = |a: usize, b: usize| if a == b { Ok(None) } else { lightvc_audio::RateConv::new(a, b, HOP).map(Some) };
                             match (mk(csr, SR), mk(SR, psr)) {
@@ -87,15 +70,15 @@ pub fn inference_loop(control_rx: Receiver<RtControl>, metrics_tx: Sender<RtMetr
                                     out48.clear();
                                     cap_rx = Some(bufs.capture);
                                     pb_tx = Some(bufs.playback);
+                                    host_name = eng.host_label.clone();
                                     engine = Some(eng);
-                                    host_name = hname;
                                     running = true;
                                     last_report = Instant::now();
                                 }
-                                (Err(e), _) | (_, Err(e)) => eprintln!("Resampler: {e}"),
+                                (Err(e), _) | (_, Err(e)) => send_err(format!("リサンプラ初期化に失敗: {e}")),
                             }
                         }
-                        Err(e) => eprintln!("Audio: {e}"),
+                        Err(e) => send_err(format!("{e}")),
                     }
                 }
                 RtControl::Stream(s) => stream = Some(*s),
@@ -220,15 +203,27 @@ pub fn inference_loop(control_rx: Receiver<RtControl>, metrics_tx: Sender<RtMetr
             last_report = Instant::now();
         }
 
-        let (overrun, underrun) = engine.as_ref().map(|e| (e.overrun_count(), e.underrun_count())).unwrap_or((0, 0));
-        let dev_sr = engine.as_ref().map(|e| e.capture_sample_rate).unwrap_or(SR as u32) as f32;
-        let buf_ms = buffer_frames as f32 * 1000.0 / dev_sr;
+        let (overrun, underrun, csr, psr, cbuf, pbuf) = match engine.as_ref() {
+            Some(e) => (
+                e.overrun_count(),
+                e.underrun_count(),
+                e.capture_sample_rate,
+                e.playback_sample_rate,
+                e.capture_buffer_frames,
+                e.playback_buffer_frames,
+            ),
+            None => (0, 0, SR as u32, SR as u32, buffer_frames, buffer_frames),
+        };
+        let in_buf_ms = cbuf as f32 * 1000.0 / csr.max(1) as f32;
+        let out_buf_ms = pbuf as f32 * 1000.0 / psr.max(1) as f32;
+        let resamp_ms = if csr as usize == SR { 0.0 } else { 3.0 } + if psr as usize == SR { 0.0 } else { 3.0 };
         let _ = metrics_tx.send(RtMetrics {
             input_rms: in_rms,
             output_rms: out_rms,
-            latency_ms: buf_ms + 3.0 + algo_ms + 3.0 + buf_ms,
+            latency_ms: in_buf_ms + out_buf_ms + resamp_ms + algo_ms,
             rtf,
             disconnected: false,
+            error: None,
             overrun,
             underrun,
             compute_p50: window.0,
@@ -237,6 +232,10 @@ pub fn inference_loop(control_rx: Receiver<RtControl>, metrics_tx: Sender<RtMetr
             blocks: window.3,
             gate_open,
             host: host_name.clone(),
+            capture_buffer_frames: cbuf,
+            playback_buffer_frames: pbuf,
+            capture_sample_rate: csr,
+            playback_sample_rate: psr,
         });
 
         if !did_work {

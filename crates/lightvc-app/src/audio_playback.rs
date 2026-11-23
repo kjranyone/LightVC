@@ -1,5 +1,5 @@
 //! Simple WAV playback via rodio-free approach.
-//! Uses a background thread with cpal output.
+//! Uses a background thread with cpal output (WASAPI on Windows so it never collides with ASIO).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -20,34 +20,47 @@ impl AudioPlayer {
         let playing_clone = playing.clone();
 
         let thread = std::thread::spawn(move || {
-            let host = match lightvc_audio::host::pick(lightvc_audio::host::HostPref::Default) {
+            let host = match lightvc_audio::host::pick(lightvc_audio::HostPref::Wasapi) {
                 Ok(h) => h,
                 Err(_) => return,
             };
             let Some(device) = host.default_output_device() else {
                 return;
             };
+            let def = device.default_output_config().ok();
+            let target_sr = def.as_ref().map_or(44_100, |c| c.sample_rate());
+            let ch = def.as_ref().map_or(1, |c| c.channels().max(1));
+            let resampled = if target_sr == 44_100 {
+                samples
+            } else {
+                resample_linear_sr(&samples, 44_100, target_sr)
+            };
             let config = cpal::StreamConfig {
-                channels: 1,
-                sample_rate: 44100,
+                channels: ch,
+                sample_rate: target_sr,
                 buffer_size: cpal::BufferSize::Default,
             };
 
             let idx = Arc::new(Mutex::new(0usize));
             let idx_clone = idx.clone();
-            let samples_arc = Arc::new(samples);
+            let samples_arc = Arc::new(resampled);
             let samples_for_closure = samples_arc.clone();
+            let n_ch = ch as usize;
 
             let stream = device.build_output_stream(
                 config,
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                     let mut i = idx_clone.lock().unwrap();
-                    for sample in data.iter_mut() {
-                        if *i < samples_for_closure.len() {
-                            *sample = samples_for_closure[*i];
+                    for frame in data.chunks_mut(n_ch) {
+                        let s = if *i < samples_for_closure.len() {
+                            let v = samples_for_closure[*i];
                             *i += 1;
+                            v
                         } else {
-                            *sample = 0.0;
+                            0.0
+                        };
+                        for slot in frame.iter_mut() {
+                            *slot = s;
                         }
                     }
                 },
@@ -57,7 +70,6 @@ impl AudioPlayer {
 
             if let Ok(s) = stream {
                 let _ = s.play();
-                // Wait until playback finishes
                 while playing_clone.load(Ordering::Relaxed) {
                     let pos = idx.lock().unwrap();
                     if *pos >= samples_arc.len() {
@@ -67,7 +79,6 @@ impl AudioPlayer {
                     std::thread::sleep(std::time::Duration::from_millis(50));
                 }
             }
-            // 正常終了でも装置が開けなくても再生中の旗は必ず下ろす(UI が永久に「再生中」を読まないように)。
             playing_clone.store(false, Ordering::Relaxed);
         });
 
@@ -143,10 +154,14 @@ pub fn save_wav_mono(path: &std::path::Path, samples: &[f32], sample_rate: u32) 
 
 /// Resample to 44100 Hz using linear interpolation (simple, sufficient for UI).
 pub fn resample_linear(input: &[f32], from_sr: u32) -> Vec<f32> {
-    if from_sr == 44_100 {
+    resample_linear_sr(input, from_sr, 44_100)
+}
+
+fn resample_linear_sr(input: &[f32], from_sr: u32, to_sr: u32) -> Vec<f32> {
+    if from_sr == to_sr || input.is_empty() {
         return input.to_vec();
     }
-    let ratio = 44_100.0 / from_sr as f32;
+    let ratio = to_sr as f32 / from_sr as f32;
     let new_len = (input.len() as f32 * ratio).round() as usize;
     (0..new_len)
         .map(|i| {

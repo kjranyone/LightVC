@@ -3,6 +3,7 @@ name = "lightvc-app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+build = "build.rs"
 
 [dependencies]
 lightvc-core = { path = "../lightvc-core" }
@@ -16,6 +17,9 @@ rfd = "0.15"
 crossbeam-channel.workspace = true
 rtrb.workspace = true
 cpal = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+embed-resource = "3.0"
 
 [features]
 default = []

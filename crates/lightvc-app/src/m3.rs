@@ -134,6 +134,10 @@ impl AssetSource for Assets {
     }
 }
 
+pub fn icon_exists(name: &str) -> bool {
+    icon_bytes(name).is_some()
+}
+
 pub fn icon(name: &str, size: f32, color: Rgba) -> Svg {
     svg().path(format!("icons/{name}.svg")).size(px(size)).flex_none().text_color(color)
 }
@@ -439,7 +443,8 @@ pub fn rec_dot() -> impl IntoElement {
 /// M3E の navigation rail の 1 項目。選択中は指示子(56 × 32)が spring で広がり、アイコンが塗りになる。
 pub fn nav_item(key: &'static str, icon_name: &str, label: &str, selected: bool) -> Stateful<Div> {
     let fg = if selected { c::on_secondary_container() } else { c::on_surface_variant() };
-    let glyph = if selected { format!("{icon_name}_fill1") } else { icon_name.to_string() };
+    let filled = format!("{icon_name}_fill1");
+    let glyph = if selected && icon_exists(&filled) { filled } else { icon_name.to_string() };
     let pill = div().h(px(32.)).flex().items_center().justify_center().rounded_full().child(icon(&glyph, 24., fg));
     let indicator: AnyElement = if selected {
         pill.bg(c::secondary_container())

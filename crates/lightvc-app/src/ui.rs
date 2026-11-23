@@ -23,7 +23,7 @@ const BUFFERS: [u32; 5] = [128, 240, 256, 512, 1024];
 const THREADS: [usize; 3] = [1, 2, 4];
 
 #[derive(Copy, Clone, PartialEq)]
-enum Tab { Realtime, Offline, Voices, Devices }
+enum Tab { Realtime, Offline, Voices, Devices, Credits }
 
 #[derive(Default)]
 struct OfflineUi {
@@ -79,6 +79,7 @@ pub struct LightVcUi {
     offline: OfflineUi,
     catalog: CatalogUi,
     devices: DeviceCache,
+    show_full_notice: bool,
 }
 
 pub fn run(state: Arc<Mutex<AppState>>, demo: bool) -> anyhow::Result<()> {
@@ -89,6 +90,7 @@ pub fn run(state: Arc<Mutex<AppState>>, demo: bool) -> anyhow::Result<()> {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 window_min_size: Some(size(px(900.), px(600.))),
                 titlebar: Some(TitlebarOptions { title: Some("LightVC".into()), ..Default::default() }),
+                app_id: Some("lightvc".into()),
                 ..Default::default()
             },
             |window, cx| {
@@ -100,6 +102,7 @@ pub fn run(state: Arc<Mutex<AppState>>, demo: bool) -> anyhow::Result<()> {
                             Ok("voices") => Tab::Voices,
                             Ok("offline") => Tab::Offline,
                             Ok("devices") => Tab::Devices,
+                            Ok("credits") => Tab::Credits,
                             _ => Tab::Realtime,
                         },
                         demo,
@@ -124,6 +127,7 @@ pub fn run(state: Arc<Mutex<AppState>>, demo: bool) -> anyhow::Result<()> {
                         offline: OfflineUi::default(),
                         catalog: CatalogUi::default(),
                         devices: DeviceCache::default(),
+                        show_full_notice: false,
                     };
                     if ui.tab == Tab::Devices { ui.refresh_devices(); }
                     ui
@@ -152,15 +156,21 @@ pub fn enable_demo(state: &Arc<Mutex<AppState>>) {
 impl LightVcUi {
     fn pump(&mut self) {
         let mut disconnected = false;
+        let mut rt_error: Option<String> = None;
         {
             let mut s = self.state.lock().unwrap();
             if let Some(ref rx) = s.rt_metrics_rx {
                 while let Ok(m) = rx.try_recv() {
                     disconnected |= m.disconnected;
+                    if let Some(ref err) = m.error {
+                        rt_error = Some(err.clone());
+                    }
                     self.metrics = m;
                 }
             }
-            if disconnected { s.error = Some("オーディオ装置が切断されました".to_string()); }
+            if disconnected {
+                s.error = Some(rt_error.unwrap_or_else(|| "オーディオ装置が切断されました".to_string()));
+            }
             if self.offline.converting && (s.status.starts_with("Converted:") || s.error.is_some()) {
                 self.offline.converting = false;
             }
@@ -213,9 +223,19 @@ impl LightVcUi {
     }
 
     fn refresh_devices(&mut self) {
-        let host = lightvc_audio::host::pick(self.state.lock().unwrap().selected_host).unwrap_or_else(|_| cpal::default_host());
-        self.devices.inputs = lightvc_audio::DuplexStream::list_input_devices_on(&host).unwrap_or_default();
-        self.devices.outputs = lightvc_audio::DuplexStream::list_output_devices_on(&host).unwrap_or_default();
+        let filter = self.state.lock().unwrap().selected_host;
+        let hosts: Vec<lightvc_audio::HostPref> = match filter {
+            lightvc_audio::HostPref::Default => vec![lightvc_audio::HostPref::Asio, lightvc_audio::HostPref::Wasapi],
+            other => vec![other],
+        };
+        let mut ins = Vec::new();
+        let mut outs = Vec::new();
+        for h in hosts {
+            if let Ok(v) = lightvc_audio::DuplexStream::list_inputs(h) { ins.extend(v); }
+            if let Ok(v) = lightvc_audio::DuplexStream::list_outputs(h) { outs.extend(v); }
+        }
+        self.devices.inputs = ins;
+        self.devices.outputs = outs;
     }
 
     fn set_semitones(&mut self, k: f32, cx: &mut Context<Self>) {
@@ -305,13 +325,12 @@ impl Render for LightVcUi {
         let tab = self.tab;
         let rail = div()
             .w(px(96.)).h_full().flex_none().flex().flex_col().items_center().py_4().gap_2()
-            .child(div().size(px(48.)).mb_3().flex().items_center().justify_center().rounded(px(shape::LG)).bg(c::primary_container())
-                .child(icon("auto_awesome_fill1", 26., c::on_primary_container())))
             .child(m3::nav_item("nav_rt", "graphic_eq", "リアルタイム", tab == Tab::Realtime).on_click(cx.listener(|this, _, _, cx| this.set_tab(Tab::Realtime, cx))))
             .child(m3::nav_item("nav_off", "audio_file", "ファイル変換", tab == Tab::Offline).on_click(cx.listener(|this, _, _, cx| this.set_tab(Tab::Offline, cx))))
             .child(m3::nav_item("nav_vo", "record_voice_over", "ボイス", tab == Tab::Voices).on_click(cx.listener(|this, _, _, cx| this.set_tab(Tab::Voices, cx))))
             .child(div().flex_1())
-            .child(m3::nav_item("nav_dev", "settings", "デバイス", tab == Tab::Devices).on_click(cx.listener(|this, _, _, cx| this.set_tab(Tab::Devices, cx))));
+            .child(m3::nav_item("nav_dev", "settings", "デバイス", tab == Tab::Devices).on_click(cx.listener(|this, _, _, cx| this.set_tab(Tab::Devices, cx))))
+            .child(m3::nav_item("nav_cred", "info", "クレジット", tab == Tab::Credits).on_click(cx.listener(|this, _, _, cx| this.set_tab(Tab::Credits, cx))));
 
         let (status, error) = {
             let s = self.state.lock().unwrap();
@@ -323,6 +342,7 @@ impl Render for LightVcUi {
             Tab::Offline => self.render_offline(&status, cx),
             Tab::Voices => self.render_voices(&status, cx),
             Tab::Devices => self.render_devices(&status, cx),
+            Tab::Credits => self.render_credits(cx),
         };
         let page = div().w_full().p_6().child(page).with_animation(("page", tab as usize), Animation::new(Duration::from_millis(260)), |el, d| {
             let e = 1.0 - (1.0 - d).powi(3);
@@ -425,10 +445,18 @@ impl LightVcUi {
                 .child(stat("ホスト", if m.host.is_empty() { "—".into() } else { m.host.clone() }, "", fg)));
 
         let buf_ms = self.rt_buffer as f32 * 1000.0 / 48_000.0;
-        let resamp_ms = 3.0;
+        let (in_buf_ms, out_buf_ms, resamp_ms) = if self.rt_running && m.capture_buffer_frames > 0 && m.playback_buffer_frames > 0 {
+            let csr = m.capture_sample_rate.max(1) as f32;
+            let psr = m.playback_sample_rate.max(1) as f32;
+            let ri = if m.capture_sample_rate == SR { 0.0 } else { 3.0 };
+            let ro = if m.playback_sample_rate == SR { 0.0 } else { 3.0 };
+            (m.capture_buffer_frames as f32 * 1000.0 / csr, m.playback_buffer_frames as f32 * 1000.0 / psr, ri + ro)
+        } else {
+            (buf_ms, buf_ms, 6.0)
+        };
         let algo_ms = lightvc_core::snv_stream::SnvStream::LATENCY_SAMPLES as f32 / 48.0;
-        let total = (buf_ms * 2.0 + resamp_ms * 2.0 + algo_ms).max(0.001);
-        let parts: [(&str, f32, f32); 3] = [("バッファ(入出力)", buf_ms * 2.0, 0.45), ("リサンプル", resamp_ms * 2.0, 0.25), ("モデル", algo_ms, 1.0)];
+        let total = (in_buf_ms + out_buf_ms + resamp_ms + algo_ms).max(0.001);
+        let parts: [(&str, f32, f32); 3] = [("バッファ(入出力)", in_buf_ms + out_buf_ms, 0.45), ("リサンプル", resamp_ms, 0.25), ("モデル", algo_ms, 1.0)];
         let mut bar = div().w_full().h(px(8.)).flex().gap(px(2.));
         let mut legend = div().flex().flex_wrap().gap_x_4().gap_y_1();
         for (name, ms, a) in parts {
@@ -836,11 +864,19 @@ impl LightVcUi {
     // ===== デバイス =====
 
     fn render_devices(&mut self, _status: &str, cx: &mut Context<Self>) -> AnyElement {
-        let (sel_in, sel_out, sel_host) = {
+        let (sel_in_host, sel_in, sel_in_name, sel_out_host, sel_out, sel_out_name, sel_host) = {
             let s = self.state.lock().unwrap();
-            (s.selected_input, s.selected_output, s.selected_host)
+            (
+                s.selected_input_host,
+                s.selected_input,
+                s.selected_input_name.clone(),
+                s.selected_output_host,
+                s.selected_output,
+                s.selected_output_name.clone(),
+                s.selected_host,
+            )
         };
-        let mut hosts: Vec<(String, lightvc_audio::HostPref)> = vec![("既定".to_string(), lightvc_audio::HostPref::Default)];
+        let mut hosts: Vec<(String, lightvc_audio::HostPref)> = vec![("すべて".to_string(), lightvc_audio::HostPref::Default)];
         for h in lightvc_audio::host::available() {
             if let Ok(p) = lightvc_audio::HostPref::parse(h) { hosts.push((h.to_uppercase(), p)); }
         }
@@ -855,48 +891,176 @@ impl LightVcUi {
                 })),
             );
         }
-        let host_card = m3::card_outlined().child(
-            div().flex().flex_wrap().items_center().gap_4()
-                .child(field_label("ホスト"))
-                .child(host_group)
-                .child(supporting("30 ms 級の遅延には ASIO が必要です(WASAPI 共有は固定バッファが効きません)")),
-        );
+        let host_card = m3::card_outlined()
+            .child(
+                div().flex().flex_wrap().items_center().gap_4()
+                    .child(field_label("表示フィルタ"))
+                    .child(host_group)
+                    .child(div().flex_1())
+                    .child(m3::button("dev_refresh", Some("refresh"), "再読込", Btn::Tonal, true).on_click(cx.listener(|this, _, _, cx| {
+                        this.refresh_devices();
+                        cx.notify();
+                    }))),
+            )
+            .child(supporting("入力と出力で異なるホスト(例: WASAPI 入力 + ASIO 出力)を混在できます。ASIO 同士は同じデバイスを選んでください(30 ms 級の遅延には ASIO 推奨)。"));
 
-        let column = |title: &str, glyph: &str, input: bool, devices: &[lightvc_audio::DeviceInfo], sel: Option<usize>, cx: &mut Context<Self>| {
+        let column = |title: &str, glyph: &str, input: bool, devices: &[lightvc_audio::DeviceInfo], sel_h: lightvc_audio::HostPref, sel_idx: Option<usize>, sel_name: Option<&str>, cx: &mut Context<Self>| {
             let mut list = m3::list();
             let n = devices.len();
             for (i, d) in devices.iter().enumerate() {
-                let selected = sel == Some(i);
+                let selected = if let Some(name) = sel_name {
+                    d.host == sel_h && d.name == name
+                } else {
+                    sel_idx == Some(d.host_index) && (sel_h == lightvc_audio::HostPref::Default || d.host == sel_h)
+                };
                 let sub = if selected { c::on_secondary_container() } else { c::on_surface_variant() };
+                let dev_host = d.host;
+                let dev_idx = d.host_index;
+                let dev_name = d.name.clone();
+                let badge = dev_host.label().to_uppercase();
                 list = list.child(
                     m3::list_item(SharedString::from(format!("{}_{i}", if input { "in" } else { "out" })), selected, i == 0, i == n - 1).cursor_pointer()
                         .on_click(cx.listener(move |this, _, _, cx| {
                             let mut s = this.state.lock().unwrap();
-                            if input { s.selected_input = Some(i) } else { s.selected_output = Some(i) }
+                            if input {
+                                if selected {
+                                    s.selected_input_host = lightvc_audio::HostPref::Default;
+                                    s.selected_input = None;
+                                    s.selected_input_name = None;
+                                } else {
+                                    s.selected_input_host = dev_host;
+                                    s.selected_input = Some(dev_idx);
+                                    s.selected_input_name = Some(dev_name.clone());
+                                }
+                            } else if selected {
+                                s.selected_output_host = lightvc_audio::HostPref::Default;
+                                s.selected_output = None;
+                                s.selected_output_name = None;
+                            } else {
+                                s.selected_output_host = dev_host;
+                                s.selected_output = Some(dev_idx);
+                                s.selected_output_name = Some(dev_name.clone());
+                            }
                             cx.notify();
                         }))
                         .child(div().flex_1().min_w_0().flex().flex_col()
                             .child(div().body_l().truncate().child(d.name.clone()))
-                            .child(div().body_s().text_color(sub).child(format!("{} Hz・{} ch", d.sample_rate, d.channels))))
+                            .child(div().body_s().text_color(sub).child(format!("{badge}・{} Hz・{} ch", d.sample_rate, d.channels))))
                         .when(selected, |s| s.child(icon("check", 24., sub))),
                 );
             }
+            let status_txt = if sel_idx.is_none() && sel_name.is_none() {
+                "システムの既定を使用".to_string()
+            } else {
+                format!("{} を選択中", sel_h.label().to_uppercase())
+            };
             div().flex_1().min_w_0().flex().flex_col().gap_3()
                 .child(div().flex().items_center().gap_2().child(icon(glyph, 22., c::on_surface_variant())).child(section_title(title))
-                    .child(div().flex_1()).child(supporting(if sel.is_none() { "システムの既定を使用" } else { "" })))
+                    .child(div().flex_1()).child(supporting(status_txt)))
                 .when(devices.is_empty(), |s| s.child(m3::card().child(supporting("装置が見つかりません"))))
                 .child(list)
         };
         let inputs = self.devices.inputs.clone();
         let outputs = self.devices.outputs.clone();
         let lists = div().flex().items_start().gap_4()
-            .child(column("入力", "mic", true, &inputs, sel_in, cx))
-            .child(column("出力", "volume_up", false, &outputs, sel_out, cx));
+            .child(column("入力", "mic", true, &inputs, sel_in_host, sel_in, sel_in_name.as_deref(), cx))
+            .child(column("出力", "volume_up", false, &outputs, sel_out_host, sel_out, sel_out_name.as_deref(), cx));
 
         div().flex().flex_col().gap_4()
             .child(page_header("デバイス", "音声の入出力とホストを選びます"))
             .child(host_card)
             .child(lists)
             .into_any_element()
+    }
+
+    // ===== クレジット =====
+
+    fn render_credits(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        const NOTICE_TEXT: &str = include_str!("../../../NOTICE");
+        let row = |title: &str, detail: &str| {
+            div().flex().flex_col().gap(px(2.))
+                .child(div().label_l().text_color(c::on_surface()).child(title.to_string()))
+                .child(supporting(detail.to_string()))
+        };
+
+        let link_btn = |id: &'static str, label: &'static str, url: &'static str, kind: Btn, cx: &mut Context<Self>| {
+            m3::button(id, Some("arrow_forward"), label, kind, true)
+                .on_click(cx.listener(move |_, _, _, cx| cx.open_url(url)))
+        };
+
+        let app_card = m3::card()
+            .child(
+                div().flex().flex_wrap().items_baseline().gap_3()
+                    .child(div().title_l().text_color(c::on_surface()).child(format!("LightVC v{}", env!("CARGO_PKG_VERSION"))))
+                    .child(div().label_l().text_color(c::primary()).child("MIT License")),
+            )
+            .child(supporting("リアルタイム声質変換アプリケーション (推論経路: SnvStream・48 kHz・240 サンプル / 5 ms)"))
+            .child(
+                div().flex().flex_wrap().items_center().gap_2().pt_1()
+                    .child(link_btn("cred_home", "作者ホームページ (oto-nari.com)", "https://oto-nari.com", Btn::Tonal, cx))
+                    .child(link_btn("cred_x", "X (@mu_sette)", "https://x.com/mu_sette", Btn::Outlined, cx))
+                    .child(link_btn("cred_gh", "GitHub (kjranyone/LightVC)", "https://github.com/kjranyone/LightVC", Btn::Outlined, cx)),
+            );
+
+        let models_card = m3::card()
+            .child(section_title("学習済みモデルとデータの帰属"))
+            .child(row(
+                "前段・ゲート (models/front_gate)",
+                "Irodori-TTS-v4.1-Small (Aratako / MIT)、WORLD (M. Morise / modified BSD)、非音声音源 (MUSAN・FMA・FSD50K の CC0 / Public Domain / CC BY のみ・音声除去済み。個別帰属は同梱の ATTRIBUTION_SOURCES.md)",
+            ))
+            .child(row(
+                "変換モデル (models/k3g)",
+                "Irodori-TTS-v4.1-Small (Aratako / MIT・VoiceDesign による架空の 564 話者、実在話者の参照なし。台詞出典の非公開データセットは非同梱)",
+            ))
+            .child(row(
+                "出力部ボコーダ (models/rvoc3hi)",
+                "非公開の音声データセット (非同梱) および同音声を参照とした Irodori-TTS-600M-v3-VoiceDesign (Aratako / MIT)",
+            ));
+
+        let third_party_items: [(&str, &str); 5] = [
+            ("GPUI (Zed Industries / Apache-2.0)", "デスクトップ GUI フレームワーク"),
+            ("Material Symbols Rounded (Google / Apache-2.0)", "UI アイコン (assets/icons/*.svg)"),
+            ("WORLD (M. Morise / modified BSD)", "スペクトル包絡処理 (crates/lightvc-core/src/cheaptrick.rs)"),
+            ("音声 I/O (cpal・rubato・rtrb・hound)", "WASAPI / リサンプリング / リングバッファ。ASIO は Windows ネイティブ COM 連携を使用し、Steinberg ASIO SDK は同梱していません"),
+            ("クレート依存の許諾方針", "MIT / Apache-2.0 / BSD-2-Clause / BSD-3-Clause / ISC / Zlib / Unicode-3.0 / CC0-1.0 (self_cell は Apache-2.0 を選択、GPLv3 依存なし)"),
+        ];
+        let mut third_party_list = m3::list();
+        let n = third_party_items.len();
+        for (i, (title, detail)) in third_party_items.into_iter().enumerate() {
+            third_party_list = third_party_list.child(
+                m3::list_item(SharedString::from(format!("cred_tp_{i}")), false, i == 0, i == n - 1)
+                    .child(row(title, detail)),
+            );
+        }
+
+        let show_notice = self.show_full_notice;
+        let notice_toggle = div().flex().items_center().gap_3()
+            .child(m3::button(
+                "toggle_notice",
+                Some("info"),
+                if show_notice { "NOTICE 全文を閉じる" } else { "NOTICE 全文を表示" },
+                if show_notice { Btn::Tonal } else { Btn::Outlined },
+                true,
+            ).on_click(cx.listener(|this, _, _, cx| {
+                this.show_full_notice = !this.show_full_notice;
+                cx.notify();
+            })));
+
+        let mut el = div().flex().flex_col().gap_4()
+            .child(page_header("クレジット", "ソフトウェア・学習済みモデル・第三者ライセンスの帰属表示"))
+            .child(app_card)
+            .child(models_card)
+            .child(div().flex().flex_col().gap_2().child(section_title("第三者ソフトウェア・素材")).child(third_party_list))
+            .child(notice_toggle);
+
+        if show_notice {
+            el = el.child(
+                m3::card_outlined().child(
+                    div().body_s().text_color(c::on_surface_variant()).child(NOTICE_TEXT),
+                ),
+            );
+        }
+
+        el.into_any_element()
     }
 }

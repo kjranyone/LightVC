@@ -1,15 +1,19 @@
-//! Duplex audio stream management via cpal.
+//! Duplex audio stream management via cpal and Windows COM ASIO.
 
 use anyhow::{anyhow, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, Stream, StreamConfig};
 use rtrb::Producer;
 
+use crate::HostPref;
+
 #[derive(Clone, Debug)]
 pub struct DeviceInfo {
     pub name: String,
     pub sample_rate: u32,
     pub channels: u16,
+    pub host: HostPref,
+    pub host_index: usize,
 }
 
 pub struct DuplexStream {
@@ -21,10 +25,50 @@ pub struct DuplexStream {
 
 impl DuplexStream {
     pub fn list_input_devices() -> Result<Vec<DeviceInfo>> {
-        Self::list_input_devices_on(&crate::host::pick(crate::host::HostPref::Default)?)
+        Self::list_inputs(HostPref::Default)
+    }
+
+    pub fn list_inputs(pref: HostPref) -> Result<Vec<DeviceInfo>> {
+        match crate::host::resolve(pref)? {
+            HostPref::Asio => {
+                #[cfg(all(windows, target_arch = "x86_64"))]
+                {
+                    Ok(crate::asio_win::list_devices()
+                        .into_iter()
+                        .filter(|d| d.channels_in > 0)
+                        .enumerate()
+                        .map(|(i, d)| DeviceInfo {
+                            name: d.name,
+                            sample_rate: d.sample_rate,
+                            channels: d.channels_in,
+                            host: HostPref::Asio,
+                            host_index: i,
+                        })
+                        .collect())
+                }
+                #[cfg(all(windows, not(target_arch = "x86_64"), feature = "asio"))]
+                {
+                    let host = crate::host::pick(HostPref::Asio)?;
+                    return Self::list_input_devices_with_host(&host, HostPref::Asio);
+                }
+                #[cfg(not(any(all(windows, target_arch = "x86_64"), all(windows, feature = "asio"))))]
+                {
+                    Ok(Vec::new())
+                }
+            }
+            resolved => {
+                let host = crate::host::pick(resolved)?;
+                Self::list_input_devices_with_host(&host, resolved)
+            }
+        }
     }
 
     pub fn list_input_devices_on(host: &cpal::Host) -> Result<Vec<DeviceInfo>> {
+        let h = if cfg!(windows) { HostPref::Wasapi } else { HostPref::Default };
+        Self::list_input_devices_with_host(host, h)
+    }
+
+    fn list_input_devices_with_host(host: &cpal::Host, pref: HostPref) -> Result<Vec<DeviceInfo>> {
         let devices = host.input_devices()?;
         let mut info = Vec::new();
         for dev in devices {
@@ -33,10 +77,13 @@ impl DuplexStream {
                 .map(|d| d.name().to_string())
                 .unwrap_or_default();
             if let Ok(cfg) = dev.default_input_config() {
+                let idx = info.len();
                 info.push(DeviceInfo {
                     name,
                     sample_rate: cfg.sample_rate(),
                     channels: cfg.channels(),
+                    host: pref,
+                    host_index: idx,
                 });
             }
         }
@@ -44,10 +91,50 @@ impl DuplexStream {
     }
 
     pub fn list_output_devices() -> Result<Vec<DeviceInfo>> {
-        Self::list_output_devices_on(&crate::host::pick(crate::host::HostPref::Default)?)
+        Self::list_outputs(HostPref::Default)
+    }
+
+    pub fn list_outputs(pref: HostPref) -> Result<Vec<DeviceInfo>> {
+        match crate::host::resolve(pref)? {
+            HostPref::Asio => {
+                #[cfg(all(windows, target_arch = "x86_64"))]
+                {
+                    Ok(crate::asio_win::list_devices()
+                        .into_iter()
+                        .filter(|d| d.channels_out > 0)
+                        .enumerate()
+                        .map(|(i, d)| DeviceInfo {
+                            name: d.name,
+                            sample_rate: d.sample_rate,
+                            channels: d.channels_out,
+                            host: HostPref::Asio,
+                            host_index: i,
+                        })
+                        .collect())
+                }
+                #[cfg(all(windows, not(target_arch = "x86_64"), feature = "asio"))]
+                {
+                    let host = crate::host::pick(HostPref::Asio)?;
+                    return Self::list_output_devices_with_host(&host, HostPref::Asio);
+                }
+                #[cfg(not(any(all(windows, target_arch = "x86_64"), all(windows, feature = "asio"))))]
+                {
+                    Ok(Vec::new())
+                }
+            }
+            resolved => {
+                let host = crate::host::pick(resolved)?;
+                Self::list_output_devices_with_host(&host, resolved)
+            }
+        }
     }
 
     pub fn list_output_devices_on(host: &cpal::Host) -> Result<Vec<DeviceInfo>> {
+        let h = if cfg!(windows) { HostPref::Wasapi } else { HostPref::Default };
+        Self::list_output_devices_with_host(host, h)
+    }
+
+    fn list_output_devices_with_host(host: &cpal::Host, pref: HostPref) -> Result<Vec<DeviceInfo>> {
         let devices = host.output_devices()?;
         let mut info = Vec::new();
         for dev in devices {
@@ -56,10 +143,13 @@ impl DuplexStream {
                 .map(|d| d.name().to_string())
                 .unwrap_or_default();
             if let Ok(cfg) = dev.default_output_config() {
+                let idx = info.len();
                 info.push(DeviceInfo {
                     name,
                     sample_rate: cfg.sample_rate(),
                     channels: cfg.channels(),
+                    host: pref,
+                    host_index: idx,
                 });
             }
         }
@@ -67,13 +157,13 @@ impl DuplexStream {
     }
 
     pub fn default_input() -> Result<Device> {
-        let host = crate::host::pick(crate::host::HostPref::Default)?;
+        let host = crate::host::pick(HostPref::Default)?;
         host.default_input_device()
             .ok_or_else(|| anyhow!("No default input device found"))
     }
 
     pub fn default_output() -> Result<Device> {
-        let host = crate::host::pick(crate::host::HostPref::Default)?;
+        let host = crate::host::pick(HostPref::Default)?;
         host.default_output_device()
             .ok_or_else(|| anyhow!("No default output device found"))
     }
@@ -106,14 +196,6 @@ impl DuplexStream {
         )
     }
 
-    /// Start a duplex stream with explicit sample rate, channel count and
-    /// buffer size. `buffer_size` of `Default` lets cpal choose; `Fixed(n)`
-    /// requests a specific period for lower latency ([05-2]).
-    ///
-    /// The caller is responsible for picking values that both devices
-    /// actually support; cpal will error out otherwise. Use
-    /// [`DuplexStream::supported_input_configs`] /
-    /// [`DuplexStream::supported_output_configs`] to enumerate options.
     #[allow(clippy::too_many_arguments)]
     pub fn start_with(
         input_device: &Device,
@@ -178,14 +260,12 @@ impl DuplexStream {
         })
     }
 
-    /// Enumerate sample rates / channel counts supported by an input device.
     pub fn supported_input_configs(
         device: &Device,
     ) -> Result<Vec<cpal::SupportedStreamConfigRange>> {
         Ok(device.supported_input_configs()?.collect())
     }
 
-    /// Enumerate sample rates / channel counts supported by an output device.
     pub fn supported_output_configs(
         device: &Device,
     ) -> Result<Vec<cpal::SupportedStreamConfigRange>> {
