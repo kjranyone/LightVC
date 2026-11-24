@@ -16,6 +16,8 @@ training/checkpoints/
 # ===== Audio data (any location, not for git) =====
 *.wav
 *.flac
+# ...except the bundled voice presets (fictional voices made by tools/make_voice_presets.ps1)
+!voices/*.flac
 *.mp3
 *.ogg
 *.m4a

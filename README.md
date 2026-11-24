@@ -19,6 +19,7 @@ lightvc-app gui
 
 - `--operator`: 操作者（自分）の普通の発話（計 30 秒程度・複数可・48 kHz）
 - `--target`: 目標の声の参照（計 20 秒以上・複数可・48 kHz）。架空の声か、本人の同意がある声だけを使う
+- 同梱のボイスプリセット: `voices/` に架空の声 30 人（女性 15・男性 15・Irodori-TTS で生成）があり、GUI の「ボイス」に最初から出ます。実在の人物の録音は使っていません。CLI では `--target voices/imouto.flac` のように指定できます。作り直すときは `tools/make_voice_presets.ps1`（要 `sttts-say` と ffmpeg）
 - `--semitones`: 固定の半音（運用は 0 / 5 / 7 / 12）
 - 部品の書き出しは既定で `results/snv_p45_gate_t80_export`・`results/snv_k3g16kv_export`・`results/rvoc3hi/export_330k`（`--front` / `--model` / `--voc` で変える。配布物では `models/front_gate`・`models/k3g`・`models/rvoc3hi`）
 

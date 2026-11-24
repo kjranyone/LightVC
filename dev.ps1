@@ -86,7 +86,7 @@ function Invoke-LightvcWithCapture {
 
     Write-Step "スクショ撮影 -> $Out"
     $snapScript = Join-Path $repoRoot 'tools\snap.ps1'
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $snapScript -Out $Out
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $snapScript -Out $Out -ProcessId $proc.Id
     if ($LASTEXITCODE -ne 0) {
         Write-Err 'スクショ失敗。'
         exit 1

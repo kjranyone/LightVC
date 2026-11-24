@@ -97,34 +97,36 @@ impl AudioPlayer {
     }
 }
 
-/// Load a WAV file as mono f32 at its native sample rate.
-pub fn load_wav_mono(path: &std::path::Path) -> Result<(Vec<f32>, u32)> {
-    let reader = hound::WavReader::open(path)?;
-    let spec = reader.spec();
-    let sr = spec.sample_rate;
-    let channels = spec.channels as usize;
-
-    let samples: Vec<f32> = match spec.sample_format {
-        hound::SampleFormat::Float => reader
-            .into_samples::<f32>()
-            .filter_map(|s| s.ok())
-            .collect(),
-        _ => {
-            let max_val = match spec.bits_per_sample {
-                16 => 32768.0f32,
+/// Load a WAV or FLAC file as mono f32 at its native sample rate.
+pub fn load_audio_mono(path: &std::path::Path) -> Result<(Vec<f32>, u32)> {
+    let is_flac = path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("flac"));
+    let (samples, sr, channels, scale) = if is_flac {
+        let mut reader = claxon::FlacReader::open(path)?;
+        let info = reader.streaminfo();
+        let mut v = Vec::with_capacity(info.samples.unwrap_or(0).saturating_mul(info.channels as u64) as usize);
+        for s in reader.samples() {
+            v.push(s? as f32);
+        }
+        (v, info.sample_rate, info.channels as usize, 2f32.powi(info.bits_per_sample as i32 - 1))
+    } else {
+        let reader = hound::WavReader::open(path)?;
+        let spec = reader.spec();
+        // 整数の WAV は hound が f32 として読めない(i32 で読んで尺度で割る)
+        let v: Vec<f32> = if spec.sample_format == hound::SampleFormat::Float {
+            reader.into_samples::<f32>().filter_map(|s| s.ok()).collect()
+        } else {
+            let max_val: f32 = match spec.bits_per_sample {
                 24 => 8388608.0,
                 32 => 2147483648.0,
                 _ => 32768.0,
             };
-            reader
-                .into_samples::<i32>()
-                .filter_map(|s| s.ok())
-                .map(|s| s as f32 / max_val)
-                .collect()
-        }
+            reader.into_samples::<i32>().filter_map(|s| s.ok()).map(|s| s as f32 / max_val).collect()
+        };
+        (v, spec.sample_rate, spec.channels as usize, 1.0)
     };
+    anyhow::ensure!(channels >= 1 && sr > 0, "{}: 声道か標本化レートが不正です", path.display());
 
-    let mono = if channels > 1 {
+    let mono: Vec<f32> = if channels > 1 {
         samples
             .chunks(channels)
             .map(|frame| frame.iter().sum::<f32>() / channels as f32)
@@ -132,7 +134,7 @@ pub fn load_wav_mono(path: &std::path::Path) -> Result<(Vec<f32>, u32)> {
     } else {
         samples
     };
-
+    let mono = if scale == 1.0 { mono } else { mono.iter().map(|s| s / scale).collect() };
     Ok((mono, sr))
 }
 
@@ -172,4 +174,45 @@ fn resample_linear_sr(input: &[f32], from_sr: u32, to_sr: u32) -> Vec<f32> {
             input[i0] * (1.0 - frac) + input[i1] * frac
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp_wav(name: &str, sr: u32) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!("lightvc-audio-{name}-{}.wav", std::process::id()));
+        let spec = hound::WavSpec { channels: 1, sample_rate: sr, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+        let mut w = hound::WavWriter::create(&path, spec).unwrap();
+        for s in [0i16, 16384, -16384, 8192] {
+            w.write_sample(s).unwrap();
+        }
+        w.finalize().unwrap();
+        path
+    }
+
+    /// 整数の WAV は標本化レートを保ち、-1..1 に尺度を合わせて読む(操作者の登録・自分で追加した声)。
+    #[test]
+    fn wav_keeps_its_rate_and_scales_integers() {
+        let path = tmp_wav("int16", 24_000);
+        let (x, sr) = load_audio_mono(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(sr, 24_000);
+        assert_eq!(x, vec![0.0, 0.5, -0.5, 0.25]);
+    }
+
+    /// 同梱のプリセット(FLAC・48 kHz)が読める(`voices/` が無い環境では読み飛ばす)。
+    #[test]
+    fn flac_decodes_to_the_stream_length() {
+        let Some(dir) = crate::voices::voices_dir() else {
+            eprintln!("skip: voices/ が無い");
+            return;
+        };
+        let path = dir.join("imouto.flac");
+        let info = claxon::FlacReader::open(&path).unwrap().streaminfo();
+        assert_eq!((info.sample_rate, info.channels), (48_000, 1));
+        let (x, sr) = load_audio_mono(&path).unwrap();
+        assert_eq!((sr, x.len() as u64), (48_000, info.samples.unwrap()));
+        assert!(x.iter().all(|s| s.abs() <= 1.0) && x.iter().any(|s| s.abs() > 0.1));
+    }
 }

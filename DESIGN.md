@@ -82,9 +82,11 @@ window = surface-container の地に navigation rail(左 96)+ 本文の面(surfa
     目標 30 ms / 上限 50 ms の判定・計算 p99 / RTF / ホスト・遅延の内訳・入出力の meter。
   - toolbar(バイパス・ミュートの toggle)+ **開始 / 停止(button M)**。
   - 調整(縁の容器): ピッチとバッファの connected button group。
-  - 補助の列: 目標の声(chip)・操作者(録音 / WAV / 消去)・モデル(書き出しの場所・スレッド・読み込み)。
-- **ファイル変換**(主役 = 変換する): 変換元と目標の声の 2 枚 → 変換する(button M)+ ピッチ → 結果(tertiary-container)。
-- **ボイス**(主役 = 一覧): 題の右に「ボイスを追加」(filled)・segmented list(試聴・削除)・空の状態。
+  - 補助の列: 目標の声(区分「女性 / 男性 / 自分」の connected button group + その区分の chip。声が 30 以上あるので
+    一覧には出さない)・操作者(録音 / WAV / 消去)・モデル(書き出しの場所・スレッド・読み込み)。
+- **ファイル変換**(主役 = 変換する): 変換元と目標の声の 2 枚(目標の声はファイルのほか、同じ区分と chip でも選べる)→ 変換する(button M)+ ピッチ → 結果(tertiary-container)。
+- **ボイス**(主役 = 一覧): 題の右に「ボイスを追加」(filled)・同梱のプリセット(見出しの右に表示フィルタ すべて / 女性 / 男性・
+  segmented list(試聴))・自分で追加したボイス(segmented list(試聴・削除))・空の状態。
 - **デバイス**: 表示フィルタ(すべて / ASIO / WASAPI)・入力と出力の segmented list(ホスト混在可)。
 - **クレジット**: アプリ版数・学習済みモデルの由来・第三者ライセンス・`NOTICE` 全文展開。
 
@@ -110,3 +112,7 @@ animator の中で掛ける)。
 - 画面で確認していないもの: 停止中 / バイパス中の hero・録音中・snackbar・変換結果・空のボイス一覧
   (デモ表示では出ない状態)。
 - `cargo build --release -p lightvc-app` 通過・`cargo clippy -p lightvc-app` で ui.rs / m3.rs の警告なし。
+- 同梱のボイスプリセット(2026-11-24): `voices_v1_{voices,realtime,offline}.png`(デモ表示・ライト)で確認済み: ボイスの見出しの右の
+  表示フィルタ(すべて / 女性 / 男性)と同梱の行(試聴のみ・削除なし)・リアルタイムとファイル変換の「目標の声」の区分
+  (女性 / 男性 / 自分)と chip。
+- 他のインスタンスが動いている間は `tools\snap.ps1 -ProcessId <PID>` で撮る(既定では最初の lightvc-app を選ぶ)。

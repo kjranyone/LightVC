@@ -1,0 +1,215 @@
+{
+  "version": 1,
+  "voices": [
+    {
+      "id": "idol",
+      "name": "アイドル",
+      "gender": "female",
+      "file": "idol.flac",
+      "model": "v4.1-anime"
+    },
+    {
+      "id": "imouto",
+      "name": "妹",
+      "gender": "female",
+      "file": "imouto.flac",
+      "model": "v4.1-anime"
+    },
+    {
+      "id": "neko",
+      "name": "獣耳っ子",
+      "gender": "female",
+      "file": "neko.flac",
+      "model": "v4.1-anime"
+    },
+    {
+      "id": "gyaru",
+      "name": "ギャル",
+      "gender": "female",
+      "file": "gyaru.flac",
+      "model": "v4.1-anime"
+    },
+    {
+      "id": "meganekko",
+      "name": "委員長",
+      "gender": "female",
+      "file": "meganekko.flac",
+      "model": "v4.1-anime"
+    },
+    {
+      "id": "ojousama",
+      "name": "お嬢様",
+      "gender": "female",
+      "file": "ojousama.flac",
+      "model": "v4.1-anime"
+    },
+    {
+      "id": "yandere",
+      "name": "ヤンデレ",
+      "gender": "female",
+      "file": "yandere.flac",
+      "model": "v4.1-anime"
+    },
+    {
+      "id": "sukeban",
+      "name": "不良少女",
+      "gender": "female",
+      "file": "sukeban.flac",
+      "model": "v4.1-anime"
+    },
+    {
+      "id": "maid",
+      "name": "メイド",
+      "gender": "female",
+      "file": "maid.flac",
+      "model": "v4.1-anime"
+    },
+    {
+      "id": "miko",
+      "name": "巫女",
+      "gender": "female",
+      "file": "miko.flac",
+      "model": "v4.1-anime"
+    },
+    {
+      "id": "warrior",
+      "name": "女戦士",
+      "gender": "female",
+      "file": "warrior.flac",
+      "model": "v4.1-anime"
+    },
+    {
+      "id": "sensei",
+      "name": "女教師",
+      "gender": "female",
+      "file": "sensei.flac",
+      "model": "v4.1-anime"
+    },
+    {
+      "id": "witch",
+      "name": "魔女",
+      "gender": "female",
+      "file": "witch.flac",
+      "model": "v4.1-anime"
+    },
+    {
+      "id": "koakuma",
+      "name": "小悪魔お姉さん",
+      "gender": "female",
+      "file": "koakuma.flac",
+      "model": "v4.1-anime"
+    },
+    {
+      "id": "queen",
+      "name": "女王",
+      "gender": "female",
+      "file": "queen.flac",
+      "model": "v4.1-small"
+    },
+    {
+      "id": "shota",
+      "name": "男の子",
+      "gender": "male",
+      "file": "shota.flac",
+      "model": "v4.1-anime"
+    },
+    {
+      "id": "bochama",
+      "name": "坊ちゃま",
+      "gender": "male",
+      "file": "bochama.flac",
+      "model": "v4.1-anime"
+    },
+    {
+      "id": "hero",
+      "name": "熱血ヒーロー",
+      "gender": "male",
+      "file": "hero.flac",
+      "model": "v4.1-anime"
+    },
+    {
+      "id": "otaku",
+      "name": "オタク",
+      "gender": "male",
+      "file": "otaku.flac",
+      "model": "v4.1-anime"
+    },
+    {
+      "id": "aniki",
+      "name": "兄貴",
+      "gender": "male",
+      "file": "aniki.flac",
+      "model": "v4.1-anime"
+    },
+    {
+      "id": "yankee",
+      "name": "不良",
+      "gender": "male",
+      "file": "yankee.flac",
+      "model": "v4.1-anime"
+    },
+    {
+      "id": "android",
+      "name": "アンドロイド",
+      "gender": "male",
+      "file": "android.flac",
+      "model": "v4.1-anime"
+    },
+    {
+      "id": "prince",
+      "name": "王子",
+      "gender": "male",
+      "file": "prince.flac",
+      "model": "v4.1-anime"
+    },
+    {
+      "id": "senpai",
+      "name": "先輩",
+      "gender": "male",
+      "file": "senpai.flac",
+      "model": "v4.1-anime"
+    },
+    {
+      "id": "samurai",
+      "name": "侍",
+      "gender": "male",
+      "file": "samurai.flac",
+      "model": "v4.1-anime"
+    },
+    {
+      "id": "megane",
+      "name": "眼鏡のインテリ",
+      "gender": "male",
+      "file": "megane.flac",
+      "model": "v4.1-anime"
+    },
+    {
+      "id": "chuuni",
+      "name": "中二病",
+      "gender": "male",
+      "file": "chuuni.flac",
+      "model": "v4.1-anime"
+    },
+    {
+      "id": "elder",
+      "name": "老人",
+      "gender": "male",
+      "file": "elder.flac",
+      "model": "v4.1-small"
+    },
+    {
+      "id": "villain",
+      "name": "悪役",
+      "gender": "male",
+      "file": "villain.flac",
+      "model": "v4.1-small"
+    },
+    {
+      "id": "butler",
+      "name": "執事",
+      "gender": "male",
+      "file": "butler.flac",
+      "model": "v4.1-small"
+    }
+  ]
+}

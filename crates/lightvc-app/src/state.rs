@@ -7,6 +7,8 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use lightvc_audio::{AudioEndpoint, HostPref};
 use lightvc_core::snv_stream::SnvStream;
 
+use crate::voices::VoiceEntry;
+
 /// Real-time metrics from inference thread.
 #[derive(Clone, Debug, Default)]
 pub struct RtMetrics {
@@ -105,20 +107,17 @@ pub struct AppState {
     pub selected_host: HostPref,
 }
 
-#[derive(Clone)]
-pub struct VoiceEntry {
-    pub name: String,
-    pub path: std::path::PathBuf,
-}
-
 impl AppState {
     pub fn new() -> Self {
+        // 同梱のプリセットを最初から選べるようにして、先頭の声を選んでおく
+        let voices = crate::voices::bundled_voices();
+        let selected_voice = voices.first().map(|_| 0);
         Self {
             model_loaded: false,
             loading: false,
             settings: SnvSettings::default(),
-            voices: Vec::new(),
-            selected_voice: None,
+            voices,
+            selected_voice,
             error: None,
             status: "準備完了".to_string(),
             offline_result: None,
@@ -146,9 +145,9 @@ pub struct OperatorRecording {
     pub cancel: Arc<std::sync::atomic::AtomicBool>,
 }
 
-/// WAV を読み、48 kHz のモノラルにする。
+/// WAV / FLAC を読み、48 kHz のモノラルにする。
 pub fn load_48k(path: &Path) -> anyhow::Result<Vec<f32>> {
-    let (x, sr) = crate::audio_playback::load_wav_mono(path)?;
+    let (x, sr) = crate::audio_playback::load_audio_mono(path)?;
     crate::cli::resample_to_48k(&x, sr)
 }
 

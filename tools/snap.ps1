@@ -13,6 +13,10 @@
 .PARAMETER WaitMs
     Milliseconds to wait after focusing the window before capture.
 
+.PARAMETER ProcessId
+    PID of the lightvc-app instance to capture. Default: the first one found,
+    which is the wrong window when more than one instance is running.
+
 .EXAMPLE
     .\tools\snap.ps1
     .\tools\snap.ps1 -Out docs\screenshots/realtime.png
@@ -20,7 +24,8 @@
 [CmdletBinding()]
 param(
     [string]$Out,
-    [int]$WaitMs = 300
+    [int]$WaitMs = 300,
+    [int]$ProcessId = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -59,7 +64,11 @@ public class LightvcCapture {
 }
 
 # Find the LightVC process and bring it to the foreground.
-$proc = Get-Process -Name "lightvc-app" -ErrorAction SilentlyContinue | Select-Object -First 1
+$proc = if ($ProcessId) {
+    Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+} else {
+    Get-Process -Name "lightvc-app" -ErrorAction SilentlyContinue | Select-Object -First 1
+}
 if (-not $proc -or $proc.MainWindowHandle -eq [IntPtr]::Zero) {
     Write-Error "LightVC window not found. Launch the app first."
     exit 1

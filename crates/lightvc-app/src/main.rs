@@ -14,6 +14,7 @@ mod offline_tab;
 mod realtime_tab;
 mod state;
 mod ui;
+mod voices;
 
 use clap::Parser;
 

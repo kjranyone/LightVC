@@ -63,7 +63,7 @@ fn build_release() -> anyhow::Result<()> {
 
 /// G0-15: 配布 zip と sha256 を作る。
 ///
-/// ⚠ 同梱するのは**バンドル・CLI・モデル(SnvStream の書き出し)・NOTICE・README**のみ。
+/// ⚠ 同梱するのは**バンドル・CLI・モデル(SnvStream の書き出し)・ボイスプリセット・NOTICE・README**のみ。
 /// ASIO SDK はプロプライエタリで再配布禁止なので絶対に入れない（`CLAUDE.md`）。
 fn package() -> anyhow::Result<()> {
     bundle()?;
@@ -108,6 +108,23 @@ fn package() -> anyhow::Result<()> {
         let dst = stage.join(dst);
         fs::create_dir_all(dst.parent().unwrap())?;
         fs::copy(&src, &dst)?;
+    }
+    // 同梱のボイスプリセット。一覧(voices/manifest.json)に載ったファイルを1つずつ確かめて入れる(欠品は落とす)。
+    {
+        let src = root.join("voices");
+        let text = fs::read_to_string(src.join("manifest.json")).map_err(|_| anyhow::anyhow!("配布物が無い: voices/manifest.json"))?;
+        let manifest: serde_json::Value = serde_json::from_str(&text).map_err(|e| anyhow::anyhow!("voices/manifest.json: {e}"))?;
+        let voices = manifest["voices"].as_array().ok_or_else(|| anyhow::anyhow!("voices/manifest.json: voices が無い"))?;
+        anyhow::ensure!(!voices.is_empty(), "voices/manifest.json: 声が 1 つも無い");
+        fs::create_dir_all(stage.join("voices"))?;
+        fs::copy(src.join("manifest.json"), stage.join("voices").join("manifest.json"))?;
+        for v in voices {
+            let file = v["file"].as_str().filter(|f| !f.is_empty() && !f.contains(['/', '\\']) && !f.contains("..")).ok_or_else(|| anyhow::anyhow!("voices/manifest.json: file が不正"))?;
+            if !src.join(file).exists() {
+                anyhow::bail!("配布物が無い: voices/{file}");
+            }
+            fs::copy(src.join(file), stage.join("voices").join(file))?;
+        }
     }
     for e in walk(&stage)? {
         let rel = e.strip_prefix(&stage)?.to_string_lossy().replace('\\', "/");

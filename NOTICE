@@ -34,6 +34,18 @@ copies three exported parts into models/ of the distribution:
       - speech generated with Irodori-TTS-600M-v3-VoiceDesign (Aratako; MIT)
         using clips of that dataset as voice references.
 
+Bundled voice presets
+---------------------
+voices/ holds 30 target voice references (15 female, 15 male; one FLAC file per
+voice, 48 kHz mono, about 20-25 seconds of speech). They are synthetic voices
+generated with Irodori-TTS: 26 with Irodori-TTS-v4.1-Anime (phasefield-audio;
+MIT, a fine-tune of v4.1 Small) and 4 with Irodori-TTS-v4.1-Small (Aratako;
+MIT). Each voice was designed from a text description (caption) and a random
+seed; no recording of a real person was used as a reference. The ethical
+restrictions of the Irodori-TTS model cards apply (do not impersonate real
+people). voices/manifest.json lists them; tools/make_voice_presets.ps1 rebuilds
+them from tools/voice_presets.json.
+
 Third-party licenses
 --------------------
   - CLAP plugin ABI (clap-sys): MIT OR Apache-2.0
@@ -44,6 +56,7 @@ Third-party licenses
   - Plugin framework nice-plug / nice-plug-egui: ISC
   - GUI icons: Material Symbols (Google; Apache-2.0), embedded from
     crates/lightvc-app/assets/icons/*.svg.
+  - FLAC decoding of the bundled voice presets: claxon crate (Apache-2.0).
   - Other Rust crates: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Zlib,
     Unicode-3.0 or CC0-1.0. self_cell is dual-licensed (Apache-2.0 OR GPL-2.0-only)
     and is used under Apache-2.0.

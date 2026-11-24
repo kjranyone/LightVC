@@ -16,6 +16,7 @@ use crate::audio_playback::{self, AudioPlayer};
 use crate::file_pick::FilePick;
 use crate::m3::{self, c, icon, shape, Btn, Typo};
 use crate::state::{self, AppState, RtControl, RtMetrics};
+use crate::voices::{VoiceEntry, VoiceGroup};
 
 const SR: u32 = 48_000;
 const SEMITONES: [(f32, &str); 4] = [(0.0, "+0"), (5.0, "+5"), (7.0, "+7"), (12.0, "+12")];
@@ -79,6 +80,10 @@ pub struct LightVcUi {
     offline: OfflineUi,
     catalog: CatalogUi,
     devices: DeviceCache,
+    /// ボイスの画面で同梱のプリセットに掛ける表示フィルタ(None = すべて)。
+    voice_filter: Option<VoiceGroup>,
+    /// リアルタイム・ファイル変換の「目標の声」に出す chip の区分。
+    voice_group: VoiceGroup,
     show_full_notice: bool,
 }
 
@@ -127,6 +132,8 @@ pub fn run(state: Arc<Mutex<AppState>>, demo: bool) -> anyhow::Result<()> {
                         offline: OfflineUi::default(),
                         catalog: CatalogUi::default(),
                         devices: DeviceCache::default(),
+                        voice_filter: None,
+                        voice_group: VoiceGroup::Female,
                         show_full_notice: false,
                     };
                     if ui.tab == Tab::Devices { ui.refresh_devices(); }
@@ -143,12 +150,9 @@ pub fn enable_demo(state: &Arc<Mutex<AppState>>) {
     let mut s = state.lock().unwrap();
     s.model_loaded = true;
     s.settings.operator = vec!["samples/operator.wav".into()];
-    s.voices = vec![
-        state::VoiceEntry { name: "Venus (warm)".into(), path: "samples/venus.wav".into() },
-        state::VoiceEntry { name: "Mars (bright)".into(), path: "samples/mars.wav".into() },
-        state::VoiceEntry { name: "Lyra (soft)".into(), path: "samples/lyra.wav".into() },
-    ];
-    s.selected_voice = Some(0);
+    // 声は本物のプリセット(参照の音声も試聴できる)。操作者の登録だけは模擬の値。
+    s.voices = crate::voices::bundled_voices();
+    s.selected_voice = s.voices.first().map(|_| 0);
     s.status = "デモ表示(模擬の値)".into();
     if std::env::var("LVC_DEMO_STATE").as_deref() == Ok("loading") { s.loading = true; }
 }
@@ -185,7 +189,7 @@ impl LightVcUi {
         if let Some(p) = self.picks.voc.take() { self.state.lock().unwrap().settings.voc = p.display().to_string(); }
         if let Some(p) = self.picks.add.take() {
             let name = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-            self.state.lock().unwrap().voices.push(state::VoiceEntry { name, path: p });
+            self.state.lock().unwrap().voices.push(VoiceEntry { name, path: p, group: VoiceGroup::Own });
         }
     }
 
@@ -248,10 +252,61 @@ impl LightVcUi {
     fn select_voice(&mut self, i: usize, cx: &mut Context<Self>) {
         let reload = {
             let mut s = self.state.lock().unwrap();
-            if s.voices.get(i).is_some() { s.selected_voice = Some(i); }
+            let group = s.voices.get(i).map(|v| v.group);
+            if let Some(group) = group {
+                s.selected_voice = Some(i);
+                // 選んだ声が「目標の声」の chip に出る区分に切り替える
+                self.voice_group = group;
+            }
             s.model_loaded && !s.settings.operator.is_empty()
         };
         if reload && !self.demo { state::load_engine(&self.state); }
+        cx.notify();
+    }
+
+    /// 「目標の声」の区分(女性 / 男性 / 自分)の connected button group。
+    fn voice_group_segments(&self, prefix: &'static str, cx: &mut Context<Self>) -> Div {
+        let groups = [VoiceGroup::Female, VoiceGroup::Male, VoiceGroup::Own];
+        let mut group = m3::segments();
+        for (i, g) in groups.into_iter().enumerate() {
+            group = group.child(
+                m3::segment(SharedString::from(format!("{prefix}_group_{i}")), g.label(), self.voice_group == g, i == 0, i == groups.len() - 1)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.voice_group = g;
+                        cx.notify();
+                    })),
+            );
+        }
+        group
+    }
+
+    /// 今の区分の声の chip。`selected` は状態の voices の番号について、その声を使っているか。
+    fn voice_chips(&self, prefix: &'static str, voices: &[VoiceEntry], selected: impl Fn(usize) -> bool, cx: &mut Context<Self>, on_pick: fn(&mut Self, usize, &mut Context<Self>)) -> Div {
+        let mut chips = div().flex().flex_wrap().gap_2();
+        let mut shown = false;
+        for (i, v) in voices.iter().enumerate() {
+            if v.group != self.voice_group {
+                continue;
+            }
+            shown = true;
+            chips = chips.child(
+                m3::chip(SharedString::from(format!("{prefix}_{i}")), v.name.clone(), selected(i))
+                    .on_click(cx.listener(move |this, _, _, cx| on_pick(this, i, cx))),
+            );
+        }
+        if !shown {
+            let text = if self.voice_group == VoiceGroup::Own { "自分で追加したボイスはありません" } else { "この区分の声はありません" };
+            chips = chips.child(supporting(text));
+        }
+        chips
+    }
+
+    /// ファイル変換の「目標の声」に登録済みの声を入れる。
+    fn pick_offline_voice(this: &mut Self, i: usize, cx: &mut Context<Self>) {
+        let p = this.state.lock().unwrap().voices.get(i).map(|v| v.path.clone());
+        if let Some(p) = p {
+            this.offline.reference = Some(p);
+        }
         cx.notify();
     }
 
@@ -277,7 +332,7 @@ fn stop_player(slot: &mut Option<AudioPlayer>) {
 }
 
 fn play_path(slot: &mut Option<AudioPlayer>, path: &std::path::Path) -> anyhow::Result<()> {
-    let (wav, sr) = audio_playback::load_wav_mono(path).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+    let (wav, sr) = audio_playback::load_audio_mono(path).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
     let wav44 = audio_playback::resample_linear(&wav, sr);
     *slot = Some(AudioPlayer::play(wav44)?);
     Ok(())
@@ -379,11 +434,11 @@ impl LightVcUi {
         let m = self.metrics.clone();
         let (has_engine, is_loading, cfg, voices, selected_voice, rec) = {
             let s = self.state.lock().unwrap();
-            (s.model_loaded, s.loading, s.settings.clone(), s.voices.iter().map(|v| v.name.clone()).collect::<Vec<_>>(), s.selected_voice,
+            (s.model_loaded, s.loading, s.settings.clone(), s.voices.clone(), s.selected_voice,
              s.operator_rec.as_ref().map(|r| r.seconds.saturating_sub(r.started.elapsed().as_secs() as u32)))
         };
         let force_bypass = !has_engine;
-        let voice_name = selected_voice.and_then(|i| voices.get(i).cloned());
+        let voice_name = selected_voice.and_then(|i| voices.get(i)).map(|v| v.name.clone());
         let converting = self.rt_running && !self.rt_bypass && !force_bypass;
 
         // ---- hero: 状態で色が替わる主役の容器 ----
@@ -546,14 +601,10 @@ impl LightVcUi {
                 .child(supporting("まだ登録がありません。ボイスの画面で参照の WAV を追加します。"))
                 .child(div().flex().child(m3::button("tgt_open", Some("add"), "ボイスを追加", Btn::Tonal, true).on_click(cx.listener(|this, _, _, cx| this.set_tab(Tab::Voices, cx)))));
         } else {
-            let mut chips = div().flex().flex_wrap().gap_2();
-            for (i, name) in voices.iter().enumerate() {
-                chips = chips.child(
-                    m3::chip(SharedString::from(format!("tgt_{i}")), name.clone(), selected_voice == Some(i))
-                        .on_click(cx.listener(move |this, _, _, cx| this.select_voice(i, cx))),
-                );
-            }
-            target = target.child(chips);
+            // 声が 30 以上あるので、区分(女性 / 男性 / 自分)ごとに chip を出す
+            target = target
+                .child(self.voice_group_segments("tgt", cx))
+                .child(self.voice_chips("tgt", &voices, |i| selected_voice == Some(i), cx, Self::select_voice));
         }
 
         let mut operator = m3::card().child(
@@ -653,7 +704,7 @@ impl LightVcUi {
     fn render_offline(&mut self, status: &str, cx: &mut Context<Self>) -> AnyElement {
         let (semitones, has_operator, voices) = {
             let s = self.state.lock().unwrap();
-            (s.settings.semitones, !s.settings.operator.is_empty(), s.voices.iter().map(|v| v.name.clone()).collect::<Vec<_>>())
+            (s.settings.semitones, !s.settings.operator.is_empty(), s.voices.clone())
         };
 
         let slot = |title: &str, sub: &str, glyph: &str, path: &Option<PathBuf>| {
@@ -706,19 +757,9 @@ impl LightVcUi {
         );
         if !voices.is_empty() {
             let current = self.offline.reference.clone();
-            let paths: Vec<PathBuf> = self.state.lock().unwrap().voices.iter().map(|v| v.path.clone()).collect();
-            let mut chips = div().flex().flex_wrap().gap_2();
-            for (i, name) in voices.iter().enumerate() {
-                let selected = current.as_ref().is_some_and(|p| paths.get(i) == Some(p));
-                chips = chips.child(
-                    m3::chip(SharedString::from(format!("cat_{i}")), name.clone(), selected).on_click(cx.listener(move |this, _, _, cx| {
-                        let p = this.state.lock().unwrap().voices.get(i).map(|v| v.path.clone());
-                        if let Some(p) = p { this.offline.reference = Some(p); }
-                        cx.notify();
-                    })),
-                );
-            }
-            reference = reference.child(div().flex().flex_col().gap_2().child(supporting("登録済みのボイスから選ぶ")).child(chips));
+            reference = reference
+                .child(self.voice_group_segments("cat", cx))
+                .child(self.voice_chips("cat", &voices, |i| current.as_ref().is_some_and(|p| voices.get(i).is_some_and(|v| &v.path == p)), cx, Self::pick_offline_voice));
         }
 
         let can = self.offline.source.is_some() && self.offline.reference.is_some() && has_operator && !self.offline.converting;
@@ -789,76 +830,110 @@ impl LightVcUi {
     fn render_voices(&mut self, _status: &str, cx: &mut Context<Self>) -> AnyElement {
         let (voices, selected_voice) = {
             let s = self.state.lock().unwrap();
-            (s.voices.iter().map(|v| (v.name.clone(), v.path.clone())).collect::<Vec<_>>(), s.selected_voice)
+            (s.voices.clone(), s.selected_voice)
         };
-        let header = page_header("ボイス", "目標の声の参照(普通の発話 20 秒以上の WAV)を登録します")
+        let header = page_header("ボイス", "同梱のプリセットから選ぶか、目標の声の参照(普通の発話 20 秒以上)を追加します")
             .child(m3::button("voice_add", Some("add"), "ボイスを追加", Btn::Filled, true).on_click(cx.listener(|this, _, _, cx| {
                 this.picks.add.open();
                 cx.notify();
             })));
         let mut el = div().flex().flex_col().gap_4().child(header);
-
         if voices.is_empty() {
             return el.child(
                 div().py_16().flex().flex_col().items_center().gap_3().rounded(px(shape::XL)).bg(c::surface_container())
                     .child(div().size(px(72.)).flex().items_center().justify_center().rounded(px(shape::XL)).bg(c::primary_container())
                         .child(icon("record_voice_over", 36., c::on_primary_container())))
                     .child(div().title_l().text_color(c::on_surface()).child("まだボイスがありません"))
-                    .child(div().body_m().text_color(c::on_surface_variant()).child("WAV を選ぶと、ファイル名で登録されます")),
+                    .child(div().body_m().text_color(c::on_surface_variant()).child("WAV / FLAC を選ぶと、ファイル名で登録されます")),
             ).into_any_element();
         }
 
+        // 行の並び(番号 = 状態の voices の番号)。同梱は表示フィルタの区分だけ、自分で追加した声は全部。
+        let presets: Vec<usize> = (0..voices.len()).filter(|&i| voices[i].group != VoiceGroup::Own && self.voice_filter.is_none_or(|g| g == voices[i].group)).collect();
+        let own: Vec<usize> = (0..voices.len()).filter(|&i| voices[i].group == VoiceGroup::Own).collect();
+
+        if voices.iter().any(|v| v.group != VoiceGroup::Own) {
+            let filters = [(None, "すべて"), (Some(VoiceGroup::Female), "女性"), (Some(VoiceGroup::Male), "男性")];
+            let mut group = m3::segments();
+            for (i, (g, label)) in filters.into_iter().enumerate() {
+                group = group.child(
+                    m3::segment(SharedString::from(format!("voice_filter_{i}")), label, self.voice_filter == g, i == 0, i == filters.len() - 1)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.voice_filter = g;
+                            cx.notify();
+                        })),
+                );
+            }
+            el = el
+                .child(div().flex().flex_wrap().items_center().gap_3().child(section_title("同梱のプリセット")).child(div().flex_1()).child(group))
+                .child(supporting("Irodori-TTS で作った架空の声です。実在の人物の録音ではありません。"));
+            el = if presets.is_empty() {
+                el.child(supporting("この区分のプリセットはありません"))
+            } else {
+                el.child(self.voice_rows(&voices, &presets, selected_voice, false, cx))
+            };
+        }
+        if !own.is_empty() {
+            el = el.child(section_title("自分で追加したボイス")).child(self.voice_rows(&voices, &own, selected_voice, true, cx));
+        }
+        el.into_any_element()
+    }
+
+    /// 声の一覧の行。`ids` は状態の voices の番号(この並びで行の角を整える)。自分で追加した声(`own`)だけ削除できる。
+    fn voice_rows(&self, voices: &[VoiceEntry], ids: &[usize], selected_voice: Option<usize>, own: bool, cx: &mut Context<Self>) -> Div {
         let mut list = m3::list();
-        let n = voices.len();
-        for (i, (name, path)) in voices.iter().enumerate() {
+        let n = ids.len();
+        for (row, &i) in ids.iter().enumerate() {
+            let v = &voices[i];
             let selected = selected_voice == Some(i);
             let playing = self.catalog.playing == Some(i) && self.catalog.player.as_ref().is_some_and(|p| p.is_playing());
-            let path = path.clone();
+            let path = v.path.clone();
             let sub = if selected { c::on_secondary_container() } else { c::on_surface_variant() };
-            list = list.child(
-                m3::list_item(SharedString::from(format!("voice_{i}")), selected, i == 0, i == n - 1).min_h(px(72.))
-                    .child(
-                        div().id(SharedString::from(format!("voice_sel_{i}"))).flex_1().min_w_0().flex().items_center().gap_4().cursor_pointer()
-                            .on_click(cx.listener(move |this, _, _, cx| this.select_voice(i, cx)))
-                            .child(if selected { m3::avatar("check", c::secondary(), c::on_secondary()) } else { m3::avatar("person", c::primary_container(), c::on_primary_container()) })
-                            .child(div().flex_1().min_w_0().flex().flex_col()
-                                .child(div().body_l().font_weight(FontWeight::MEDIUM).truncate().child(name.clone()))
-                                .child(div().body_m().text_color(sub).truncate().child(path.display().to_string())))
-                            .when(selected, |s| s.child(div().label_m().flex_none().text_color(sub).child("使用中"))),
-                    )
-                    .child(m3::icon_button(SharedString::from(format!("voice_play_{i}")), if playing { "stop_fill1" } else { "play_arrow_fill1" }, true, sub).on_click(cx.listener(move |this, _, _, cx| {
-                        let was_playing = this.catalog.playing == Some(i) && this.catalog.player.is_some();
-                        stop_player(&mut this.catalog.player);
-                        this.catalog.playing = None;
-                        if !was_playing {
-                            match play_path(&mut this.catalog.player, &path) {
-                                Ok(()) => {
-                                    this.catalog.playing = Some(i);
-                                    this.state.lock().unwrap().error = None;
-                                }
-                                Err(e) => this.state.lock().unwrap().error = Some(format!("再生できません: {e}")),
+            let detail = if own { path.display().to_string() } else { format!("{}・同梱", v.group.label()) };
+            let mut item = m3::list_item(SharedString::from(format!("voice_{i}")), selected, row == 0, row == n - 1).min_h(px(72.))
+                .child(
+                    div().id(SharedString::from(format!("voice_sel_{i}"))).flex_1().min_w_0().flex().items_center().gap_4().cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _, cx| this.select_voice(i, cx)))
+                        .child(if selected { m3::avatar("check", c::secondary(), c::on_secondary()) } else { m3::avatar("person", c::primary_container(), c::on_primary_container()) })
+                        .child(div().flex_1().min_w_0().flex().flex_col()
+                            .child(div().body_l().font_weight(FontWeight::MEDIUM).truncate().child(v.name.clone()))
+                            .child(div().body_m().text_color(sub).truncate().child(detail)))
+                        .when(selected, |s| s.child(div().label_m().flex_none().text_color(sub).child("使用中"))),
+                )
+                .child(m3::icon_button(SharedString::from(format!("voice_play_{i}")), if playing { "stop_fill1" } else { "play_arrow_fill1" }, true, sub).on_click(cx.listener(move |this, _, _, cx| {
+                    let was_playing = this.catalog.playing == Some(i) && this.catalog.player.is_some();
+                    stop_player(&mut this.catalog.player);
+                    this.catalog.playing = None;
+                    if !was_playing {
+                        match play_path(&mut this.catalog.player, &path) {
+                            Ok(()) => {
+                                this.catalog.playing = Some(i);
+                                this.state.lock().unwrap().error = None;
                             }
+                            Err(e) => this.state.lock().unwrap().error = Some(format!("再生できません: {e}")),
                         }
-                        cx.notify();
-                    })))
-                    .child(m3::icon_button(SharedString::from(format!("voice_del_{i}")), "delete", false, sub).on_click(cx.listener(move |this, _, _, cx| {
-                        stop_player(&mut this.catalog.player);
-                        this.catalog.playing = None;
-                        let mut s = this.state.lock().unwrap();
-                        if i < s.voices.len() {
-                            s.voices.remove(i);
-                            s.selected_voice = match s.selected_voice {
-                                Some(sel) if sel == i => None,
-                                Some(sel) if sel > i => Some(sel - 1),
-                                other => other,
-                            };
-                        }
-                        cx.notify();
-                    }))),
-            );
+                    }
+                    cx.notify();
+                })));
+            if own {
+                item = item.child(m3::icon_button(SharedString::from(format!("voice_del_{i}")), "delete", false, sub).on_click(cx.listener(move |this, _, _, cx| {
+                    stop_player(&mut this.catalog.player);
+                    this.catalog.playing = None;
+                    let mut s = this.state.lock().unwrap();
+                    if i < s.voices.len() {
+                        s.voices.remove(i);
+                        s.selected_voice = match s.selected_voice {
+                            Some(sel) if sel == i => None,
+                            Some(sel) if sel > i => Some(sel - 1),
+                            other => other,
+                        };
+                    }
+                    cx.notify();
+                })));
+            }
+            list = list.child(item);
         }
-        el = el.child(list);
-        el.into_any_element()
+        list
     }
 
     // ===== デバイス =====
@@ -1015,13 +1090,17 @@ impl LightVcUi {
             .child(row(
                 "出力部ボコーダ (models/rvoc3hi)",
                 "非公開の音声データセット (非同梱) および同音声を参照とした Irodori-TTS-600M-v3-VoiceDesign (Aratako / MIT)",
+            ))
+            .child(row(
+                "同梱のボイスプリセット (voices/)",
+                "Irodori-TTS-v4.1 Anime (phasefield-audio / MIT) と Irodori-TTS-v4.1-Small (Aratako / MIT) で作った架空の声 30 人(女性 15・男性 15)。実在の人物の録音は使っていません",
             ));
 
         let third_party_items: [(&str, &str); 5] = [
             ("GPUI (Zed Industries / Apache-2.0)", "デスクトップ GUI フレームワーク"),
             ("Material Symbols Rounded (Google / Apache-2.0)", "UI アイコン (assets/icons/*.svg)"),
             ("WORLD (M. Morise / modified BSD)", "スペクトル包絡処理 (crates/lightvc-core/src/cheaptrick.rs)"),
-            ("音声 I/O (cpal・rubato・rtrb・hound)", "WASAPI / リサンプリング / リングバッファ。ASIO は Windows ネイティブ COM 連携を使用し、Steinberg ASIO SDK は同梱していません"),
+            ("音声 I/O (cpal・rubato・rtrb・hound・claxon)", "WASAPI / リサンプリング / リングバッファ / FLAC の読み込み。ASIO は Windows ネイティブ COM 連携を使用し、Steinberg ASIO SDK は同梱していません"),
             ("クレート依存の許諾方針", "MIT / Apache-2.0 / BSD-2-Clause / BSD-3-Clause / ISC / Zlib / Unicode-3.0 / CC0-1.0 (self_cell は Apache-2.0 を選択、GPLv3 依存なし)"),
         ];
         let mut third_party_list = m3::list();

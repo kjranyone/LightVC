@@ -121,6 +121,16 @@ cargo run -p lightvc-xtask -- package   # bundle + CLI + 3 つの重みの書き
 - ASIO SDK はプロプライエタリ（再配布禁止）— リポジトリにコミットしない
 - **配布物の重みの学習データと第三者の許諾は `NOTICE` に書く**。重み・学習データ・依存を替えたら NOTICE も直す。
 
+## Bundled voice presets(同梱のボイスプリセット)— 2026-11-24〜
+
+- **`voices/` に目標の声のプリセット 30 人(女性 15・男性 15)を同梱する。** Irodori-TTS で作った架空の声で、実在の人物の録音は使わない(なりすましの禁止は Irodori のモデルカードの制限)。
+- 中身は `voices/manifest.json`(id・表示名・性別・ファイル)と `voices/<id>.flac`(48 kHz・モノラル・1 本 20 秒以上 = 2 つの発話を 0.6 秒の無音でつないだもの)。目標の参照は計 20 秒以上が目安。
+- 作り方は `tools/voice_presets.json`(caption・seed・読ませる文)と `tools/make_voice_presets.ps1`(sttts-say + ffmpeg)。声を替えたら `NOTICE` の「Bundled voice presets」と GUI のクレジット(`render_credits`)も直す。
+- `.gitignore` は `*.flac` を除外するので、`voices/*.flac` だけ例外的に追跡する。他の音声をリポジトリに入れない。
+- プリセットは**推論時の目標の参照**だけに使う。学習データ・評価の目標にはしない(学習データの規則は上の Data の節のまま)。
+- GUI は `crates/lightvc-app/src/voices.rs` で探す(`LVC_VOICES` → カレントフォルダ → 実行ファイルの隣 → 開発中はリポジトリ)。`cargo run -p lightvc-xtask -- package` は `voices/` を配布物へ入れ、欠けていれば失敗する。
+- `cargo test -p lightvc-app` が 30 声のそろい(15 / 15)と長さ・読み込みを確かめる(`voices/` が無い環境では読み飛ばす)。
+
 ## Code Style
 
 - **Rust**: コメントは最小限

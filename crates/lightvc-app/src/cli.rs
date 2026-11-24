@@ -57,7 +57,7 @@ pub struct SnvModel {
     /// 操作者の登録(自分の普通の発話・計 30 秒程度・複数可)
     #[arg(long, required = true, num_args = 1..)]
     pub operator: Vec<std::path::PathBuf>,
-    /// 目標の参照(目標の声の普通の発話・計 20 秒以上・複数可)
+    /// 目標の参照(目標の声の普通の発話・計 20 秒以上・複数可。同梱のプリセットは `voices/<id>.flac`)
     #[arg(long, required = true, num_args = 1..)]
     pub target: Vec<std::path::PathBuf>,
     /// 固定の半音(運用 = 0 / 5 / 7 / 12)
@@ -79,7 +79,7 @@ impl SnvModel {
             let mut v = Vec::new();
             let mut sec = 0.0;
             for p in ps {
-                let (x, sr) = load_wav_mono(p)?;
+                let (x, sr) = crate::audio_playback::load_audio_mono(p)?;
                 anyhow::ensure!(sr == 48_000, "{who} {} は 48 kHz が必要 (got {sr})", p.display());
                 sec += x.len() as f64 / 48_000.0;
                 v.push(x);
@@ -162,7 +162,7 @@ pub fn run_devices() -> Result<()> {
 pub fn run_snv(cmd: SnvCmd) -> Result<()> {
     use lightvc_core::snv_stream::SnvStream;
     const HOP: usize = SnvStream::BLOCK;
-    let (x, sr) = load_wav_mono(&cmd.input)?;
+    let (x, sr) = crate::audio_playback::load_audio_mono(&cmd.input)?;
     anyhow::ensure!(sr == 48_000, "入力は 48 kHz が必要 (got {sr})");
     let mut vc = cmd.model.load()?;
     let n = x.len() / HOP;
@@ -320,44 +320,6 @@ pub fn run_realtime_snv(cmd: RealtimeSnvCmd) -> Result<()> {
 }
 
 // --- WAV I/O helpers ---
-
-pub fn load_wav_mono(path: &std::path::Path) -> Result<(Vec<f32>, u32)> {
-    let reader = hound::WavReader::open(path)?;
-    let spec = reader.spec();
-    let sample_rate = spec.sample_rate;
-    let channels = spec.channels as usize;
-
-    let samples: Vec<f32> = match spec.sample_format {
-        hound::SampleFormat::Float => reader
-            .into_samples::<f32>()
-            .filter_map(|s| s.ok())
-            .collect(),
-        hound::SampleFormat::Int => {
-            let max_val = match spec.bits_per_sample {
-                16 => 32768.0f32,
-                24 => 8388608.0,
-                32 => 2147483648.0,
-                _ => 32768.0,
-            };
-            reader
-                .into_samples::<i32>()
-                .filter_map(|s| s.ok())
-                .map(|s| s as f32 / max_val)
-                .collect()
-        }
-    };
-
-    let mono = if channels > 1 {
-        samples
-            .chunks(channels)
-            .map(|frame| frame.iter().sum::<f32>() / channels as f32)
-            .collect()
-    } else {
-        samples
-    };
-
-    Ok((mono, sample_rate))
-}
 
 pub fn save_wav_mono(path: &std::path::Path, samples: &[f32], sample_rate: u32) -> Result<()> {
     let spec = hound::WavSpec {

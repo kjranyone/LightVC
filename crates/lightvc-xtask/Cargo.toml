@@ -8,3 +8,5 @@ publish = false
 
 [dependencies]
 anyhow.workspace = true
+# 配布物に入れる同梱のボイスプリセットの一覧(voices/manifest.json)を読むため
+serde_json = "1.0"
