@@ -1,25 +1,21 @@
-# Windows 実機への引き継ぎ(K3G の製品の経路・2026-11-20)
+# Windows 実機への引き継ぎ(段 P126 K3G-v4 の製品経路・2026-11-28 更新)
 
-status: 引き継ぎ資料。オーナー 2026-11-20「いやWindows向けアプリ実装は実機のエージェントにやらせるわ。」
-
-Linux の開発機で済んでいること(コミット `04f59a6`):
-
-- 数値の関門・耳の関門(オーナーの判定)・Rust の一致・出荷の関門(先読み 0・台帳 20 ms)。
-- 4 スレッドの実時間: RTF 0.80〜0.84、1 ブロック(5 ms)の p99 は典型 4.2〜4.4 ms、6 回の最悪 4.91 ms(線 < 5 ms)。
-
-Windows 実機の初回の確認の結果と、組み込みの指示は `current/windows_app_integration.md`(関門 S は不合格・2026-11-21)。
+status: 現役引き継ぎ資料(旧 `windows_app_integration.md` の確定事項を統合・全文履歴は git `b749b59`)。
 
 ## 1. 製品の経路
 
-前段(`v4_dual` + 門と瞬時重みの網つき)→ K3G-v4(符号と回路の 3 組の平均・錨)→ 出力部 `snv_p123_s`(`delay = 480`) → 出力の番。`lightvc_core::snv_stream::SnvStream` が 48 kHz・240 サンプル単位で流す(段 P126・2026-11-28 採用)。
+前段(`v4_dual` + 門と瞬時マスク網 `inst_mask = true`)→ K3G-v4(符号と回路の 3 組の平均・錨)→ 出力部 `snv_p123_s`(`delay = 480`・因果 3 点包絡平滑 `env_smooth = 0.25`) → 出力の番(`out_guard.rs`)。`lightvc_core::snv_stream::SnvStream` が 48 kHz・240 サンプル(5 ms)単位で流し、アルゴリズム遅延は `HOP + DELAY = 720` サンプル(`15.0 ms`)。
 
-- 実時間には **4 スレッド**が要る(`enable_parallel(4)`・GUI と CLI の既定は 4・プラグインの既定も 4)。2 スレッドでは p95 5.05 ms で予算を超える。
-- 重みは f16 で持つ(manifest の `cfg.half` と `cfg.kv16`)。F16C の命令が無い CPU では遅い経路に落ちる(出力は同じ)。
-- 2026-11-22(段 P95)から、`SnvStream` は出力部に渡す包絡に因果の 3 点の平滑を掛け(出力部の学習の界面)、出力部の後に出力の番(`out_guard.rs`・尖頭値を 1.0 の内側に収める・小さい入力の間の大きな出力を下げる)を置く。どちらも既定で入・足す遅延 0。アプリの側で出力を ±1 に切る処理は残してよい(番の後は 1.0 を超えない)。
+- **実時間並列**: **4 スレッド**が既定(`enable_parallel(4)`・Linux 機での関門 S 6 回反復最悪は音楽つき `p99 = 4.89 ms < 5.0 ms`・音楽なし `4.67 ms`)。
+- **f16 重みと注意 KV**: `manifest.json` の `cfg.half` と `cfg.kv16` によりフレーム重み・注意 KV ともに f16。
+- **GUI・音声 I/O・プラグイン**:
+  - アプリ GUI は `gpui 0.2.2`(要求駆動描画・静止時 CPU ほぼ 0・メモリ約 60 MB、`DESIGN.md` 準拠)。プラグイン画面のみ `nice-plug-egui`。
+  - ASIO は `crates/lightvc-audio/src/asio_win.rs` のネイティブ COM(`IASIO`)実装により **Steinberg ASIO SDK 不要**で標準ビルドで動作し、WASAPI/ASIO 混在入出力にも対応する。
+  - `cargo run -p lightvc-xtask -- install` は管理者権限不要のユーザーフォルダ `%LOCALAPPDATA%\Programs\Common\{VST3,CLAP}` へ導入する。
 
-## 2. 重み(git には無い)
+## 2. 重み(git には無い — `ch160` から `scp` で取得)
 
-アプリが読むのは次の 3 つで、各フォルダの `manifest.json` と `weights.bin` が本体。`fixture*/` は一致の試験だけが使う。
+アプリ・プラグイン・`xtask package` が読むのは次の 3 つで、各フォルダの `manifest.json` と `weights.bin` が本体(`fixture*/` は一致試験専用)。取得コマンドはルートの `handover.md` を参照。
 
 | 部品 | 作業ツリーの場所 | 配布物の中 | weights.bin | sha256 の先頭 |
 |---|---|---|---|---|
@@ -27,44 +23,23 @@ Windows 実機の初回の確認の結果と、組み込みの指示は `current
 | K3G | `results/snv_p126_k3g16kv_export/` | `models/k3g/` | 135,379,140 B | 5afd51c2fdc5a487 |
 | 出力部 | `results/snv_p123_s/export_20k/` | `models/rvoc3hi/` | 13,020,228 B | 7984a4226b8af238 |
 
-Linux の配布物 `target/LightVC-0.1.0-linux.zip` の `models/` は OS に依らない。GUI と CLI の既定はリポジトリの根からの `results/...`。配布物の形で動かすときは `--front models/front_gate --model models/k3g --voc models/rvoc3hi`。
+GUI と CLI の既定はリポジトリの根からの `results/...`(プラグイン `resolve_export` は実行形式周辺の `models/*` → `%APPDATA%\LightVC\models` → `results/...` の順に探索)。
 
-## 3. Windows で確かめること(この順)
+## 3. Windows 実機で確かめること(この順)
 
-Linux から Windows 向けに型の検査を済ませた(2026-11-20・`cargo check --target x86_64-pc-windows-gnu`)。
-
-- `lightvc-app`(GUI・CLI)・`lightvc-audio`・`lightvc-core`: 通る。
-- `lightvc-clap`(CLAP / VST3): ビルドの手順の中で C++ のコンパイラが要り、Linux からの検査はできていない(mingw の g++ が無い)。Windows の MSVC で直に作る。
-
-1. **ビルド**: `cargo build --release -p lightvc-app`。30 ms 級の遅延には `--features asio` が要る(ASIO SDK は各自で用意する・WASAPI の共有モードは 30 ms を切れない)。
-2. **一致**: `cargo test --release -p lightvc-core`。`results/` の 3 つの書き出しと `fixture*/` が要る。`results/snv_k3g_export`・`results/snv_k3g16_export` が無い試験は読み飛ばす。
-3. **1 ブロックの時間(関門 S)**: 4 スレッドで p99 < 5 ms。6 回測り、最悪の値で判定する。
-   ```
-   set LVC_K3G=results/snv_p126_k3g16kv_export
+1. **ビルド**: `.\dev.ps1 -BuildOnly -Release`(`fxc.exe` を自動で `PATH` に追加・標準ビルドで WASAPI + ネイティブ COM ASIO 対応)。
+2. **一致とボイステスト**: `cargo test --workspace --release -- --test-threads=1`。
+3. **1 ブロックの時間(関門 S)**: 電源プラン「高パフォーマンス」・他プロセス停止の上で 4 スレッド `p99 < 5.0 ms`(6 回最悪):
+   ```powershell
    cargo test --release -p lightvc-core gate_s_k3g16 -- --ignored --nocapture --test-threads=1
    ```
-4. **マイク → スピーカー**: `lightvc-app realtime-snv --operator <自分の声.wav> --target <目標の声.wav> --threads 4 --seconds 300`。5 秒ごとの表示で次を確かめる。
-   - `compute ms p99` < 5.0
-   - `overrun` と `underrun` が増えない
-   - 耳で途切れが無い
+   - `affinity.rs` の `win::pin_perf`(`EfficiencyClass` 最大の P コア集合へ配置 + MMCSS + タイマ分解能引き上げ)が効いているか確認する(比較用環境変数: `LVC_NO_PIN=1`・`LVC_PIN_SMT=1`・`LVC_SPIN_US`)。
+4. **配布パッケージと導入**: `cargo run -p lightvc-xtask -- package` および `cargo run -p lightvc-xtask -- install`。
+5. **マイク → スピーカー / DAW 検証**:
+   - `lightvc-app realtime-snv --host asio --buffer 240 --operator <自分の声.wav> --target voices/imouto.flac --threads 4 --seconds 300` および `lightvc-app gui` で、`compute ms p99 < 5.0`・`overrun/underrun` 非増加・耳で途切れ無しを確認。
+   - DAW(Studio One 等)で VST3 / CLAP を読み込み、PDC(`SnvStream::LATENCY_SAMPLES = 720` = `15.0 ms` + ホストバッファ)による dry/wet 位相整合を確認。
 
-   GUI のリアルタイムでも同じことを見る。
-5. **スレッドの置き方**(`crates/lightvc-core/src/affinity.rs` の `win::pin_perf`): 混成の CPU では、`GetSystemCpuSetInformation` の `EfficiencyClass` が最大の CPU 集合(コアごとに 1 つ)へ `SetThreadSelectedCpuSets` する。型の検査しかしていない。
-   - 重いスレッドが P コアに載っていることを確かめる(タスク マネージャーか ETW)。
-   - 比べ: `LVC_NO_PIN=1`(置かない)・`LVC_PIN_SMT=1`(P コアの全ての論理 CPU)。
-   - 待ちの回し時間は `LVC_SPIN_US`(既定 1000 µs)。
+## 4. 間に合わないときの診断
 
-## 4. 間に合わないとき
-
-- **内訳を出す**: `set LVC_K3G=results/snv_p126_k3g16kv_export` の上で `cargo test --release -p lightvc-core profile_k3g -- --ignored --nocapture --test-threads=1`。Linux の 4 スレッドの内訳(ブロックあたり)は次のとおり。
-
-  | 段 | ms |
-  |---|---|
-  | 門 | 0.55 |
-  | 前段 | 0.53 |
-  | 模型 | 約 1.4 |
-  | 描画器 | 1.2 |
-  | 計 | 約 4.0 |
-
-- **次に削れる所**: 描画器の重みの f16 と、前段の一部を門の網と並べること。どちらも数値が変わるなら、先に PyTorch の側で品質を測る(研究の正本 `current/paper_snv.md` 段 P94 の手順)。
-- **採らない手**: 系の数を減らす・フレームを間引くなど、通った形そのものを変える手は採らない(数値の関門と耳の関門をやり直すことになる)。
+- **段ごとの内訳計測**: `cargo test --release -p lightvc-core profile_k3g -- --ignored --nocapture --test-threads=1`。
+- **採らない手**: 系の数を減らす・フレームを間引くなど、耳の関門を通った形そのものを変える手は採らない。出力値を変える高速化(描画器の f16 化等)は必ず先に PyTorch 側で品質関門を通す。

@@ -34,10 +34,10 @@ target参照 → voice / style / texture ──┤
 
 | 資料 | 役割 |
 |---|---|
-| [RESEARCH.md](RESEARCH.md) | 確認済みの到達点、証拠の所在、未解決の問い |
-| [synth_nam_vc.md](synth_nam_vc.md) | **本線(2026-11-01 リセット)**: 構音の構造のアナログモデリング・低遅延で実現できるモデリングがフロンティア（PROPOSED rev1） |
-| [paper_snv.md](paper_snv.md) | **本線の論文・研究の正本(2026-11-06〜・PROPOSED)**。オーナー方針(11-06)「では論文からのみ学習／評価を行うこと」: 演奏と回路の境界は内容で条件づけた共有でだけ決まる(命題 1 = 自己の reamp では変換が決まらない・命題 2 = 内容の条件付き分布の共有で決まる)。以後の学習は本稿 §6 の管路(段 T 合成の世界での立証 → 段 D データ → 段 I Irodori の全量 → 段 P 製品)の段としてだけ走らせる |
-| [windows_handoff.md](windows_handoff.md) | K3G の製品の経路を Windows の実機で確かめるための引き継ぎ(重みの置き場所・確かめる順・間に合わないときの手) |
+| [RESEARCH.md](RESEARCH.md) | 確認済みの到達点、棄却仮説(negative results)の圧縮一覧、未解決の問い |
+| [synth_nam_vc.md](synth_nam_vc.md) | **本線(2026-11-01 リセット)**: 構音の構造のアナログモデリング・低遅延モデリングの基本概念と初期較正（rev2 圧縮版） |
+| [paper_snv.md](paper_snv.md) | **本線の論文・研究の正本(2026-11-06〜・rev248 圧縮整理版)**。オーナー方針(11-06)「では論文からのみ学習／評価を行うこと」: 命題 1・2・3、現行採用法(`K3G-v4` + `v4_dual` + `inst_mask` + `snv_p123_s`)、棄却仮説の体系表、評価規約(§7)、オーナー判断台帳(§9) |
+| [windows_handoff.md](windows_handoff.md) | 段 P126 `K3G-v4` の製品経路を Windows 実機で検証・配布するための引き継ぎ |
 | [renderer.md](renderer.md) | rvoc系出力部(採用済み描画器 `snv_p123_s` および基盤 `rvoc3hi`)の設計（ADOPTED・旧耳記録はリセット前で撤回） |
 | [kansei_control.md](kansei_control.md) | 官能評価、萌えのパラメタ化、再生側UX（PROPOSED） |
 | [design_laws.md](design_laws.md) | 設計三層則と起動前検査L/I/C（規範・全学習腕必須） |
@@ -77,4 +77,4 @@ target参照 → voice / style / texture ──┤
 
 ## 5. 退役資料
 
-リセット前の資料・`.archive/`・撤回された結果・旧経路の Rust 実装は 2026-11-09〜10 の棚卸しで削除した。一覧は `results/DELETED_2026-11-09.txt` / `results/DELETED_2026-11-10.txt`、本文は git の履歴にある。再試行を検討するときだけ履歴から該当記録を調べ、本線の根拠にしない。
+リセット前の資料・`.archive/`・撤回された結果・旧経路の Rust 実装は 2026-11-09〜10 の棚卸しで削除した。また 2026-11-28 の整理で、棄却済み実験段の逐次ログを `paper_snv.md`・`RESEARCH.md`・`synth_nam_vc.md` 内で要約表へ圧縮し、孤立診断スクリプトと閉じた段のキャッシュを削除台帳(`results/DELETED_2026-11-28.txt`)に記録して整理した(圧縮前の逐次ログ全文とスクリプト本文は git コミット `b749b59` に保存)。再試行を検討するときだけ履歴から該当記録を調べ、撤回資料を本線の根拠にしない。
