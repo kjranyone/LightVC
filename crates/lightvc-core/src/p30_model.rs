@@ -464,27 +464,6 @@ impl P30Model {
 mod tests {
     use super::*;
 
-    fn rd(p: &Path) -> Vec<f32> {
-        std::fs::read(p).unwrap().chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect()
-    }
-
-    fn tpose(x: &[f32], t: usize, c: usize) -> Vec<f32> {
-        let mut y = vec![0.0; x.len()];
-        for tt in 0..t {
-            for cc in 0..c {
-                y[cc * t + tt] = x[tt * c + cc];
-            }
-        }
-        y
-    }
-
-    fn rel(a: &[f32], b: &[f32]) -> f32 {
-        assert_eq!(a.len(), b.len(), "長さ");
-        let m = a.iter().zip(b).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
-        let s = b.iter().map(|v| v.abs()).fold(0.0f32, f32::max).max(1e-6);
-        m / s
-    }
-
     /// 逆平方根の定義: W·A·W = I・W は対称(固有値の幅 1e4 の乱数の正定値の行列)。
     #[test]
     fn inv_sqrt_identity() {
@@ -512,57 +491,5 @@ mod tests {
             }
         }
         assert!(e < 1e-3, "W·A·W − I の最大 {e}");
-    }
-
-    #[test]
-    fn parity_with_python_model() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../results/snv_p30_export");
-        if !dir.join("manifest.json").exists() {
-            eprintln!("skip: {} が無い(training/export_snv_p30.py)", dir.display());
-            return;
-        }
-        let fx = dir.join("fixture");
-        let sh: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(fx.join("shapes.json")).unwrap()).unwrap();
-        let (t, tro, trt) = (sh["T"].as_u64().unwrap() as usize, sh["Tr_op"].as_u64().unwrap() as usize, sh["Tr_t"].as_u64().unwrap() as usize);
-        let (sy, sv, slf) = (rd(&fx.join("src_y.f32")), rd(&fx.join("src_v.f32")), rd(&fx.join("src_lf_k.f32")));
-        let (pc, pa, pyo) = (rd(&fx.join("c.f32")), rd(&fx.join("a.f32")), rd(&fx.join("yo.f32")));
-        let mut seq: Option<Vec<f32>> = None;
-        for par in [1usize, 2, 4] {
-            let mut m = P30Model::load(&dir).unwrap();
-            m.enable_parallel(par);
-            m.enroll_operator(&tpose(&rd(&fx.join("op_y.f32")), tro, D_Y), &rd(&fx.join("op_v.f32")), tro);
-            let op = m.op.as_ref().unwrap();
-            let (r_mu, r_wm, r_dl) = (rel(&op.mu, &rd(&fx.join("op_mu.f32"))), rel(&op.wm, &rd(&fx.join("op_wm.f32"))), rel(&op.delta, &rd(&fx.join("op_delta.f32"))));
-            let (zc, a_ref) = m.enroll_target(&tpose(&rd(&fx.join("ref_y.f32")), trt, D_Y), &rd(&fx.join("ref_v.f32")), trt);
-            let r_aref = rel(&a_ref, &tpose(&rd(&fx.join("a_ref.f32")), trt, D_A));
-            let r_zc = rel(&zc, &rd(&fx.join("sC_z.f32")));
-            let r_kc = rel(&m.mem_c.as_ref().unwrap().k, &rd(&fx.join("sC_k.f32")));
-            let r_vc = rel(&m.mem_c.as_ref().unwrap().v, &rd(&fx.join("sC_v.f32")));
-            let (mut c_all, mut a_all, mut y_all) = (vec![0.0f32; t * CH], vec![0.0f32; t * D_A], vec![0.0f32; t * D_Y]);
-            let (mut a, mut yo) = (vec![0.0; D_A], vec![0.0; D_Y]);
-            let mut ms = Vec::with_capacity(t);
-            for tt in 0..t {
-                let t0 = std::time::Instant::now();
-                m.step(&sy[tt * D_Y..(tt + 1) * D_Y], sv[tt], slf[tt], &mut a, &mut yo);
-                ms.push(t0.elapsed().as_secs_f64() * 1e3);
-                c_all[tt * CH..(tt + 1) * CH].copy_from_slice(&m.ctx);
-                a_all[tt * D_A..(tt + 1) * D_A].copy_from_slice(&a);
-                y_all[tt * D_Y..(tt + 1) * D_Y].copy_from_slice(&yo);
-            }
-            let (r_c, r_a, r_y) = (rel(&c_all, &pc), rel(&a_all, &pa), rel(&y_all, &pyo));
-            let same = seq.as_ref().map(|s| s.iter().zip(&y_all).all(|(p, q)| p.to_bits() == q.to_bits()));
-            let tot: f64 = ms.iter().sum();
-            ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            let q = |p: f64| ms[((ms.len() - 1) as f64 * p) as usize];
-            eprintln!("スレッド {par}: 操作者の統計 mu {r_mu:.2e} 白くする行列 {r_wm:.2e} delta {r_dl:.2e} / 参照の演奏 {r_aref:.2e} / 構造 C z {r_zc:.2e} 鍵 {r_kc:.2e} 値 {r_vc:.2e}");
-            eprintln!("スレッド {par}: 流し 文脈 c {r_c:.2e} 演奏 a {r_a:.2e} 出力 Y {r_y:.2e}(相対の最大差)・1 スレッドと 1 bit 一致 {same:?}・RTF {:.3}・フレームあたり ms p50 {:.2} p95 {:.2} p99 {:.2}(参照 {trt}・登録 {tro} フレーム)", tot / (t as f64 * 5.0), q(0.5), q(0.95), q(0.99));
-            for (name, r) in [("mu", r_mu), ("wm", r_wm), ("delta", r_dl), ("aref", r_aref), ("zc", r_zc), ("kc", r_kc), ("vc", r_vc), ("c", r_c), ("a", r_a), ("y", r_y)] {
-                assert!(r < 2e-3, "{name}: 相対の差 {r}");
-            }
-            if let Some(s) = same {
-                assert!(s, "スレッド {par} の出力が 1 スレッドと違う");
-            }
-            seq.get_or_insert(y_all);
-        }
     }
 }

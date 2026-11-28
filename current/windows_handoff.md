@@ -28,7 +28,7 @@ GUI と CLI の既定はリポジトリの根からの `results/...`(プラグ�
 ## 3. Windows 実機で確かめること(この順)
 
 1. **ビルド**: `.\dev.ps1 -BuildOnly -Release`(`fxc.exe` を自動で `PATH` に追加・標準ビルドで WASAPI + ネイティブ COM ASIO 対応)。
-2. **一致とボイステスト**: `cargo test --workspace --release -- --test-threads=1`。
+2. **単体とボイスの試験**: `cargo test --workspace --release`(速い・普段はこれだけ)。**モデルの一致と出荷の関門**は推論コードか書き出しを替えたときだけ `cargo test --release -p lightvc-core --features model-tests -- --test-threads=1`(`results/` の製品の 3 つの書き出しと `pfront_export_p124` の `fixture*/` が要る・無い試験は読み飛ばす)。
 3. **1 ブロックの時間(関門 S)**: 電源プラン「高パフォーマンス」・他プロセス停止の上で 4 スレッド `p99 < 5.0 ms`(6 回最悪):
    ```powershell
    cargo test --release -p lightvc-core gate_s_k3g16 -- --ignored --nocapture --test-threads=1

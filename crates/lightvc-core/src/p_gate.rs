@@ -272,7 +272,7 @@ impl Gate {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
     use crate::p_front::PFront;
     use crate::snv_stream::to_y;
@@ -282,25 +282,19 @@ pub(crate) mod tests {
         std::fs::read(p).unwrap().chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect()
     }
 
-    /// results/ の門の書き出し(manifest の cfg.kind = gate・training/export_snv_gate.py)。
-    pub(crate) fn gate_exports() -> Vec<PathBuf> {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../results");
-        let mut out: Vec<PathBuf> = std::fs::read_dir(&root)
-            .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).collect())
-            .unwrap_or_default();
-        out.retain(|p| {
-            p.file_name().is_some_and(|n| n.to_string_lossy().ends_with("_export"))
-                && std::fs::read_to_string(p.join("manifest.json")).ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()).is_some_and(|m| m["cfg"]["kind"] == "gate")
-        });
-        out.sort();
-        if out.is_empty() {
-            eprintln!("skip: results/*_export に門の書き出しが無い(training/export_snv_gate.py)");
+    /// 製品の門の書き出し(段 P126・training/export_snv_gate.py)。
+    fn gate_exports() -> Vec<PathBuf> {
+        let d = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../results/snv_p126_gate_export");
+        if !d.join("fixture/shapes.json").exists() {
+            eprintln!("skip: {} が無い(training/export_snv_gate.py)", d.display());
+            return Vec::new();
         }
-        out
+        vec![d]
     }
 
     /// 段ごとの一致(門のロジット・開閉・重み・myin の高さ・y / lf / v)。開閉は 1 フレームも割れてはいけない。
     #[test]
+    #[cfg_attr(not(feature = "model-tests"), ignore = "モデルの試験(推論コードか書き出しを替えたときだけ): cargo test --release -p lightvc-core --features model-tests")]
     fn parity_with_python_gate() {
         for dir in gate_exports() {
             let fx = dir.join("fixture");
@@ -362,6 +356,7 @@ pub(crate) mod tests {
 
     /// 音楽を足さない入力: 門は開かず、前段 v3 と 1 bit 同じ。
     #[test]
+    #[cfg_attr(not(feature = "model-tests"), ignore = "モデルの試験(推論コードか書き出しを替えたときだけ): cargo test --release -p lightvc-core --features model-tests")]
     fn clean_input_equals_v3() {
         for dir in gate_exports() {
             let fx = dir.join("fixture");

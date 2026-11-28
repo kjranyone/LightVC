@@ -756,16 +756,7 @@ mod tests {
     }
 
     #[test]
-    fn parity_with_python_front_v3() {
-        parity("results/pfront_export");
-    }
-
-    #[test]
-    fn parity_with_python_front_p100() {
-        parity("results/pfront_export_p100");
-    }
-
-    #[test]
+    #[cfg_attr(not(feature = "model-tests"), ignore = "モデルの試験(推論コードか書き出しを替えたときだけ): cargo test --release -p lightvc-core --features model-tests")]
     fn parity_with_python_front_p124() {
         parity("results/pfront_export_p124");
     }

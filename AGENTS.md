@@ -26,7 +26,7 @@
 
 **このゲートが無かったため、ストリーミングできない front-end の上で 55 時間（gvoc f0版 27.5h ＋ NHV版 27.5h）を消費した。** 二度とやらない。
 
-- **1時間を超える学習を起動する前に `training/ship_check.py`（段 P の型は `training/snv_p1_ship.py`・`training/snv_p3_ship.py`）相当の台帳を出し、PASS を確認してから起動する。** FAIL のまま起動しない。ログ先頭に台帳を残す。Rust の製品経路は `cargo test --release -p lightvc-core ship_gate` で確かめる。
+- **1時間を超える学習を起動する前に `training/ship_check.py`（段 P の型は `training/snv_p1_ship.py`・`training/snv_p3_ship.py`）相当の台帳を出し、PASS を確認してから起動する。** FAIL のまま起動しない。ログ先頭に台帳を残す。Rust の製品経路は `cargo test --release -p lightvc-core --features model-tests ship_gate` で確かめる。
 - **合否は 2 条件**:
   1. **未来不変性** — 入力の `t` 以降を書き換えたとき、`t` 以前を担当する出力フレームが変化しないこと。**実音声プローブで測る**（白色雑音は argmax/閾値の離散性で偽 PASS を出す。実測済み: `harmonic_sum_f0` が雑音 1.81ms / 実音声 1882ms）。編集が出力を動かさない場合は INCONCLUSIVE ＝ PASS にしない。PyTorch では CPU・決定的なアルゴリズムで測る（CUDA 畳み込みの非決定性が偽の先読みを出す）。
   2. **静的遅延台帳** — framing 先読みの合計 ＋ アルゴリズム遅延（ブロック ＋ ボコーダ `DELAY`） ＋ content encoder 予備 10ms < 30ms。
@@ -79,13 +79,17 @@
     3. **ジョブ完了・中断後は必ずセッションを終了し、稼働セッション 0 件（`Usage rate: 0.00/hr`）を確認する。**
   - **Windows 実機**: アプリ GUI（GPUI）・ネイティブ COM ASIO・CLAP/VST3 DAW 実機検証・Windows 配布パッケージ生成を担当。`results/` は `.gitignore` 対象のため `ch160` から `scp` で取得する（手順は `current/windows_handoff.md`・`handover.md`）。
   - **Intel GPU を使う場合**: IPEX (CPU) ではなく `xpu`（torch >= 2.6 本体統合済み）を使う。
+- **Rust の試験**: `cargo test --workspace --release` は速い単体の試験だけを回す（アプリの開発ではこれで足りる）。
+  - **モデルの試験**（PyTorch との一致と出荷の関門・重い・`results/` の書き出しと fixture が無いと読み飛ばす）は、**推論コード（`lightvc-core`）か書き出しを替えたときだけ** `cargo test --release -p lightvc-core --features model-tests` で回す（オーナー判断 2026-11-28「一度モデルを fix したらクライアントアプリ開発時にそれを流す必要がない」）。
+  - **試験は今の製品の経路だけを確かめる**（オーナー判断 2026-11-28「古いロジックの検証とかは要らない」）。製品を替えたら、試験を新しい書き出しへ向け直し、旧経路の試験は消す（中身は git の履歴に残る）。
 
 ## Build Commands
 
 ```bash
 cargo check --workspace --all-targets
 cargo clippy --workspace --all-targets
-cargo test --workspace --release -- --test-threads=1   # Linux では --exclude lightvc-app を付ける
+cargo test --workspace --release                      # 速い単体の試験だけ。Linux では --exclude lightvc-app を付ける
+cargo test --release -p lightvc-core --features model-tests -- --test-threads=1   # モデルの一致と出荷の関門(推論コードか書き出しを替えたときだけ)
 cargo build --release -p lightvc-app                   # Windows 標準ビルドで WASAPI + ネイティブ COM ASIO 対応
 cargo run -p lightvc-xtask -- bundle                   # CLAP / VST3 の bundle
 cargo run -p lightvc-xtask -- install                  # ユーザープラグインフォルダへ導入
@@ -101,7 +105,7 @@ cargo run -p lightvc-xtask -- package                  # bundle + CLI + 3重み 
   3. **出力部 `snv_p123_s` ＋ 出力の番**（`rvoc.rs`・`out_guard.rs`・`results/snv_p123_s/export_20k`）: `delay = 480`・因果 3 点包絡平滑 `env_smooth = 0.25`・尖頭値保護 `out_guard`。
   - `lightvc_core::snv_stream::SnvStream` が 48 kHz・240 サンプル（5 ms）単位・**4 スレッド並列**（関門 S 最悪 `p99 = 4.89 / 4.67 ms < 5.0 ms`）で流し、アルゴリズム遅延は `HOP + DELAY = 720` サンプル（`15.0 ms`）。GUI・CLAP/VST3・CLI 全て共通。
   - `training/snv_p0_front.py` の既定環境変数は旧 v3 互換のままなので、PyTorch 側で現行製品を測る・書き出すときは必ず `SNV_F0V4=1 SNV_WIN_CAP_MS=7.5 SNV_W_YIN=600 SNV_TAU_UV=500 SNV_FEAT=data/snv_p_feat_v4` を付ける。
-- **PyTorch と Rust の完全一致**: `manifest.json` のテンソル名 ＝ PyTorch `state_dict` 名 ＝ Rust 読み込み名。書き出しスクリプトは `training/export_snv_gate.py`・`export_snv_k3g.py`・`export_rvoc.py`・`export_pfront.py`・`export_snv_model.py`・`export_snv_p30.py`・`export_snv_stream.py`。変更時は両方更新し一致試験を通す。
+- **PyTorch と Rust の完全一致**: `manifest.json` のテンソル名 ＝ PyTorch `state_dict` 名 ＝ Rust 読み込み名。書き出しスクリプトは `training/export_snv_gate.py`・`export_snv_k3g.py`・`export_rvoc.py`・`export_pfront.py`・`export_snv_model.py`・`export_snv_p30.py`・`export_snv_stream.py`。変更時は両方更新し一致試験（`cargo test --release -p lightvc-core --features model-tests`）を通す。
 - **VC teacher 蒸留は禁止**（別 VC の変換音声を target にしない）。
 - **補助モデルは評価の物差し・参考値まで**（オーナー判断 2026-11-01「既存アルゴリズムはベンチマークの参考値にしても良いが、直接教師にしない」）。WavLM-SV / ECAPA / ASR / PESQ / UTMOS 等を学習損失・蒸留・表現監督に直接使わない（使う案は事前にオーナー確認必須）。推論時依存にもしない。
 - **Irodori-TTS は学習データ生成とプリセット作成専用**。推論・登録経路に入れない。実在人物の声は本人同意がある場合のみ目標にする。
@@ -146,8 +150,8 @@ cargo run -p lightvc-xtask -- package                  # bundle + CLI + 3重み 
 - **命名**: `snv_<段>`＝`paper_snv.md` の段の走行／`diag_`＝診断専用（製品判定に引用しない）／`*_smoke`＝動作確認のみ。
 - **寿命と削除台帳**: smoke は当日中に削除。負け腕・採用確定後の勝ち腕の中間 `snap/` は整理してよいが、**削除前に必ず `pgrep -f train` で走行中ジョブを確認し、`results/DELETED_<date>.txt` に一覧を追記する**（不可逆のため）。`RESEARCH.md`・`paper_snv.md` が参照する証拠（耳軸測定・帰属 json/wav）は消さない。
 - **消してはならない書き出しと元チェックポイント**:
-  - 現行製品既定: `results/snv_p126_gate_export`・`results/snv_p126_k3g16kv_export`・`results/snv_p123_s/export_20k`
-  - 旧製品・一致試験用 fixture: `results/snv_p45_gate_t80_export`・`results/snv_p45_gate_t80_export_v3`・`results/snv_k3g_export`・`results/snv_k3g16_export`・`results/snv_k3g16kv_export`・`results/rvoc3hi/export_330k`・`results/pfront_export`・`results/pfront_export_p100`・`results/pfront_export_p124`・`results/p_model_export`・`results/snv_p30_export`・`results/snv_stream_export`
+  - 現行製品既定（モデルの試験もこの fixture を読む）: `results/snv_p126_gate_export`・`results/snv_p126_k3g16kv_export`・`results/snv_p123_s/export_20k`・`results/pfront_export_p124`（前段 v4_dual の一致）
+  - 旧製品・旧経路（2026-11-28 に試験から外した。消すかはオーナーの判断待ちなので、それまで消さない）: `results/snv_p45_gate_t80_export`・`results/snv_p45_gate_t80_export_v3`・`results/snv_k3g_export`・`results/snv_k3g16_export`・`results/snv_k3g16kv_export`・`results/rvoc3hi/export_330k`・`results/pfront_export`・`results/pfront_export_p100`・`results/p_model_export`・`results/snv_p30_export`・`results/snv_stream_export`
   - 書き出し元の重み: `results/snv_p126_gate_i80/last.pt`・`results/snv_p45_mask/last.pt`・`results/snv_p125{a,b,e}_c/last.pt`・`results/snv_p125{a,b,e}_cpc/{last.pt,pca_c.npy,codebook_k128.npz}`・`results/snv_p123_s/snap/ema_20k.pt`・`results/snv_p11_r/last.pt`・`results/rvoc3hi/snap/ema_330k.pt`
 
 ## Known Issues

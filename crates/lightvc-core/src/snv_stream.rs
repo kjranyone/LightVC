@@ -1,4 +1,4 @@
-//! paper_snv の製品経路(段 P): 48 kHz・240 サンプルのブロック → 前段 v3(p_front)→ 模型 → rvoc3hi(rvoc)→ 240 サンプル。
+//! paper_snv の製品経路(段 P・製品の既定は段 P126): 48 kHz・240 サンプルのブロック → 前段(p_front・定数と F0_MODE は書き出しから)→ 模型 → 出力部(rvoc・snv_p123_s / rvoc3hi)→ 240 サンプル。
 //! 模型は書き出しの manifest の cfg.kind で選ぶ: kind なし = 製品の既定 E / C(p_model・P11)・"p30" = 研究の基準の型 snv_p30_c(p30_model)・
 //! "k3g" = 研究の候補 K3G(k3g_model = p30 の型の組の平均 + 門が開いたフレームの錨・固定の窓の包絡 p_fixenv を読む組は源と登録の波形からその包絡も作る)。
 //! 前段も書き出しの manifest の cfg.kind で選ぶ: kind なし = 前段 v3・"gate" = 門と重みつきの前段(p_gate・研究の形 +mask:<門>)。門は源と操作者の登録だけに掛け、目標の参照は前段 v3(snv_p1_eval.System.prep)。
@@ -450,17 +450,9 @@ impl SnvStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::p_gate::tests::gate_exports;
 
-    const P11_FX: &str = "results/snv_stream_export/fixture";
-    const P30_FX: &str = "results/snv_p30_export/fixture_stream";
-    const K3G: &str = "results/snv_k3g_export";
-    const K3G16: &str = "results/snv_k3g16_export";
-    const K3G16KV: &str = "results/snv_k3g16kv_export";
-    const K3G_P126: &str = "results/snv_p126_k3g16kv_export";
-    const V3: &str = "results/pfront_export";
-    const V31: &str = "results/pfront_export_p100";
-    const V4: &str = "results/pfront_export_p124";
+    /// 製品の K3G-v4(段 P126)の書き出し。fixture_stream = 音楽なし(門が開かない)・fixture_stream_music = 音楽つき(門が開く)。
+    const P126: &str = "results/snv_p126_k3g16kv_export";
 
     fn root() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -472,7 +464,7 @@ mod tests {
 
     fn open(fx: &Path) -> Option<serde_json::Value> {
         if !fx.join("shapes.json").exists() {
-            eprintln!("skip: {} が無い(training/export_snv_stream.py・export_snv_p30.py・export_snv_gate.py・export_snv_k3g.py)", fx.display());
+            eprintln!("skip: {} が無い(training/export_snv_k3g.py)", fx.display());
             return None;
         }
         Some(serde_json::from_str(&std::fs::read_to_string(fx.join("shapes.json")).unwrap()).unwrap())
@@ -542,7 +534,7 @@ mod tests {
         (num / den.max(1e-30)).sqrt()
     }
 
-    /// 端から端の一致(Python の前段 → 模型 → rvoc3hi と同じ波形)。strict = 波形を標本ごとの線で比べる範囲の終わり(None = 全部)。
+    /// 端から端の一致(Python の前段 → 模型 → 出力部と同じ波形)。strict = 波形を標本ごとの線で比べる範囲の終わり(None = 全部)。
     /// 門つきは最初に門が開くまでを標本ごとの線で、開いた後を Y の線と振幅のスペクトログラムの相対の差 < 1e-3 で比べる:
     /// 開いた後は重みの網の f32 の丸めで myin の高さが相対で最大 5.5e-6 ずれ、励起の位相に積もって波形が違う(RMS の 1.1 %・振幅のスペクトログラムは 2.0e-4)= 標本ごとの線は掛けない。
     fn parity(fx: &Path, kind: &str, front: &str, strict: Option<usize>) {
@@ -602,128 +594,52 @@ mod tests {
         let ledger = lat_ms + 10.0;
         eprintln!("静的な遅延の台帳({kind}・前段 {front}): ブロック {HOP} + rvoc の DELAY {v_del} = {lat_ms:.1} ms + 内容の符号器の予備 10 ms = {ledger:.1} ms(< 30 ms)");
         assert!(ledger < 30.0);
-        if front == "v3" {
-            rtf(fx, &sh, kind, "");
+    }
+
+    fn k3g_parity(d: &Path) {
+        let Some(sh_s) = open(&d.join("fixture_stream")) else {
+            return;
+        };
+        let front_dir = root().join(sh_s["front"].as_str().unwrap());
+        let gman: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(front_dir.join("manifest.json")).unwrap()).unwrap();
+        let inst = gman["cfg"].get("inst_mask").and_then(|v| v.as_bool()).unwrap_or(false);
+        let clean_strict = inst.then(|| {
+            let zg = rd(&front_dir.join("fixture/clean_gate_logit.f32"));
+            let thr = gman["cfg"]["thr"].as_f64().unwrap_or(0.5);
+            zg.iter().position(|&z| 1.0 / (1.0 + (-(z as f64)).exp()) >= thr).unwrap_or(zg.len()) * HOP
+        });
+        parity(&d.join("fixture_stream"), "k3g", "gate", clean_strict);
+        if open(&d.join("fixture_stream_music")).is_some() {
+            parity(&d.join("fixture_stream_music"), "k3g", "gate", Some(first_open(d) * HOP));
         }
     }
 
-    /// RTF とブロックあたりの時間(逐次と並列 2・4)。
-    fn rtf(fx: &Path, sh: &serde_json::Value, kind: &str, note: &str) {
-        let x = rd(&fx.join("src_x.f32"));
-        for par in [0usize, 2, 4] {
-            let mut s = build(fx, sh, None);
-            assert_eq!(s.model_kind(), kind);
-            if par > 0 {
-                s.enable_parallel(par);
-            }
-            let (_, ms, op) = run(&mut s, &x, None);
-            let (rtf, p50, p95, mx) = quant(&ms);
-            eprintln!("RTF({kind}{note}・並列 {par}・0 = 逐次): {rtf:.3}・ブロックあたり ms p50 {p50:.2} p95 {p95:.2} 最大 {mx:.2}(予算 5 ms)");
-            let (open, shut): (Vec<_>, Vec<_>) = ms.iter().zip(&op).partition(|(_, o)| **o);
-            if !open.is_empty() {
-                let f = |v: &[(&f64, &bool)]| quant(&v.iter().map(|(m, _)| **m).collect::<Vec<_>>());
-                let ((_, o50, o95, _), (_, c50, c95, _)) = (f(&open), f(&shut));
-                eprintln!("  門が開いたブロック {}: p50 {o50:.2} p95 {o95:.2} ms・閉じたブロック {}: p50 {c50:.2} p95 {c95:.2} ms", open.len(), shut.len());
-            }
-        }
-    }
-
-    /// 門つきと前段 v3 の同じ模型を同じ入力でブロックごとに交互に回した RTF(混んだ機械での比べ)。
-    fn rtf_pair(fx: &Path, sh: &serde_json::Value) {
-        let x = rd(&fx.join("src_x.f32"));
-        let v3 = root().join(V3);
-        for par in [0usize, 2, 4] {
-            let (mut a, mut b) = (build(fx, sh, None), build(fx, sh, Some(&v3)));
-            if par > 0 {
-                a.enable_parallel(par);
-                b.enable_parallel(par);
-            }
-            let (mut oa, mut ob) = (vec![0.0f32; HOP], vec![0.0f32; HOP]);
-            let (mut ma, mut mb) = (Vec::new(), Vec::new());
-            for (i, blk) in x.chunks_exact(HOP).enumerate() {
-                for k in 0..2 {
-                    let (s, o, m) = if (i + k) % 2 == 0 { (&mut a, &mut oa, &mut ma) } else { (&mut b, &mut ob, &mut mb) };
-                    let t0 = std::time::Instant::now();
-                    s.process_block(blk, o);
-                    m.push(t0.elapsed().as_secs_f64() * 1e3);
-                }
-            }
-            let ((ra, a50, a95, amx), (rb, b50, b95, bmx)) = (quant(&ma), quant(&mb));
-            eprintln!("RTF(並列 {par}・同じ走行で交互): 門つき {ra:.3}(p50 {a50:.2} p95 {a95:.2} 最大 {amx:.2} ms)・前段 v3 {rb:.3}(p50 {b50:.2} p95 {b95:.2} 最大 {bmx:.2} ms)・比 {:.3}", ra / rb);
-        }
+    fn k3g_gate(d: &Path) {
+        let fm = d.join("fixture_stream_music");
+        let Some(sm) = open(&fm) else { return };
+        let tr: Vec<(usize, bool)> = sm["transitions"].as_array().unwrap().iter().map(|v| (v[0].as_u64().unwrap() as usize, v[1].as_u64().unwrap() == 1)).collect();
+        let on = tr.iter().find(|v| v.1).map(|v| v.0).expect("開く遷移");
+        let off = tr.iter().find(|v| !v.1 && v.0 > on).map(|v| v.0).expect("閉じる遷移");
+        gate(&fm, "k3g", "gate", &[(on + off) / 2, on + 1, off + 1]);
     }
 
     #[test]
-    fn parity_end_to_end() {
-        parity(&root().join(P11_FX), "p11", "v3", None);
-    }
-
-    #[test]
-    fn parity_end_to_end_p30() {
-        parity(&root().join(P30_FX), "p30", "v3", None);
-    }
-
-    #[test]
-    fn parity_end_to_end_gate() {
-        for d in gate_exports() {
-            parity(&d.join("fixture_stream"), "p30", "gate", Some(first_open(&d) * HOP));
-        }
-    }
-
-    #[test]
-    fn ship_gate() {
-        gate(&root().join(P11_FX), "p11", "v3", &[]);
-    }
-
-    #[test]
-    fn ship_gate_p30() {
-        gate(&root().join(P30_FX), "p30", "v3", &[]);
-    }
-
-    /// 門つきの前段の関門: 門が開いている区間の中の差し替えを足す(fixture の最初の開いた区間の真ん中)。RTF は前段 v3 との交互の比べ。
-    #[test]
-    fn ship_gate_gate() {
-        for d in gate_exports() {
-            let fs = d.join("fixture_stream");
-            let Some(sh) = open(&fs) else { continue };
-            let tr: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(d.join("fixture/shapes.json")).unwrap()).unwrap();
-            let tr: Vec<(usize, bool)> = tr["transitions"].as_array().unwrap().iter().map(|v| (v[0].as_u64().unwrap() as usize, v[1].as_u64().unwrap() == 1)).collect();
-            let on = tr.iter().find(|v| v.1).map(|v| v.0).expect("開く遷移");
-            let off = tr.iter().find(|v| !v.1 && v.0 > on).map(|v| v.0).expect("閉じる遷移");
-            gate(&fs, "p30", "gate", &[(on + off) / 2, on + 1]);
-            rtf_pair(&fs, &sh);
-        }
-    }
-
-    /// K3G の端から端: 音楽なし(門が開かない = 全部を標本ごとの線)と音楽つき(門が開く = 錨の経路・開くまでを標本ごとの線、開いた後を Y の線と振幅のスペクトログラム)。
-    #[test]
-    fn parity_end_to_end_k3g() {
-        k3g_parity(&root().join(K3G));
-    }
-
-    /// 同じ試験を、回路と CPC の重みを f16 で持つ K3G(段 P94・training/export_snv_k3g.py を SNV_WF16=1 で書き出したもの)で。
-    #[test]
-    fn parity_end_to_end_k3g16() {
-        k3g_parity(&root().join(K3G16));
-    }
-
-    /// 同じ試験を、重みに加えて注意の鍵と値も f16 で持つ K3G(段 P94 step c・SNV_WF16=1 SNV_KV16=1 の書き出し)で。
-    #[test]
-    fn parity_end_to_end_k3g16kv() {
-        k3g_parity(&root().join(K3G16KV));
-    }
-
-    #[test]
+    #[cfg_attr(not(feature = "model-tests"), ignore = "モデルの試験(推論コードか書き出しを替えたときだけ): cargo test --release -p lightvc-core --features model-tests")]
     fn parity_end_to_end_p126() {
-        k3g_parity(&root().join(K3G_P126));
+        k3g_parity(&root().join(P126));
     }
 
-    /// 並べた経路(模型の組・描画器のワーカー・門の網と重みの網)の出力が、逐次と 1 bit 同じ(K3G の f16・f32 と門つきの p30・音楽つきと音楽なし)。
     #[test]
+    #[cfg_attr(not(feature = "model-tests"), ignore = "モデルの試験(推論コードか書き出しを替えたときだけ): cargo test --release -p lightvc-core --features model-tests")]
+    fn ship_gate_p126() {
+        k3g_gate(&root().join(P126));
+    }
+
+    /// 並べた経路(模型の組・描画器のワーカー・門の網と重みの網)の出力が、逐次と 1 bit 同じ(音楽つきと音楽なし)。
+    #[test]
+    #[cfg_attr(not(feature = "model-tests"), ignore = "モデルの試験(推論コードか書き出しを替えたときだけ): cargo test --release -p lightvc-core --features model-tests")]
     fn parallel_bit_identical() {
-        let mut fxs: Vec<PathBuf> = [K3G_P126, K3G16KV, K3G16, K3G].iter().flat_map(|d| ["fixture_stream", "fixture_stream_music"].map(|n| root().join(d).join(n))).collect();
-        fxs.extend(gate_exports().into_iter().map(|d| d.join("fixture_stream")));
-        for fx in fxs {
+        for fx in ["fixture_stream", "fixture_stream_music"].map(|n| root().join(P126).join(n)) {
             let Some(sh) = open(&fx) else { continue };
             let x = rd(&fx.join("src_x.f32"));
             let mut outs = Vec::new();
@@ -745,15 +661,14 @@ mod tests {
         }
     }
 
-    /// 関門 S(1 ブロックの p99 < 5 ms・4 並列)を、K3G(f16)と対照(門つきの p30)を同じ時間帯に交互に LVC_S_N 回(既定 6)測る(段 P94)。
+    /// 関門 S(1 ブロックの p99 < 5 ms・4 並列)を、音楽つきと音楽なしで交互に LVC_S_N 回(既定 6)測る(段 P94)。LVC_K3G で別の書き出しを測る。
     /// cargo test --release -p lightvc-core gate_s_k3g16 -- --ignored --nocapture --test-threads=1
     #[test]
     #[ignore]
     fn gate_s_k3g16() {
         let n: usize = std::env::var("LVC_S_N").ok().and_then(|v| v.parse().ok()).unwrap_or(6);
-        let k3g = std::env::var("LVC_K3G").unwrap_or_else(|_| K3G_P126.to_string());
-        let mut fxs = vec![(format!("{k3g} 音楽つき"), root().join(&k3g).join("fixture_stream_music")), (format!("{k3g} 音楽なし"), root().join(&k3g).join("fixture_stream"))];
-        fxs.extend(gate_exports().into_iter().take(1).map(|d| ("p30 + 門(対照)".to_string(), d.join("fixture_stream"))));
+        let k3g = std::env::var("LVC_K3G").unwrap_or_else(|_| P126.to_string());
+        let fxs = [(format!("{k3g} 音楽つき"), root().join(&k3g).join("fixture_stream_music")), (format!("{k3g} 音楽なし"), root().join(&k3g).join("fixture_stream"))];
         let mut worst: Vec<(f64, f64)> = vec![(0.0, 0.0); fxs.len()];
         for rep in 0..n {
             for (i, (name, fx)) in fxs.iter().enumerate() {
@@ -775,57 +690,6 @@ mod tests {
         }
     }
 
-    fn k3g_parity(d: &Path) {
-        let Some(sh_s) = open(&d.join("fixture_stream")) else {
-            return;
-        };
-        let front_dir = root().join(sh_s["front"].as_str().unwrap());
-        let gman: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(front_dir.join("manifest.json")).unwrap()).unwrap();
-        let inst = gman["cfg"].get("inst_mask").and_then(|v| v.as_bool()).unwrap_or(false);
-        let clean_strict = inst.then(|| {
-            let zg = rd(&front_dir.join("fixture/clean_gate_logit.f32"));
-            let thr = gman["cfg"]["thr"].as_f64().unwrap_or(0.5);
-            zg.iter().position(|&z| 1.0 / (1.0 + (-(z as f64)).exp()) >= thr).unwrap_or(zg.len()) * HOP
-        });
-        parity(&d.join("fixture_stream"), "k3g", "gate", clean_strict);
-        if open(&d.join("fixture_stream_music")).is_some() {
-            parity(&d.join("fixture_stream_music"), "k3g", "gate", Some(first_open(d) * HOP));
-        }
-    }
-
-    /// K3G の関門(音楽つきの源 = 門が閉じた区間と開いた区間の両方): 未来不変性(既定の 3 点 = 開く前・開いている間・閉じた後に、開いた区間の真ん中・開いた直後・閉じた直後を足す)・遅延の台帳・RTF(逐次と並列)。
-    #[test]
-    fn ship_gate_k3g() {
-        k3g_gate(&root().join(K3G));
-    }
-
-    /// 同じ関門を、重みを f16 で持つ K3G(段 P94)で。
-    #[test]
-    fn ship_gate_k3g16() {
-        k3g_gate(&root().join(K3G16));
-    }
-
-    /// 同じ関門を、鍵と値も f16 で持つ K3G(段 P94 step c)で。
-    #[test]
-    fn ship_gate_k3g16kv() {
-        k3g_gate(&root().join(K3G16KV));
-    }
-
-    #[test]
-    fn ship_gate_p126() {
-        k3g_gate(&root().join(K3G_P126));
-    }
-
-    fn k3g_gate(d: &Path) {
-        let fm = d.join("fixture_stream_music");
-        let Some(sm) = open(&fm) else { return };
-        let tr: Vec<(usize, bool)> = sm["transitions"].as_array().unwrap().iter().map(|v| (v[0].as_u64().unwrap() as usize, v[1].as_u64().unwrap() == 1)).collect();
-        let on = tr.iter().find(|v| v.1).map(|v| v.0).expect("開く遷移");
-        let off = tr.iter().find(|v| !v.1 && v.0 > on).map(|v| v.0).expect("閉じる遷移");
-        gate(&fm, "k3g", "gate", &[(on + off) / 2, on + 1, off + 1]);
-        rtf(&fm, &sm, "k3g", "・前段 gate・音楽つき");
-    }
-
     /// 全ての fixture の Rust の出力(波形と Y・逐次と 4 並列)を LVC_DUMP のフォルダへ書く(最適化の前後で 1 bit 同じかを cmp で確かめる):
     /// LVC_DUMP=<dir> cargo test --release -p lightvc-core dump_outputs -- --ignored
     #[test]
@@ -833,9 +697,7 @@ mod tests {
     fn dump_outputs() {
         let Some(dir) = std::env::var_os("LVC_DUMP").map(PathBuf::from) else { return };
         std::fs::create_dir_all(&dir).unwrap();
-        let mut fxs = vec![("p11".to_string(), root().join(P11_FX)), ("p30".to_string(), root().join(P30_FX)), ("k3g".to_string(), root().join(K3G).join("fixture_stream")), ("k3g_music".to_string(), root().join(K3G).join("fixture_stream_music"))];
-        fxs.extend(gate_exports().into_iter().map(|d| (format!("gate_{}", d.file_name().unwrap().to_string_lossy()), d.join("fixture_stream"))));
-        for (name, fx) in fxs {
+        for (name, fx) in [("p126", "fixture_stream"), ("p126_music", "fixture_stream_music")].map(|(n, f)| (n, root().join(P126).join(f))) {
             let Some(sh) = open(&fx) else { continue };
             let x = rd(&fx.join("src_x.f32"));
             for par in [0usize, 4] {
@@ -859,7 +721,7 @@ mod tests {
     #[ignore]
     fn profile_k3g() {
         use crate::prof as pf;
-        let k3g = std::env::var("LVC_K3G").unwrap_or_else(|_| K3G_P126.to_string());
+        let k3g = std::env::var("LVC_K3G").unwrap_or_else(|_| P126.to_string());
         for name in ["fixture_stream_music", "fixture_stream"] {
             let fx = root().join(&k3g).join(name);
             let Some(sh) = open(&fx) else { return };
@@ -887,39 +749,6 @@ mod tests {
                     eprintln!("  組 {i}: {:.3} = CPC {:.3} + 演奏の読み {:.3} + 回路の畳み込み {:.3} + 回路の表の読み {:.3}", m(pf::M_ALL), m(pf::M_CPC), m(pf::M_PLAY), m(pf::M_CONV), m(pf::M_ATTN));
                 }
             }
-        }
-    }
-
-    /// 音楽を足さない入力(R1 の fixture_stream)では、門つきの前段の出力が、同じ定数の門なしの前段の p30 と 1 bit 同じ(登録の門も開かない)。
-    #[test]
-    fn clean_gate_equals_p30() {
-        let fx = root().join(P30_FX);
-        let Some(sh) = open(&fx) else { return };
-        let x = rd(&fx.join("src_x.f32"));
-        let w = rd(&fx.join("w.f32"));
-        let consts = |d: &Path| -> Option<String> {
-            let m: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(d.join("manifest.json")).ok()?).ok()?;
-            let fm = m["const"].get("F0_MODE").or_else(|| m.get("cfg").and_then(|c| c.get("f0_mode"))).unwrap_or(&serde_json::Value::Null);
-            Some(format!("{} {} {} {}", m["const"]["W_YIN"], m["const"]["ENV_CAP_MS"], m["const"]["TAU_UV_HZ"], fm))
-        };
-        for d in gate_exports() {
-            let sh_g: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(d.join("fixture/shapes.json")).unwrap()).unwrap();
-            if !sh_g.get("clean_same_as_v3").and_then(|v| v.as_bool()).unwrap_or(true) {
-                continue;
-            }
-            let Some(plain) = [V3, V31, V4].iter().map(|n| root().join(n)).find(|q| consts(q).is_some() && consts(q) == consts(&d)) else {
-                eprintln!("skip: {} と同じ定数の門なしの前段の書き出しが無い(training/export_pfront.py)", d.display());
-                continue;
-            };
-            let (mut a, mut b) = (build(&fx, &sh, Some(&d)), build(&fx, &sh, Some(&plain)));
-            assert_eq!((a.front_kind(), b.front_kind()), ("gate", "v3"));
-            a.set_noise_fixture(rd(&fx.join("noise.f32")));
-            b.set_noise_fixture(rd(&fx.join("noise.f32")));
-            let ((oa, _, op), (ob, _, _)) = (run(&mut a, &x, None), run(&mut b, &x, None));
-            let diff = oa.iter().zip(&ob).filter(|(p, q)| p.to_bits() != q.to_bits()).count();
-            let md = oa.iter().zip(&w).map(|(p, q)| (p - q).abs()).fold(0.0f32, f32::max);
-            eprintln!("{}: 音楽なしの源 {} フレーム・門が開いたフレーム {}・同じ定数の門なしの前段の p30 と違う標本 {diff}・R1 の Python の波形との max 差 {md:.3e}", d.file_name().unwrap().to_string_lossy(), x.len() / HOP, op.iter().filter(|&&o| o).count());
-            assert_eq!(diff, 0);
         }
     }
 }

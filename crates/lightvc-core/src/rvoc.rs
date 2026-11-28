@@ -560,14 +560,16 @@ mod tests {
         raw.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect()
     }
 
-    /// RVOC_EXPORT=<export_rvoc.py の出力> cargo test --release -p lightvc-core rvoc_parity -- --nocapture
+    /// 製品の出力部 snv_p123_s(既定)・別の書き出しは RVOC_EXPORT=<export_rvoc.py の出力> で。
     #[test]
+    #[cfg_attr(not(feature = "model-tests"), ignore = "モデルの試験(推論コードか書き出しを替えたときだけ): cargo test --release -p lightvc-core --features model-tests")]
     fn rvoc_parity_and_rtf() {
-        let Ok(dir) = std::env::var("RVOC_EXPORT") else {
-            eprintln!("RVOC_EXPORT 未設定のためスキップ");
+        let dir = std::env::var_os("RVOC_EXPORT").map(std::path::PathBuf::from).unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../results/snv_p123_s/export_20k"));
+        if !dir.join("fixture/y.f32").exists() {
+            eprintln!("skip: {} が無い(training/export_rvoc.py)", dir.display());
             return;
-        };
-        let dir = Path::new(&dir);
+        }
+        let dir = dir.as_path();
         let mut m = RVoc::load(dir).unwrap();
         let fx = dir.join("fixture");
         let cond = read_f32(&fx.join("cond.f32"));

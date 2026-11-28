@@ -100,8 +100,9 @@ mod tests {
 
     /// snv_p0_front.fixed_env との一致(源 = 音楽を足した操作者の発話)と、フレームの枠(フレーム t は (t+1)H 以降の標本で動かない・(t+1)H − 10 の標本で動く。窓の端の重みは 0 なので端の少し内側で見る)。
     #[test]
+    #[cfg_attr(not(feature = "model-tests"), ignore = "モデルの試験(推論コードか書き出しを替えたときだけ): cargo test --release -p lightvc-core --features model-tests")]
     fn parity_with_python_fixed_env() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../results/snv_k3g_export");
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../results/snv_p126_k3g16kv_export");
         if !dir.join("fixture/fenv.f32").exists() {
             eprintln!("skip: {} が無い(training/export_snv_k3g.py)", dir.display());
             return;

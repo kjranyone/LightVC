@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# PyTorch との一致と出荷の関門(results/ の書き出しと fixture を読む・重い)。推論コードか書き出しを替えたときだけ回す。
+model-tests = []
+
 [dependencies]
 serde_json = "1.0"
 anyhow.workspace = true

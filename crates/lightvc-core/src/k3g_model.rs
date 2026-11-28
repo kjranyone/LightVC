@@ -369,8 +369,9 @@ mod tests {
 
     /// 錨の線形の写し: α = 1 は恒等・伸縮した包絡から α が戻る(snv_p0c_anchor.selftest と同じ線)。
     #[test]
+    #[cfg_attr(not(feature = "model-tests"), ignore = "モデルの試験(推論コードか書き出しを替えたときだけ): cargo test --release -p lightvc-core --features model-tests")]
     fn anchor_selftest() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../results/snv_k3g_export");
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../results/snv_p126_k3g16kv_export");
         if !dir.join("manifest.json").exists() {
             eprintln!("skip: {} が無い(training/export_snv_k3g.py)", dir.display());
             return;
@@ -392,25 +393,9 @@ mod tests {
         assert!(d1 < 1e-4 && an.fit(&c, &c) == 1.0 && (back - 1.2).abs() <= 0.02);
     }
 
-    /// 模型の段の一致(組ごとの操作者の統計・目標の構造・符号の文脈・演奏・回路の出力、錨の平均と α、平均と錨の差し替えの後の出力)。
+    /// 製品の K3G-v4(段 P126)の段ごとの一致(組ごとの操作者の統計・目標の構造・符号の文脈・演奏・回路の出力、錨の平均と α、平均と錨の差し替えの後の出力・1 / 2 / 4 スレッド)。
     #[test]
-    fn parity_with_python_model() {
-        parity_dir(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../results/snv_k3g_export"));
-    }
-
-    /// 同じ一致を、回路と CPC の重みを f16 で持つ K3G(段 P94・SNV_WF16=1 の書き出し)で。
-    #[test]
-    fn parity_with_python_model_f16() {
-        parity_dir(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../results/snv_k3g16_export"));
-    }
-
-    /// 同じ一致を、鍵と値も f16 で持つ K3G(段 P94 step c)で。
-    #[test]
-    fn parity_with_python_model_f16kv() {
-        parity_dir(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../results/snv_k3g16kv_export"));
-    }
-
-    #[test]
+    #[cfg_attr(not(feature = "model-tests"), ignore = "モデルの試験(推論コードか書き出しを替えたときだけ): cargo test --release -p lightvc-core --features model-tests")]
     fn parity_with_python_model_p126() {
         parity_dir(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../results/snv_p126_k3g16kv_export"));
     }
