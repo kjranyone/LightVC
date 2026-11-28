@@ -21,8 +21,10 @@ pub struct AudioEndpoint {
     pub host: HostPref,
     pub device_index: Option<usize>,
     pub device_name: Option<String>,
-    /// 使う入力チャンネル(0 始まり)。None = ASIO は最初のチャンネル・ほかは全チャンネルの平均。出力では使わない。
-    pub channel: Option<u16>,
+    /// 使うチャンネル(0 始まり)。空 = 既定。
+    /// 入力: 選んだチャンネルの平均(1 本ならそのまま)。既定は ASIO が最初の 1 本・ほかは全チャンネルの平均。
+    /// 出力: 選んだチャンネルにだけ同じ音を書き、ほかは無音。既定は ASIO が最初の 2 本・ほかは全チャンネル。
+    pub channels: Vec<u16>,
 }
 
 /// Endpoints the inference thread reads from / writes to.
@@ -136,16 +138,12 @@ fn build_cpal_input_with_retry(
     dev: &Device,
     requested_sr: u32,
     buffer_frames: u32,
-    channel: Option<u16>,
+    channels: &[u16],
     flags: Arc<FaultFlags>,
 ) -> Result<(Stream, Consumer<f32>, u32, u32)> {
     let def = dev.default_input_config()?;
     let ch = def.channels();
-    if let Some(c) = channel
-        && c >= ch
-    {
-        bail!("入力チャンネル {} はありません(1〜{ch})", c + 1);
-    }
+    let sel = select_channels(channels, ch, "入力")?;
     let def_sr = def.sample_rate();
     let pref_buf = if buffer_frames == 0 {
         cpal::BufferSize::Default
@@ -169,6 +167,7 @@ fn build_cpal_input_with_retry(
             buffer_size: bsz,
         };
         let n_in = ch.max(1) as usize;
+        let sel = sel.clone();
         let cap_flags = flags.clone();
         let err_flags = flags.clone();
         match dev.build_input_stream(
@@ -177,10 +176,7 @@ fn build_cpal_input_with_retry(
                 let frames = data.len() / n_in;
                 for i in 0..frames {
                     let frame = &data[i * n_in..(i + 1) * n_in];
-                    let sample: f32 = match channel {
-                        Some(c) => frame[c as usize],
-                        None => frame.iter().sum::<f32>() / n_in as f32,
-                    };
+                    let sample: f32 = sel.iter().map(|&c| frame[c]).sum::<f32>() / sel.len() as f32;
                     if cap_tx.push(sample).is_err() {
                         cap_flags.overrun.fetch_add(1, Ordering::Relaxed);
                     }
@@ -210,14 +206,37 @@ fn build_cpal_input_with_retry(
     Err(last_err.unwrap_or_else(|| anyhow!("Failed to open capture stream")))
 }
 
+/// 選んだチャンネル(空 = 全部)を確かめて添字にする。
+fn select_channels(chosen: &[u16], total: u16, what: &str) -> Result<Vec<usize>> {
+    if chosen.is_empty() {
+        return Ok((0..total.max(1) as usize).collect());
+    }
+    let mut v = Vec::with_capacity(chosen.len());
+    for &c in chosen {
+        if c >= total {
+            bail!("{what}チャンネル {} はありません(1〜{total})", c + 1);
+        }
+        if !v.contains(&(c as usize)) {
+            v.push(c as usize);
+        }
+    }
+    Ok(v)
+}
+
 fn build_cpal_output_with_retry(
     dev: &Device,
     requested_sr: u32,
     buffer_frames: u32,
+    channels: &[u16],
     flags: Arc<FaultFlags>,
 ) -> Result<(Stream, Producer<f32>, u32, u32)> {
     let def = dev.default_output_config()?;
     let ch = def.channels();
+    let sel = select_channels(channels, ch, "出力")?;
+    let mut on = vec![false; ch.max(1) as usize];
+    for &c in &sel {
+        on[c] = true;
+    }
     let def_sr = def.sample_rate();
     let pref_buf = if buffer_frames == 0 {
         cpal::BufferSize::Default
@@ -241,6 +260,7 @@ fn build_cpal_output_with_retry(
             buffer_size: bsz,
         };
         let n_out = ch.max(1) as usize;
+        let on = on.clone();
         let pb_flags = flags.clone();
         let err_flags = flags.clone();
         match dev.build_output_stream(
@@ -249,8 +269,8 @@ fn build_cpal_output_with_retry(
                 for frame in data.chunks_mut(n_out) {
                     match pb_rx.pop() {
                         Ok(s) => {
-                            for c in frame.iter_mut() {
-                                *c = s;
+                            for (c, v) in frame.iter_mut().enumerate() {
+                                *v = if on[c] { s } else { 0.0 };
                             }
                         }
                         Err(_) => {
@@ -317,7 +337,8 @@ impl AudioEngine {
                         &in_name,
                         requested_sr,
                         buf_opt,
-                        input.channel,
+                        &input.channels,
+                        &output.channels,
                         Some(cap_tx),
                         Some(pb_rx),
                         asio_flags.clone(),
@@ -350,13 +371,14 @@ impl AudioEngine {
                         &in_name,
                         requested_sr,
                         buf_opt,
-                        input.channel,
+                        &input.channels,
+                        &[],
                         Some(cap_tx),
                         None,
                         asio_flags.clone(),
                     )?;
                     let (pb_stream, pb_tx, pb_sr, pb_buf) =
-                        build_cpal_output_with_retry(&out_dev, requested_sr, buffer_frames, flags.clone())?;
+                        build_cpal_output_with_retry(&out_dev, requested_sr, buffer_frames, &output.channels, flags.clone())?;
                     let cap_sr = session.sample_rate;
                     let cap_buf = session.buffer_frames;
                     return Ok((
@@ -380,14 +402,15 @@ impl AudioEngine {
                     let cpal_in_host = crate::host::pick(in_h)?;
                     let in_dev = pick_cpal_input(&cpal_in_host, &input)?;
                     let (cap_stream, cap_rx, cap_sr, cap_buf) =
-                        build_cpal_input_with_retry(&in_dev, requested_sr, buffer_frames, input.channel, flags.clone())?;
+                        build_cpal_input_with_retry(&in_dev, requested_sr, buffer_frames, &input.channels, flags.clone())?;
                     let (pb_tx, pb_rx) = RingBuffer::<f32>::new(RING_CAPACITY);
                     let asio_flags = Arc::new(crate::asio_win::AsioFaultFlags::default());
                     let session = crate::asio_win::AsioSession::start(
                         &out_name,
                         requested_sr,
                         buf_opt,
-                        None,
+                        &[],
+                        &output.channels,
                         None,
                         Some(pb_rx),
                         asio_flags.clone(),
@@ -419,9 +442,9 @@ impl AudioEngine {
         let in_dev = pick_cpal_input(&cpal_in_host, &input)?;
         let out_dev = pick_cpal_output(&cpal_out_host, &output)?;
         let (cap_stream, cap_rx, cap_sr, cap_buf) =
-            build_cpal_input_with_retry(&in_dev, requested_sr, buffer_frames, input.channel, flags.clone())?;
+            build_cpal_input_with_retry(&in_dev, requested_sr, buffer_frames, &input.channels, flags.clone())?;
         let (pb_stream, pb_tx, pb_sr, pb_buf) =
-            build_cpal_output_with_retry(&out_dev, requested_sr, buffer_frames, flags.clone())?;
+            build_cpal_output_with_retry(&out_dev, requested_sr, buffer_frames, &output.channels, flags.clone())?;
         Ok((
             Self {
                 capture_stream: Some(cap_stream),
@@ -460,7 +483,8 @@ impl AudioEngine {
                 &in_name,
                 requested_sr,
                 buf_opt,
-                input.channel,
+                &input.channels,
+                &[],
                 Some(cap_tx),
                 None,
                 asio_flags.clone(),
@@ -487,7 +511,7 @@ impl AudioEngine {
         let cpal_in_host = crate::host::pick(in_host)?;
         let in_dev = pick_cpal_input(&cpal_in_host, &input)?;
         let (cap_stream, cap_rx, cap_sr, cap_buf) =
-            build_cpal_input_with_retry(&in_dev, requested_sr, buffer_frames, input.channel, flags.clone())?;
+            build_cpal_input_with_retry(&in_dev, requested_sr, buffer_frames, &input.channels, flags.clone())?;
         Ok((
             Self {
                 capture_stream: Some(cap_stream),
@@ -755,10 +779,10 @@ pub fn input_channel_label(input: &AudioEndpoint) -> Option<String> {
         return None;
     }
     let asio = crate::host::resolve(input.host).is_ok_and(|h| h == HostPref::Asio);
-    match input.channel {
-        Some(c) => names.get(c as usize).cloned(),
-        None if asio => names.first().cloned(),
-        None => Some("全チャンネルの平均".to_string()),
+    match input.channels.as_slice() {
+        [] if asio => names.first().cloned(),
+        [] => Some("全チャンネルの平均".to_string()),
+        chosen => Some(chosen.iter().filter_map(|&c| names.get(c as usize).cloned()).collect::<Vec<_>>().join(" + ")),
     }
 }
 

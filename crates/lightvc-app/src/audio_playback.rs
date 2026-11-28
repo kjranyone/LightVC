@@ -1,30 +1,50 @@
 //! Simple WAV playback via rodio-free approach.
 //! Uses a background thread with cpal output (WASAPI on Windows so it never collides with ASIO).
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use anyhow::Result;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-/// Audio player: plays a WAV buffer once.
+/// 44.1 kHz のモノラルを 1 回鳴らす(WASAPI の既定の出力)。位置を読め、途中へ飛べる。
 pub struct AudioPlayer {
     playing: Arc<AtomicBool>,
+    /// 今の位置と全体の長さ(出力の標本化周波数のサンプル数)。
+    pos: Arc<AtomicUsize>,
+    total: Arc<AtomicUsize>,
+    /// 飛び先の割合 ×1e6(NO_SEEK = なし)。コールバックが拾う。
+    seek: Arc<AtomicUsize>,
     _thread: Option<std::thread::JoinHandle<()>>,
 }
+
+const NO_SEEK: usize = usize::MAX;
+const SEEK_SCALE: f32 = 1e6;
 
 impl AudioPlayer {
     /// Play a mono f32 buffer at 44100 Hz.
     pub fn play(samples: Vec<f32>) -> Result<Self> {
+        Self::play_from(samples, 0.0)
+    }
+
+    /// `start` = 鳴らし始める位置(全体に対する割合 0〜1)。
+    pub fn play_from(samples: Vec<f32>, start: f32) -> Result<Self> {
         let playing = Arc::new(AtomicBool::new(true));
-        let playing_clone = playing.clone();
+        let pos = Arc::new(AtomicUsize::new(0));
+        let total = Arc::new(AtomicUsize::new(0));
+        let seek = Arc::new(AtomicUsize::new((start.clamp(0.0, 1.0) * SEEK_SCALE) as usize));
+        let (playing_t, pos_t, total_t, seek_t) = (playing.clone(), pos.clone(), total.clone(), seek.clone());
 
         let thread = std::thread::spawn(move || {
             let host = match lightvc_audio::host::pick(lightvc_audio::HostPref::Wasapi) {
                 Ok(h) => h,
-                Err(_) => return,
+                Err(_) => {
+                    playing_t.store(false, Ordering::Relaxed);
+                    return;
+                }
             };
             let Some(device) = host.default_output_device() else {
+                playing_t.store(false, Ordering::Relaxed);
                 return;
             };
             let def = device.default_output_config().ok();
@@ -35,27 +55,25 @@ impl AudioPlayer {
             } else {
                 resample_linear_sr(&samples, 44_100, target_sr)
             };
+            let len = resampled.len();
+            total_t.store(len, Ordering::Relaxed);
             let config = cpal::StreamConfig {
                 channels: ch,
                 sample_rate: target_sr,
                 buffer_size: cpal::BufferSize::Default,
             };
-
-            let idx = Arc::new(Mutex::new(0usize));
-            let idx_clone = idx.clone();
-            let samples_arc = Arc::new(resampled);
-            let samples_for_closure = samples_arc.clone();
             let n_ch = ch as usize;
+            let (pos_cb, seek_cb) = (pos_t.clone(), seek_t.clone());
 
             let stream = device.build_output_stream(
                 config,
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                    let mut i = idx_clone.lock().unwrap();
+                    let req = seek_cb.swap(NO_SEEK, Ordering::Relaxed);
+                    let mut i = if req == NO_SEEK { pos_cb.load(Ordering::Relaxed) } else { ((req as f32 / SEEK_SCALE) * len as f32) as usize };
                     for frame in data.chunks_mut(n_ch) {
-                        let s = if *i < samples_for_closure.len() {
-                            let v = samples_for_closure[*i];
-                            *i += 1;
-                            v
+                        let s = if i < len {
+                            i += 1;
+                            resampled[i - 1]
                         } else {
                             0.0
                         };
@@ -63,6 +81,7 @@ impl AudioPlayer {
                             *slot = s;
                         }
                     }
+                    pos_cb.store(i, Ordering::Relaxed);
                 },
                 |err| eprintln!("Playback error: {err}"),
                 None,
@@ -70,22 +89,17 @@ impl AudioPlayer {
 
             if let Ok(s) = stream {
                 let _ = s.play();
-                while playing_clone.load(Ordering::Relaxed) {
-                    let pos = idx.lock().unwrap();
-                    if *pos >= samples_arc.len() {
+                while playing_t.load(Ordering::Relaxed) {
+                    if pos_t.load(Ordering::Relaxed) >= len && seek_t.load(Ordering::Relaxed) == NO_SEEK {
                         break;
                     }
-                    drop(pos);
-                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    std::thread::sleep(std::time::Duration::from_millis(20));
                 }
             }
-            playing_clone.store(false, Ordering::Relaxed);
+            playing_t.store(false, Ordering::Relaxed);
         });
 
-        Ok(Self {
-            playing,
-            _thread: Some(thread),
-        })
+        Ok(Self { playing, pos, total, seek, _thread: Some(thread) })
     }
 
     pub fn stop(&self) {
@@ -95,12 +109,57 @@ impl AudioPlayer {
     pub fn is_playing(&self) -> bool {
         self.playing.load(Ordering::Relaxed)
     }
+
+    /// 今の位置(全体に対する割合 0〜1・飛んでいる途中なら飛び先)。
+    pub fn progress(&self) -> f32 {
+        let req = self.seek.load(Ordering::Relaxed);
+        if req != NO_SEEK {
+            return req as f32 / SEEK_SCALE;
+        }
+        let t = self.total.load(Ordering::Relaxed);
+        if t == 0 { 0.0 } else { (self.pos.load(Ordering::Relaxed) as f32 / t as f32).min(1.0) }
+    }
+
+    /// 位置(全体に対する割合 0〜1)へ飛ぶ。
+    pub fn seek(&self, frac: f32) {
+        self.seek.store((frac.clamp(0.0, 1.0) * SEEK_SCALE) as usize, Ordering::Relaxed);
+    }
 }
 
 /// Load a WAV or FLAC file as mono f32 at its native sample rate.
+/// 読める音声の拡張子(ファイルの選択の絞り込みにも使う)。
+pub const AUDIO_EXTENSIONS: [&str; 4] = ["wav", "flac", "mp3", "mp2"];
+
+/// MP3 / MP2 を読む(nanomp3・タグと符号器の遅延・詰め物を除く)。インターリーブのまま返す。
+fn load_mpeg(path: &std::path::Path) -> Result<(Vec<f32>, u32, usize)> {
+    let bytes = std::fs::read(path)?;
+    let mut r = nanomp3::SliceReader::<f32>::new(&bytes);
+    let mut v = Vec::new();
+    let mut buf = vec![0f32; 4608];
+    loop {
+        let n = r.read(&mut buf).map_err(|e| anyhow::anyhow!("{}: MP3 を復号できません({e:?})", path.display()))?;
+        if n == 0 {
+            break;
+        }
+        v.extend_from_slice(&buf[..n]);
+    }
+    let channels = r.channels().map(|c| c.num() as usize).unwrap_or(0);
+    anyhow::ensure!(!v.is_empty() && channels > 0, "{}: MP3 の音声が見つかりません", path.display());
+    Ok((v, r.sample_rate(), channels))
+}
+
 pub fn load_audio_mono(path: &std::path::Path) -> Result<(Vec<f32>, u32)> {
-    let is_flac = path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("flac"));
-    let (samples, sr, channels, scale) = if is_flac {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    anyhow::ensure!(
+        AUDIO_EXTENSIONS.contains(&ext.as_str()),
+        "{}: 読めない形式です(読めるのは WAV / FLAC / MP3)",
+        path.display()
+    );
+    let is_flac = ext == "flac";
+    let (samples, sr, channels, scale) = if ext == "mp3" || ext == "mp2" {
+        let (v, sr, ch) = load_mpeg(path)?;
+        (v, sr, ch, 1.0)
+    } else if is_flac {
         let mut reader = claxon::FlacReader::open(path)?;
         let info = reader.streaminfo();
         let mut v = Vec::with_capacity(info.samples.unwrap_or(0).saturating_mul(info.channels as u64) as usize);

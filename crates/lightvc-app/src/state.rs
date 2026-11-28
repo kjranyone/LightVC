@@ -125,6 +125,10 @@ pub struct AppState {
     pub error: Option<String>,
     pub status: String,
     pub offline_result: Option<Vec<f32>>,
+    /// ファイル変換の糸が終わった(成功・中止・失敗)。画面が拾って戻す。
+    pub offline_done: bool,
+    /// ファイル変換の速さの覚え(残り時間の見積もり)。
+    pub offline_rates: crate::offline_tab::Rates,
     pub rt_control_tx: Option<Sender<RtControl>>,
     pub rt_metrics_rx: Option<Receiver<RtMetrics>>,
     pub rt_initialized: bool,
@@ -132,8 +136,9 @@ pub struct AppState {
     pub selected_input_host: HostPref,
     pub selected_input: Option<usize>,
     pub selected_input_name: Option<String>,
-    /// 入力チャンネル(0 始まり・None = ASIO は最初・ほかは全チャンネルの平均)。装置を替えると None に戻す。
-    pub selected_input_channel: Option<u16>,
+    /// 入力・出力のチャンネル(0 始まり・空 = 既定・AudioEndpoint::channels)。装置を替えると空に戻す。
+    pub selected_input_channels: Vec<u16>,
+    pub selected_output_channels: Vec<u16>,
     /// 入力のノイズ除去(リアルタイムの変換の前)。
     pub denoise: crate::denoise::Denoise,
     pub selected_output_host: HostPref,
@@ -150,7 +155,17 @@ impl AppState {
             host: self.selected_input_host,
             device_index: self.selected_input,
             device_name: self.selected_input_name.clone(),
-            channel: self.selected_input_channel,
+            channels: self.selected_input_channels.clone(),
+        }
+    }
+
+    /// 選んでいる出力(装置とチャンネル)。
+    pub fn output_endpoint(&self) -> AudioEndpoint {
+        AudioEndpoint {
+            host: self.selected_output_host,
+            device_index: self.selected_output,
+            device_name: self.selected_output_name.clone(),
+            channels: self.selected_output_channels.clone(),
         }
     }
 
@@ -168,13 +183,16 @@ impl AppState {
             error: None,
             status: "準備完了".to_string(),
             offline_result: None,
+            offline_done: false,
+            offline_rates: crate::offline_tab::Rates::default(),
             rt_control_tx: None,
             rt_metrics_rx: None,
             rt_initialized: false,
             selected_input_host: HostPref::Default,
             selected_input: None,
             selected_input_name: None,
-            selected_input_channel: None,
+            selected_input_channels: Vec::new(),
+            selected_output_channels: Vec::new(),
             denoise: crate::denoise::Denoise::Off,
             selected_output_host: HostPref::Default,
             selected_output: None,
@@ -190,17 +208,22 @@ pub fn load_48k(path: &Path) -> anyhow::Result<Vec<f32>> {
     crate::cli::resample_to_48k(&x, sr)
 }
 
-/// 設定と目標の参照から SnvStream を組む(読み込み + 登録 + ウォームアップ)。
+/// リアルタイムの変換器: 話者登録(cfg.operator)と目標の参照から SnvStream を組む(読み込み + 登録 + ウォームアップ)。
 pub fn build_stream(cfg: &SnvSettings, target: &[PathBuf]) -> anyhow::Result<SnvStream> {
     anyhow::ensure!(!cfg.operator.is_empty(), "話者登録がありません(リアルタイムの画面の「話者登録」で録音します)");
+    let op = cfg.operator.iter().map(|p| load_48k(p)).collect::<anyhow::Result<Vec<_>>>()?;
+    build_stream_with(cfg, &op, target)
+}
+
+/// 話し手の音声(48 kHz)を直に渡して組む。ファイル変換は変換元そのものを渡す(話者登録は使わない)。
+pub fn build_stream_with(cfg: &SnvSettings, operator: &[Vec<f32>], target: &[PathBuf]) -> anyhow::Result<SnvStream> {
     anyhow::ensure!(!target.is_empty(), "目標の声がありません(Voices で選ぶ)");
     let mut s = SnvStream::load(Path::new(&cfg.front), Path::new(&cfg.model), Path::new(&cfg.voc))?;
     if cfg.threads > 1 {
         s.enable_parallel(cfg.threads);
     }
     s.set_semitones(cfg.semitones);
-    let op = cfg.operator.iter().map(|p| load_48k(p)).collect::<anyhow::Result<Vec<_>>>()?;
-    s.enroll_operator(&op.iter().map(|x| x.as_slice()).collect::<Vec<_>>())?;
+    s.enroll_operator(&operator.iter().map(|x| x.as_slice()).collect::<Vec<_>>())?;
     let tg = target.iter().map(|p| load_48k(p)).collect::<anyhow::Result<Vec<_>>>()?;
     s.enroll_target(&tg.iter().map(|x| x.as_slice()).collect::<Vec<_>>())?;
     {
@@ -279,11 +302,6 @@ pub fn start_msg(state: &Arc<Mutex<AppState>>) -> RtControl {
     let s = state.lock().unwrap();
     RtControl::StartWithDevices {
         input: s.input_endpoint(),
-        output: AudioEndpoint {
-            host: s.selected_output_host,
-            device_index: s.selected_output,
-            device_name: s.selected_output_name.clone(),
-            channel: None,
-        },
+        output: s.output_endpoint(),
     }
 }

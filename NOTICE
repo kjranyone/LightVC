@@ -61,6 +61,7 @@ Third-party licenses
   - GUI icons: Material Symbols (Google; Apache-2.0), embedded from
     crates/lightvc-app/assets/icons/*.svg.
   - FLAC decoding of the bundled voice presets: claxon crate (Apache-2.0).
+  - MP3 decoding of user audio files: nanomp3 crate (MIT OR Apache-2.0).
   - Other Rust crates: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Zlib,
     Unicode-3.0 or CC0-1.0. self_cell is dual-licensed (Apache-2.0 OR GPL-2.0-only)
     and is used under Apache-2.0.

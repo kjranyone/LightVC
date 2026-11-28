@@ -108,6 +108,7 @@ cargo run -p lightvc-xtask -- package                  # bundle + CLI + 3重み 
 - **PyTorch と Rust の完全一致**: `manifest.json` のテンソル名 ＝ PyTorch `state_dict` 名 ＝ Rust 読み込み名。書き出しスクリプトは `training/export_snv_gate.py`・`export_snv_k3g.py`・`export_rvoc.py`・`export_pfront.py`・`export_snv_model.py`・`export_snv_p30.py`・`export_snv_stream.py`。変更時は両方更新し一致試験（`cargo test --release -p lightvc-core --features model-tests`）を通す。
 - **VC teacher 蒸留は禁止**（別 VC の変換音声を target にしない）。
 - **補助モデルは評価の物差し・参考値まで**（オーナー判断 2026-11-01「既存アルゴリズムはベンチマークの参考値にしても良いが、直接教師にしない」）。WavLM-SV / ECAPA / ASR / PESQ / UTMOS 等を学習損失・蒸留・表現監督に直接使わない（使う案は事前にオーナー確認必須）。推論時依存にもしない。
+  - **例外（オーナー判断 2026-11-29「補助的なものだから例外」）**: 入力のノイズ除去 RNNoise（`nnnoiseless`・BSD-3-Clause・`crates/lightvc-app/src/denoise.rs`）は、利用者が選んだときだけ変換の前に掛ける補助の前処理として推論時に使ってよい（既定は切）。学習・評価には使わない。
 - **Irodori-TTS は学習データ生成とプリセット作成専用**。推論・登録経路に入れない。実在人物の声は本人同意がある場合のみ目標にする。
 
 ## Engineering Lessons (実装・学習で踏んだ急所 — 再発防止)

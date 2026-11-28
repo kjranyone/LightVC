@@ -194,8 +194,8 @@ impl LightVcUi {
             m3::button("enroll_rec", Some("mic"), label, Btn::Filled, ready).on_click(cx.listener(|this, _, _, cx| this.start_take(cx)))
         };
         let footer = div().flex().flex_wrap().items_center().gap_2()
-            .child(m3::button("enroll_wav", Some("folder_open"), "WAV から追加", Btn::Outlined, !recording).on_click(cx.listener(|this, _, _, cx| {
-                if !this.enroll_live().is_some_and(|l| l.phase == Phase::Recording) { this.picks.operator.open(); }
+            .child(m3::button("enroll_wav", Some("folder_open"), "ファイルから追加", Btn::Outlined, !recording).on_click(cx.listener(|this, _, _, cx| {
+                if !this.enroll_live().is_some_and(|l| l.phase == Phase::Recording) { this.picks.operator.open_audio(); }
                 cx.notify();
             })))
             .child(div().flex_1())

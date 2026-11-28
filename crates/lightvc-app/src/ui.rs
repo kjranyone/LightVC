@@ -21,6 +21,7 @@ use crate::voices::{VoiceEntry, VoiceGroup};
 
 mod enroll;
 mod pitch;
+mod wave;
 
 const SR: u32 = 48_000;
 const BUFFERS: [u32; 5] = [128, 240, 256, 512, 1024];
@@ -38,7 +39,16 @@ struct OfflineUi {
     player: Option<AudioPlayer>,
     source_preview: Option<AudioPlayer>,
     reference_preview: Option<AudioPlayer>,
+    /// 変換元と変換結果の波形(変換元は別の糸で読む)。
+    source_wave: Option<Arc<wave::Wave>>,
+    source_wave_loading: Option<WaveLoad>,
+    source_wave_error: Option<String>,
+    result_wave: Option<Arc<wave::Wave>>,
+    job: Option<Arc<crate::offline_tab::Job>>,
 }
+
+/// 別の糸で読んでいる波形(読み終えると Some)。
+type WaveLoad = Arc<Mutex<Option<Result<wave::Wave, String>>>>;
 
 #[derive(Default)]
 struct CatalogUi {
@@ -97,6 +107,8 @@ pub struct LightVcUi {
     /// 登録した音声の長さ(秒)の覚え。
     durations: HashMap<PathBuf, Option<f32>>,
     pitch_focus: FocusHandle,
+    /// 変換元・変換結果の波形のフォーカス。
+    offline_focus: [FocusHandle; 2],
 }
 
 pub fn run(state: Arc<Mutex<AppState>>, demo: bool) -> anyhow::Result<()> {
@@ -154,8 +166,11 @@ pub fn run(state: Arc<Mutex<AppState>>, demo: bool) -> anyhow::Result<()> {
                         enroll_playing: None,
                         durations: HashMap::new(),
                         pitch_focus: cx.focus_handle(),
+                        offline_focus: [cx.focus_handle(), cx.focus_handle()],
                     };
                     if ui.tab == Tab::Devices { ui.refresh_devices(); }
+                    if let Some(p) = std::env::var_os("LVC_SOURCE") { ui.picks.source.set(p.into()); }
+                    if let Some(p) = std::env::var_os("LVC_TARGET") { ui.picks.reference.set(p.into()); }
                     ui
                 })
             },
@@ -194,13 +209,40 @@ impl LightVcUi {
             if disconnected {
                 s.error = Some(rt_error.unwrap_or_else(|| "オーディオ装置が切断されました".to_string()));
             }
-            if self.offline.converting && (s.status.starts_with("Converted:") || s.error.is_some()) {
+            if s.offline_done {
+                s.offline_done = false;
                 self.offline.converting = false;
+                self.offline.job = None;
             }
-            if let Some(r) = s.offline_result.take() { self.offline.converted = Some(r); }
+            if let Some(r) = s.offline_result.take() {
+                self.offline.result_wave = Some(Arc::new(wave::Wave::new(None, &r, SR)));
+                self.offline.converted = Some(r);
+            }
         }
         if disconnected { self.rt_running = false; }
-        if let Some(p) = self.picks.source.take() { self.offline.source = Some(p); }
+        if let Some(p) = self.picks.source.take() {
+            stop_player(&mut self.offline.source_preview);
+            self.offline.source = Some(p.clone());
+            self.offline.source_wave = None;
+            self.offline.source_wave_error = None;
+            let slot = Arc::new(Mutex::new(None));
+            self.offline.source_wave_loading = Some(slot.clone());
+            std::thread::spawn(move || {
+                let w = wave::Wave::load(p).map_err(|e| e.to_string());
+                *slot.lock().unwrap() = Some(w);
+            });
+        }
+        if let Some(slot) = self.offline.source_wave_loading.clone() {
+            let done = slot.lock().unwrap().take();
+            if let Some(r) = done {
+                self.offline.source_wave_loading = None;
+                match r {
+                    Ok(w) if w.path == self.offline.source => self.offline.source_wave = Some(Arc::new(w)),
+                    Ok(_) => {}
+                    Err(e) => self.offline.source_wave_error = Some(e),
+                }
+            }
+        }
         if let Some(p) = self.picks.reference.take() { self.offline.reference = Some(p); }
         if let Some(p) = self.picks.operator.take() { self.state.lock().unwrap().settings.operator.push(p); }
         if let Some(p) = self.picks.front.take() { self.state.lock().unwrap().settings.front = p.display().to_string(); }
@@ -217,6 +259,7 @@ impl LightVcUi {
             || self.enroll_open
             || self.state.lock().map(|s| s.loading).unwrap_or(false)
             || self.offline.converting
+            || self.offline.source_wave_loading.is_some()
             || self.offline.player.as_ref().is_some_and(|p| p.is_playing())
             || self.offline.source_preview.as_ref().is_some_and(|p| p.is_playing())
             || self.offline.reference_preview.as_ref().is_some_and(|p| p.is_playing())
@@ -336,6 +379,31 @@ impl LightVcUi {
             this.offline.reference = Some(p);
         }
         cx.notify();
+    }
+}
+
+impl LightVcUi {
+    /// ファイル変換の進み具合: 段・進捗の meter・経過と残り時間・中止。
+    fn job_progress(&self, job: &crate::offline_tab::Job, cx: &mut Context<Self>) -> Div {
+        let p = job.progress();
+        let pct = (p.frac * 100.0).round() as u32;
+        let remain = match (p.stage, p.remaining_s) {
+            (_, _) if job.cancelled() => "中止しています…".to_string(),
+            (crate::offline_tab::Stage::Loading, _) | (_, None) => "残り時間を見積もっています".to_string(),
+            (_, Some(r)) => format!("残り 約 {}", wave::clock(r.max(1.0))),
+        };
+        m3::card_outlined()
+            .child(div().flex().items_center().gap_3()
+                .child(m3::loading_indicator(32.))
+                .child(div().flex().flex_col().flex_1().min_w_0()
+                    .child(div().title_m().text_color(c::on_surface()).child(format!("{}…", p.stage.label())))
+                    .child(supporting(format!("{pct}%・{remain}・経過 {}", wave::clock(p.elapsed_s)))))
+                .child(m3::button("convert_cancel", Some("close"), "中止", Btn::Outlined, !job.cancelled()).on_click(cx.listener(|this, _, _, cx| {
+                    if let Some(j) = this.offline.job.as_ref() { j.cancel(); }
+                    cx.notify();
+                }))))
+            .child(m3::meter(p.frac, c::primary(), c::secondary_container()))
+            .child(supporting("話し手と目標の声を測る段は、前回の変換の速さから残り時間を見積もります。"))
     }
 }
 
@@ -711,9 +779,9 @@ impl LightVcUi {
     // ===== ファイル変換 =====
 
     fn render_offline(&mut self, status: &str, cx: &mut Context<Self>) -> AnyElement {
-        let (semitones, has_operator, voices) = {
+        let (semitones, voices) = {
             let s = self.state.lock().unwrap();
-            (s.settings.semitones, !s.settings.operator.is_empty(), s.voices.clone())
+            (s.settings.semitones, s.voices.clone())
         };
 
         let slot = |title: &str, sub: &str, glyph: &str, path: &Option<PathBuf>| {
@@ -727,30 +795,25 @@ impl LightVcUi {
                 })
         };
 
-        let src_playing = self.offline.source_preview.as_ref().is_some_and(|p| p.is_playing());
-        let source = slot("変換元", "変換したい音声(WAV)", "audio_file", &self.offline.source).child(
-            div().flex().gap_2()
-                .child(m3::button("src_browse", Some("folder_open"), "選ぶ", Btn::Tonal, true).on_click(cx.listener(|this, _, _, cx| {
-                    this.picks.source.open();
+        let src_wave = match (&self.offline.source, &self.offline.source_wave, &self.offline.source_wave_error) {
+            (None, _, _) => None,
+            (Some(_), Some(w), _) => Some(self.wave_player(wave::Slot::Source, w, c::on_surface_variant(), cx)),
+            (Some(_), None, Some(e)) => Some(self.wave_placeholder(&format!("読めません: {e}"))),
+            (Some(_), None, None) => Some(self.wave_placeholder("波形を読み込んでいます…")),
+        };
+        let source = slot("変換元", "変換したい音声。話し手の特徴もこの音声から測ります", "audio_file", &self.offline.source)
+            .child(div().flex().gap_2()
+                .child(m3::button("src_browse", Some("folder_open"), "選ぶ", Btn::Tonal, !self.offline.converting).on_click(cx.listener(|this, _, _, cx| {
+                    if !this.offline.converting { this.picks.source.open_audio(); }
                     cx.notify();
-                })))
-                .child(m3::button("src_play", Some(if src_playing { "stop_fill1" } else { "play_arrow_fill1" }), if src_playing { "停止" } else { "試聴" }, Btn::Outlined, self.offline.source.is_some()).on_click(cx.listener(|this, _, _, cx| {
-                    if this.offline.source_preview.is_some() {
-                        stop_player(&mut this.offline.source_preview);
-                    } else if let Some(p) = this.offline.source.clone()
-                        && let Err(e) = play_path(&mut this.offline.source_preview, &p)
-                    {
-                        this.state.lock().unwrap().error = Some(format!("再生できません: {e}"));
-                    }
-                    cx.notify();
-                }))),
-        );
+                }))))
+            .when_some(src_wave, |s, w| s.child(w));
 
         let ref_playing = self.offline.reference_preview.as_ref().is_some_and(|p| p.is_playing());
         let mut reference = slot("目標の声", "普通の発話を 20 秒以上", "record_voice_over", &self.offline.reference).child(
             div().flex().gap_2()
                 .child(m3::button("ref_browse", Some("folder_open"), "選ぶ", Btn::Tonal, true).on_click(cx.listener(|this, _, _, cx| {
-                    this.picks.reference.open();
+                    this.picks.reference.open_audio();
                     cx.notify();
                 })))
                 .child(m3::button("ref_play", Some(if ref_playing { "stop_fill1" } else { "play_arrow_fill1" }), if ref_playing { "停止" } else { "試聴" }, Btn::Outlined, self.offline.reference.is_some()).on_click(cx.listener(|this, _, _, cx| {
@@ -771,52 +834,50 @@ impl LightVcUi {
                 .child(self.voice_chips("cat", &voices, |i| current.as_ref().is_some_and(|p| voices.get(i).is_some_and(|v| &v.path == p)), cx, Self::pick_offline_voice));
         }
 
-        let can = self.offline.source.is_some() && self.offline.reference.is_some() && has_operator && !self.offline.converting;
-        let hint = if self.offline.converting { "変換しています…".to_string() }
-            else if !has_operator { "話者登録がありません(リアルタイムの画面で登録します)".into() }
+        let can = self.offline.source.is_some() && self.offline.reference.is_some() && !self.offline.converting;
+        let hint = if self.offline.converting { String::new() }
             else if self.offline.source.is_none() { "変換元を選んでください".into() }
             else if self.offline.reference.is_none() { "目標の声を選んでください".into() }
             else { status.to_string() };
         let action = div().flex().flex_wrap().items_center().gap_4()
             .child(m3::button_m("convert", "auto_awesome_fill1", "変換する", c::primary(), c::on_primary(), false, can).on_click(cx.listener(|this, _, _, cx| {
-                let has_operator = !this.state.lock().unwrap().settings.operator.is_empty();
-                if this.offline.source.is_none() || this.offline.reference.is_none() || this.offline.converting || !has_operator || this.demo { return; }
+                if this.offline.source.is_none() || this.offline.reference.is_none() || this.offline.converting || this.demo { return; }
                 let (src, refp) = (this.offline.source.clone().unwrap(), this.offline.reference.clone().unwrap());
-                { let mut s = this.state.lock().unwrap(); s.offline_result = None; s.error = None; s.status = "Converting...".to_string(); }
+                let rates = {
+                    let mut s = this.state.lock().unwrap();
+                    (s.offline_result, s.error, s.offline_done) = (None, None, false);
+                    s.status = "変換しています…".to_string();
+                    s.offline_rates
+                };
                 this.offline.converted = None;
-                this.offline.player = None;
+                this.offline.result_wave = None;
+                stop_player(&mut this.offline.player);
                 this.offline.converting = true;
+                let job = crate::offline_tab::Job::new(rates);
+                this.offline.job = Some(job.clone());
                 let st = this.state.clone();
-                std::thread::spawn(move || crate::offline_tab::run_offline_conversion(st, src, refp));
+                std::thread::spawn(move || crate::offline_tab::run_offline_conversion(st, job, src, refp));
                 cx.notify();
             })))
-            .when(self.offline.converting, |s| s.child(m3::loading_indicator(40.)))
             .child(div().flex().items_center().gap_3().child(field_label("ピッチ")).child(self.pitch_control("off_pitch", semitones, false, cx)))
             .child(div().flex_1().min_w_0().child(supporting(hint)));
 
         let mut el = div().flex().flex_col().gap_4()
             .child(page_header("ファイル変換", "録音済みの音声を目標の声に変換します"))
             .child(div().flex().gap_4().child(source).child(reference))
-            .child(action);
+            .child(action)
+            .when_some(self.offline.job.clone(), |s, job| s.child(self.job_progress(&job, cx)));
 
         if let Some(samples) = &self.offline.converted {
-            let out_playing = self.offline.player.as_ref().is_some_and(|p| p.is_playing());
             let seconds = samples.len() as f32 / SR as f32;
             let fg = c::on_tertiary_container();
+            let out_wave = self.offline.result_wave.clone().map(|w| self.wave_player(wave::Slot::Result, &w, fg, cx));
             el = el.child(
-                div().bg(c::tertiary_container()).rounded(px(shape::XL)).p_6().flex().flex_wrap().items_center().gap_6()
+                div().bg(c::tertiary_container()).rounded(px(shape::XL)).p_6().flex().flex_col().gap_4()
+                .child(div().flex().flex_wrap().items_center().gap_6()
                     .child(m3::avatar("check", fg, c::tertiary_container()))
                     .child(stat("変換結果", format!("{seconds:.1}"), "秒・48 kHz", fg))
                     .child(div().flex_1())
-                    .child(m3::button("out_play", Some(if out_playing { "stop_fill1" } else { "play_arrow_fill1" }), if out_playing { "停止" } else { "再生" }, Btn::Filled, true).on_click(cx.listener(|this, _, _, cx| {
-                        if this.offline.player.is_some() {
-                            stop_player(&mut this.offline.player);
-                        } else if let Some(samples) = this.offline.converted.clone() {
-                            let wav44 = audio_playback::resample_linear(&samples, SR);
-                            this.offline.player = AudioPlayer::play(wav44).ok();
-                        }
-                        cx.notify();
-                    })))
                     .child(m3::button("out_save", Some("download"), "保存", Btn::Tonal, true).on_click(cx.listener(|this, _, _, cx| {
                         if let Some(samples) = this.offline.converted.clone()
                             && let Some(path) = rfd::FileDialog::new().save_file()
@@ -828,7 +889,8 @@ impl LightVcUi {
                             }
                         }
                         cx.notify();
-                    }))),
+                    }))))
+                .when_some(out_wave, |s, w| s.child(w)),
             );
         }
         el.into_any_element()
@@ -843,7 +905,7 @@ impl LightVcUi {
         };
         let header = page_header("ボイス", "同梱のプリセットから選ぶか、目標の声の参照(普通の発話 20 秒以上)を追加します")
             .child(m3::button("voice_add", Some("add"), "ボイスを追加", Btn::Filled, true).on_click(cx.listener(|this, _, _, cx| {
-                this.picks.add.open();
+                this.picks.add.open_audio();
                 cx.notify();
             })));
         let mut el = div().flex().flex_col().gap_4().child(header);
@@ -853,7 +915,7 @@ impl LightVcUi {
                     .child(div().size(px(72.)).flex().items_center().justify_center().rounded(px(shape::XL)).bg(c::primary_container())
                         .child(icon("record_voice_over", 36., c::on_primary_container())))
                     .child(div().title_l().text_color(c::on_surface()).child("まだボイスがありません"))
-                    .child(div().body_m().text_color(c::on_surface_variant()).child("WAV / FLAC を選ぶと、ファイル名で登録されます")),
+                    .child(div().body_m().text_color(c::on_surface_variant()).child("WAV / FLAC / MP3 を選ぶと、ファイル名で登録されます")),
             ).into_any_element();
         }
 
@@ -948,7 +1010,7 @@ impl LightVcUi {
     // ===== デバイス =====
 
     fn render_devices(&mut self, _status: &str, cx: &mut Context<Self>) -> AnyElement {
-        let (sel_in_host, sel_in, sel_in_name, sel_out_host, sel_out, sel_out_name, sel_host, sel_ch) = {
+        let (sel_in_host, sel_in, sel_in_name, sel_out_host, sel_out, sel_out_name, sel_host, sel_in_ch, sel_out_ch) = {
             let s = self.state.lock().unwrap();
             (
                 s.selected_input_host,
@@ -958,7 +1020,8 @@ impl LightVcUi {
                 s.selected_output,
                 s.selected_output_name.clone(),
                 s.selected_host,
-                s.selected_input_channel,
+                s.selected_input_channels.clone(),
+                s.selected_output_channels.clone(),
             )
         };
         let mut hosts: Vec<(String, lightvc_audio::HostPref)> = vec![("すべて".to_string(), lightvc_audio::HostPref::Default)];
@@ -1008,7 +1071,7 @@ impl LightVcUi {
                         .on_click(cx.listener(move |this, _, _, cx| {
                             let mut s = this.state.lock().unwrap();
                             if input {
-                                s.selected_input_channel = None;
+                                s.selected_input_channels.clear();
                                 if selected {
                                     s.selected_input_host = lightvc_audio::HostPref::Default;
                                     s.selected_input = None;
@@ -1019,10 +1082,12 @@ impl LightVcUi {
                                     s.selected_input_name = Some(dev_name.clone());
                                 }
                             } else if selected {
+                                s.selected_output_channels.clear();
                                 s.selected_output_host = lightvc_audio::HostPref::Default;
                                 s.selected_output = None;
                                 s.selected_output_name = None;
                             } else {
+                                s.selected_output_channels.clear();
                                 s.selected_output_host = dev_host;
                                 s.selected_output = Some(dev_idx);
                                 s.selected_output_name = Some(dev_name.clone());
@@ -1052,11 +1117,23 @@ impl LightVcUi {
             .child(column("入力", "mic", true, &inputs, sel_in_host, sel_in, sel_in_name.as_deref(), cx))
             .child(column("出力", "volume_up", false, &outputs, sel_out_host, sel_out, sel_out_name.as_deref(), cx));
 
-        let sel_dev = inputs.iter().find(|d| match sel_in_name.as_deref() {
-            Some(name) => d.host == sel_in_host && d.name == name,
-            None => sel_in.is_some() && sel_in == Some(d.host_index) && (sel_in_host == lightvc_audio::HostPref::Default || d.host == sel_in_host),
+        let find = |list: &[lightvc_audio::DeviceInfo], host: lightvc_audio::HostPref, idx: Option<usize>, name: Option<&str>| -> Option<lightvc_audio::DeviceInfo> {
+            list.iter()
+                .find(|d| match name {
+                    Some(name) => d.host == host && d.name == name,
+                    None => idx.is_some() && idx == Some(d.host_index) && (host == lightvc_audio::HostPref::Default || d.host == host),
+                })
+                .filter(|d| d.channels > 1)
+                .cloned()
+        };
+        let in_card = find(&inputs, sel_in_host, sel_in, sel_in_name.as_deref()).map(|d| self.channel_card(&d, true, &sel_in_ch, cx));
+        let out_card = find(&outputs, sel_out_host, sel_out, sel_out_name.as_deref()).map(|d| self.channel_card(&d, false, &sel_out_ch, cx));
+        let has_cards = in_card.is_some() || out_card.is_some();
+        let channels = has_cards.then(|| {
+            div().flex().items_start().gap_4()
+                .child(div().flex_1().min_w_0().when_some(in_card, |s, c| s.child(c)))
+                .child(div().flex_1().min_w_0().when_some(out_card, |s, c| s.child(c)))
         });
-        let channels = sel_dev.filter(|d| d.channels > 1).map(|d| self.channel_card(d, sel_ch, cx));
 
         div().flex().flex_col().gap_4()
             .child(page_header("デバイス", "音声の入出力とホストを選びます"))
@@ -1066,34 +1143,49 @@ impl LightVcUi {
             .into_any_element()
     }
 
-    /// 選んだ入力装置のチャンネル(変換はモノラルの 1 本を使う)。ASIO は 1 本ずつ、ほかは平均か 1 本。
-    fn channel_card(&self, d: &lightvc_audio::DeviceInfo, sel: Option<u16>, cx: &mut Context<Self>) -> Div {
+    /// 選んだ装置のチャンネル。変換はモノラルなので、入力は 1 本(ASIO 以外は平均も)・出力は同じ音を出すチャンネル。
+    fn channel_card(&self, d: &lightvc_audio::DeviceInfo, input: bool, sel: &[u16], cx: &mut Context<Self>) -> Div {
         let asio = d.host == lightvc_audio::HostPref::Asio;
-        let mut opts: Vec<(Option<u16>, String)> = Vec::new();
+        let n = d.channel_names.len() as u16;
+        let name = |c: u16| d.channel_names.get(c as usize).cloned().unwrap_or_else(|| (c + 1).to_string());
+        let mut opts: Vec<(Vec<u16>, String)> = Vec::new();
         if !asio {
-            opts.push((None, "平均".to_string()));
+            opts.push((Vec::new(), if input { "平均".to_string() } else if n == 2 { "L + R".to_string() } else { "すべて".to_string() }));
+        } else if !input {
+            for c in (0..n.saturating_sub(1)).step_by(2) {
+                opts.push((vec![c, c + 1], format!("{} + {}", name(c), name(c + 1))));
+            }
         }
-        for (c, n) in d.channel_names.iter().enumerate() {
-            opts.push((Some(c as u16), n.clone()));
+        for c in 0..n {
+            opts.push((vec![c], name(c)));
         }
-        let cur = if asio { Some(sel.unwrap_or(0)) } else { sel };
+        let default: Vec<u16> = match (asio, input) {
+            (true, true) => vec![0],
+            (true, false) => (0..n.min(2)).collect(),
+            _ => Vec::new(),
+        };
+        let cur: Vec<u16> = if sel.is_empty() { default } else { sel.to_vec() };
         let mut chips = div().flex().flex_wrap().gap_2();
-        for (i, (ch, name)) in opts.into_iter().enumerate() {
+        for (i, (chs, label)) in opts.into_iter().enumerate() {
+            let selected = cur == chs;
             chips = chips.child(
-                m3::chip(SharedString::from(format!("in_ch_{i}")), name, cur == ch).on_click(cx.listener(move |this, _, _, cx| {
-                    this.state.lock().unwrap().selected_input_channel = ch;
+                m3::chip(SharedString::from(format!("{}_ch_{i}", if input { "in" } else { "out" })), label, selected).on_click(cx.listener(move |this, _, _, cx| {
+                    let mut s = this.state.lock().unwrap();
+                    if input { s.selected_input_channels = chs.clone() } else { s.selected_output_channels = chs.clone() }
                     cx.notify();
                 })),
             );
         }
-        let hint = if asio {
-            "ASIO はチャンネルを 1 本ずつ選びます(マイクをつないだ端子)。"
-        } else {
-            "変換はモノラルです。ステレオの装置は、マイクが入っている側(L / R)を選ぶか、両方の平均を使います。"
+        let hint = match (input, asio) {
+            (true, true) => "ASIO はチャンネルを 1 本ずつ選びます(マイクをつないだ端子)。",
+            (true, false) => "変換はモノラルです。ステレオの装置は、マイクが入っている側(L / R)を選ぶか、両方の平均を使います。",
+            (false, _) => "変換した音(モノラル)を選んだチャンネルに出します。ほかのチャンネルは無音です。",
         };
         m3::card_outlined()
-            .child(div().flex().items_center().gap_2().child(icon("mic", 22., c::on_surface_variant())).child(section_title("入力チャンネル"))
-                .child(div().flex_1()).child(supporting(d.name.clone())))
+            .child(div().flex().items_center().gap_2()
+                .child(icon(if input { "mic" } else { "volume_up" }, 22., c::on_surface_variant()))
+                .child(section_title(if input { "入力チャンネル" } else { "出力チャンネル" }))
+                .child(div().flex_1().min_w_0()).child(div().min_w_0().truncate().child(supporting(d.name.clone()))))
             .child(chips)
             .child(supporting(format!("{hint}変換中に替えたときは、停止して開始し直すと反映されます。")))
     }
@@ -1151,7 +1243,7 @@ impl LightVcUi {
             ("RNNoise (Xiph.Org・nnnoiseless / BSD-3-Clause)", "入力のノイズ除去「RNNoise」(学習済みの重みを含む・選んだときだけ使う)。「定常の雑音」は LightVC 自作のスペクトルのフィルタ"),
             ("Material Symbols Rounded (Google / Apache-2.0)", "UI アイコン (assets/icons/*.svg)"),
             ("WORLD (M. Morise / modified BSD)", "スペクトル包絡処理 (crates/lightvc-core/src/cheaptrick.rs)"),
-            ("音声 I/O (cpal・rubato・rtrb・hound・claxon)", "WASAPI / リサンプリング / リングバッファ / FLAC の読み込み。ASIO は Windows ネイティブ COM 連携を使用し、Steinberg ASIO SDK は同梱していません"),
+            ("音声 I/O (cpal・rubato・rtrb・hound・claxon・nanomp3)", "WASAPI / リサンプリング / リングバッファ / FLAC・MP3 の読み込み。ASIO は Windows ネイティブ COM 連携を使用し、Steinberg ASIO SDK は同梱していません"),
             ("クレート依存の許諾方針", "MIT / Apache-2.0 / BSD-2-Clause / BSD-3-Clause / ISC / Zlib / Unicode-3.0 / CC0-1.0 (self_cell は Apache-2.0 を選択、GPLv3 依存なし)"),
         ];
         let mut third_party_list = m3::list();

@@ -16,6 +16,15 @@ pub struct FilePick {
 impl FilePick {
     /// Start a file-open dialog in a background thread.
     pub fn open(&self) {
+        self.spawn(false);
+    }
+
+    /// 音声ファイル(WAV / FLAC / MP3)に絞った選択。
+    pub fn open_audio(&self) {
+        self.spawn(true);
+    }
+
+    fn spawn(&self, audio: bool) {
         if self.pending.load(Ordering::Relaxed) {
             return;
         }
@@ -23,7 +32,11 @@ impl FilePick {
         let r = self.result.clone();
         let pending = self.pending.clone();
         std::thread::spawn(move || {
-            let p = rfd::FileDialog::new().pick_file();
+            let mut d = rfd::FileDialog::new();
+            if audio {
+                d = d.add_filter("音声 (WAV / FLAC / MP3)", &crate::audio_playback::AUDIO_EXTENSIONS).add_filter("すべてのファイル", &["*"]);
+            }
+            let p = d.pick_file();
             *r.lock().unwrap() = p;
             pending.store(false, Ordering::Relaxed);
         });
@@ -32,6 +45,11 @@ impl FilePick {
     /// True while the dialog is open (UI keeps ticking so the result lands promptly).
     pub fn pending(&self) -> bool {
         self.pending.load(Ordering::Relaxed)
+    }
+
+    /// 選んだことにする(画面写真・動作確認用の LVC_SOURCE / LVC_TARGET)。
+    pub fn set(&self, p: PathBuf) {
+        *self.result.lock().unwrap() = Some(p);
     }
 
     /// Returns the chosen path if ready, clearing the slot.

@@ -21,6 +21,8 @@ pub struct AsioDeviceInfo {
     pub channels_out: u16,
     /// 入力チャンネルの名前(ドライバが返すもの・例 "IN 1")。
     pub in_channel_names: Vec<String>,
+    /// 出力チャンネルの名前(例 "OUT 1")。
+    pub out_channel_names: Vec<String>,
     pub sample_rate: u32,
     pub buffer_min: i32,
     pub buffer_max: i32,
@@ -418,15 +420,25 @@ pub fn list_devices() -> Vec<AsioDeviceInfo> {
                     .find(|&r| drv.can_sample_rate(r))
             })
             .unwrap_or(48_000.0);
-        let in_channel_names = (0..ins.max(0))
-            .map(|c| drv.channel_info(c, true).map(|i| channel_name(&i.name)).ok().filter(|n| !n.is_empty()).unwrap_or_else(|| format!("IN {}", c + 1)))
-            .collect();
+        let names = |n: c_long, input: bool| -> Vec<String> {
+            (0..n.max(0))
+                .map(|c| {
+                    drv.channel_info(c, input)
+                        .map(|i| channel_name(&i.name))
+                        .ok()
+                        .filter(|n| !n.is_empty())
+                        .unwrap_or_else(|| format!("{} {}", if input { "IN" } else { "OUT" }, c + 1))
+                })
+                .collect()
+        };
+        let (in_channel_names, out_channel_names) = (names(ins, true), names(outs, false));
         devices.push(AsioDeviceInfo {
             name: entry.name,
             clsid: entry.clsid,
             channels_in: ins.max(0) as u16,
             channels_out: outs.max(0) as u16,
             in_channel_names,
+            out_channel_names,
             sample_rate: sr.round() as u32,
             buffer_min: bmin,
             buffer_max: bmax,
@@ -743,11 +755,13 @@ pub struct AsioSession {
 }
 
 impl AsioSession {
+    #[allow(clippy::too_many_arguments)]
     pub fn start(
         driver_name: &str,
         requested_sr: u32,
         requested_buffer: Option<u32>,
-        in_channel: Option<u16>,
+        in_channels: &[u16],
+        out_channels: &[u16],
         capture_tx: Option<Producer<f32>>,
         playback_rx: Option<Consumer<f32>>,
         flags: Arc<AsioFaultFlags>,
@@ -772,26 +786,30 @@ impl AsioSession {
 
         let driver = RawDriver::open(&entry.clsid)?;
         let (total_in, total_out) = driver.channels()?;
-        let in_ch = in_channel.unwrap_or(0) as c_long;
-        let n_in = if want_in {
-            if total_in <= 0 {
-                bail!("ASIO デバイス '{}' に入力チャンネルがありません", entry.name);
+        let pick = |want: bool, chosen: &[u16], total: c_long, default_n: c_long, what: &str| -> Result<Vec<c_long>> {
+            if !want {
+                return Ok(Vec::new());
             }
-            if in_ch >= total_in {
-                bail!("ASIO デバイス '{}' に入力チャンネル {} はありません(1〜{total_in})", entry.name, in_ch + 1);
+            if total <= 0 {
+                bail!("ASIO デバイス '{}' に{what}チャンネルがありません", entry.name);
             }
-            1
-        } else {
-            0
+            if chosen.is_empty() {
+                return Ok((0..total.min(default_n)).collect());
+            }
+            let mut v: Vec<c_long> = Vec::with_capacity(chosen.len());
+            for &c in chosen {
+                if c as c_long >= total {
+                    bail!("ASIO デバイス '{}' に{what}チャンネル {} はありません(1〜{total})", entry.name, c + 1);
+                }
+                if !v.contains(&(c as c_long)) {
+                    v.push(c as c_long);
+                }
+            }
+            Ok(v)
         };
-        let n_out = if want_out {
-            if total_out <= 0 {
-                bail!("ASIO デバイス '{}' に出力チャンネルがありません", entry.name);
-            }
-            (total_out as usize).min(2)
-        } else {
-            0
-        };
+        let in_list = pick(want_in, in_channels, total_in, 1, "入力")?;
+        let out_list = pick(want_out, out_channels, total_out, 2, "出力")?;
+        let (n_in, n_out) = (in_list.len(), out_list.len());
 
         let target_sr = requested_sr as f64;
         let actual_sr = if driver.can_sample_rate(target_sr) {
@@ -812,17 +830,17 @@ impl AsioSession {
         let mut chosen_buf = snap_buffer_size(requested_buffer, min_s, max_s, pref_s, gran);
 
         let mut buf_infos = Vec::with_capacity(n_in + n_out);
-        for _ in 0..n_in {
+        for &ch in &in_list {
             buf_infos.push(AsioBufferInfo {
                 is_input: 1,
-                channel_num: in_ch,
+                channel_num: ch,
                 buffers: [null_mut(), null_mut()],
             });
         }
-        for ch in 0..n_out {
+        for &ch in &out_list {
             buf_infos.push(AsioBufferInfo {
                 is_input: 0,
-                channel_num: ch as c_long,
+                channel_num: ch,
                 buffers: [null_mut(), null_mut()],
             });
         }
@@ -948,7 +966,7 @@ mod tests {
         let flags = Arc::new(AsioFaultFlags::default());
         let cap = if d.channels_in > 0 { Some(cap_tx) } else { None };
         let pb = if d.channels_out > 0 { Some(pb_rx) } else { None };
-        let session = AsioSession::start(&d.name, 48_000, Some(240), None, cap, pb, flags.clone()).expect("start ASIO session");
+        let session = AsioSession::start(&d.name, 48_000, Some(240), &[], &[], cap, pb, flags.clone()).expect("start ASIO session");
         std::thread::sleep(std::time::Duration::from_millis(200));
         let mut got = 0usize;
         while cap_rx.pop().is_ok() {
@@ -974,7 +992,7 @@ mod tests {
             let last = d.channels_in - 1;
             let (cap_tx, mut cap_rx) = rtrb::RingBuffer::new(65536);
             let flags = Arc::new(AsioFaultFlags::default());
-            let session = AsioSession::start(&d.name, 48_000, Some(240), Some(last), Some(cap_tx), None, flags).expect("start ASIO on the last input");
+            let session = AsioSession::start(&d.name, 48_000, Some(240), &[last], &[], Some(cap_tx), None, flags).expect("start ASIO on the last input");
             std::thread::sleep(std::time::Duration::from_millis(200));
             let mut got = 0usize;
             while cap_rx.pop().is_ok() {
@@ -984,8 +1002,23 @@ mod tests {
             assert!(got > 0);
             drop(session);
             let (cap_tx, _cap_rx) = rtrb::RingBuffer::new(1024);
-            let r = AsioSession::start(&d.name, 48_000, Some(240), Some(d.channels_in), Some(cap_tx), None, Arc::new(AsioFaultFlags::default()));
+            let r = AsioSession::start(&d.name, 48_000, Some(240), &[d.channels_in], &[], Some(cap_tx), None, Arc::new(AsioFaultFlags::default()));
             assert!(r.is_err(), "a channel past the last must be refused");
+        }
+
+        if d.channels_out > 3 {
+            let (mut pb_tx, pb_rx) = rtrb::RingBuffer::new(65536);
+            for _ in 0..4096 {
+                let _ = pb_tx.push(0.0);
+            }
+            let flags = Arc::new(AsioFaultFlags::default());
+            let session = AsioSession::start(&d.name, 48_000, Some(240), &[], &[2, 3], None, Some(pb_rx), flags.clone()).expect("start ASIO on outputs 3-4");
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            let consumed = pb_tx.slots().saturating_sub(65536 - 4096);
+            eprintln!("ASIO outputs 3-4 ({} / {}): consumed={consumed}", d.out_channel_names[2], d.out_channel_names[3]);
+            assert!(consumed > 0, "expected ASIO playback callbacks to consume samples");
+            assert!(!flags.disconnected.load(Ordering::Relaxed));
+            drop(session);
         }
     }
 }

@@ -67,8 +67,9 @@ pub struct SnvModel {
     /// 出力部 snv_p123_s(既定 = models/rvoc3hi → results/snv_p123_s/export_20k)
     #[arg(long, default_value_os_t = default_export(2))]
     pub voc: std::path::PathBuf,
-    /// 操作者の登録(自分の普通の発話・計 30 秒程度・複数可)
-    #[arg(long, required = true, num_args = 1..)]
+    /// 操作者の登録(自分の普通の発話・計 30 秒程度・複数可)。realtime-snv では必須。
+    /// snv(ファイル変換)で省くと、変換元そのものを話し手として測る(変換元の話し手は操作者とは限らない)
+    #[arg(long, num_args = 1..)]
     pub operator: Vec<std::path::PathBuf>,
     /// 目標の参照(目標の声の普通の発話・計 20 秒以上・複数可。同梱のプリセットは `voices/<id>.flac`)
     #[arg(long, required = true, num_args = 1..)]
@@ -88,7 +89,13 @@ fn semitones(v: &str) -> std::result::Result<f32, String> {
 }
 
 impl SnvModel {
-    fn load(&self) -> Result<lightvc_core::snv_stream::SnvStream> {
+    /// `source` = ファイル変換の変換元(--operator を省いたとき話し手として測る)。リアルタイムは None。
+    fn load(&self, source: Option<&std::path::Path>) -> Result<lightvc_core::snv_stream::SnvStream> {
+        let operator: Vec<std::path::PathBuf> = match (self.operator.is_empty(), source) {
+            (false, _) => self.operator.clone(),
+            (true, Some(src)) => vec![src.to_path_buf()],
+            (true, None) => anyhow::bail!("--operator(操作者の登録)が必要です"),
+        };
         let mut s = lightvc_core::snv_stream::SnvStream::load(&self.front, &self.model, &self.voc)?;
         if self.threads > 1 {
             s.enable_parallel(self.threads);
@@ -107,7 +114,7 @@ impl SnvModel {
             Ok(v)
         };
         let t0 = std::time::Instant::now();
-        let op = rd(&self.operator, "操作者の登録")?;
+        let op = rd(&operator, if self.operator.is_empty() { "話し手(変換元)" } else { "操作者の登録" })?;
         s.enroll_operator(&op.iter().map(|x| x.as_slice()).collect::<Vec<_>>())?;
         let tg = rd(&self.target, "目標の参照")?;
         s.enroll_target(&tg.iter().map(|x| x.as_slice()).collect::<Vec<_>>())?;
@@ -157,6 +164,9 @@ pub struct RealtimeSnvCmd {
     /// 入力チャンネル(1 始まり・`devices` に名前が出る。未指定 = ASIO は 1・ほかは全チャンネルの平均)
     #[arg(long, value_parser = clap::value_parser!(u16).range(1..))]
     pub input_channel: Option<u16>,
+    /// 出力チャンネル(1 始まり・カンマ区切りで複数・例 `3,4`。未指定 = ASIO は 1,2・ほかは全チャンネル)
+    #[arg(long, value_delimiter = ',', value_parser = clap::value_parser!(u16).range(1..))]
+    pub output_channels: Vec<u16>,
     /// 出力装置(`devices` の一覧の番号・未指定 = 既定)
     #[arg(long)]
     pub output: Option<usize>,
@@ -182,6 +192,10 @@ pub fn run_devices() -> Result<()> {
         }
         for (i, d) in outputs.iter().enumerate() {
             println!("  out {i}: {} ({}Hz, {}ch)", d.name, d.sample_rate, d.channels);
+            if d.channels > 1 {
+                let names: Vec<String> = d.channel_names.iter().enumerate().map(|(c, n)| format!("{}={n}", c + 1)).collect();
+                println!("          --output-channels {}", names.join(" "));
+            }
         }
     }
     println!("hosts: {:?}", shown);
@@ -193,13 +207,13 @@ pub fn run_snv(cmd: SnvCmd) -> Result<()> {
     const HOP: usize = SnvStream::BLOCK;
     let (x, sr) = crate::audio_playback::load_audio_mono(&cmd.input)?;
     anyhow::ensure!(sr == 48_000, "入力は 48 kHz が必要 (got {sr})");
-    let mut vc = cmd.model.load()?;
+    let mut vc = cmd.model.load(Some(&cmd.input))?;
     let n = x.len() / HOP;
     if let Some(ts) = cmd.probe_future {
         let cut = ((ts * 48_000.0) as usize / HOP).min(n - 1) * HOP;
         let mut x2 = x[..n * HOP].to_vec();
         x2[cut..].reverse();
-        let mut vc2 = cmd.model.load()?;
+        let mut vc2 = cmd.model.load(Some(&cmd.input))?;
         let (mut y1, mut y2) = (vec![0f32; n * HOP], vec![0f32; n * HOP]);
         let mut ms = Vec::with_capacity(n);
         for i in 0..n {
@@ -249,7 +263,7 @@ pub fn run_realtime_snv(cmd: RealtimeSnvCmd) -> Result<()> {
     const SR: usize = 48_000;
     lightvc_core::affinity::pin_audio_driver();
     lightvc_core::affinity::raise_timer_resolution();
-    let mut vc = cmd.model.load()?;
+    let mut vc = cmd.model.load(None)?;
     {
         // 重みのページインと常駐スレッドの起動を済ませる(開始直後の無音の窓を防ぐ)。
         let warm = vec![0f32; HOP];
@@ -259,8 +273,8 @@ pub fn run_realtime_snv(cmd: RealtimeSnvCmd) -> Result<()> {
     let in_host = lightvc_audio::HostPref::parse(cmd.input_host.as_deref().unwrap_or(&cmd.host))?;
     let out_host = lightvc_audio::HostPref::parse(cmd.output_host.as_deref().unwrap_or(&cmd.host))?;
     let (engine, mut io) = lightvc_audio::AudioEngine::start_endpoints(
-        lightvc_audio::AudioEndpoint { host: in_host, device_index: cmd.input, device_name: None, channel: cmd.input_channel.map(|c| c - 1) },
-        lightvc_audio::AudioEndpoint { host: out_host, device_index: cmd.output, device_name: None, channel: None },
+        lightvc_audio::AudioEndpoint { host: in_host, device_index: cmd.input, device_name: None, channels: cmd.input_channel.map(|c| c - 1).into_iter().collect() },
+        lightvc_audio::AudioEndpoint { host: out_host, device_index: cmd.output, device_name: None, channels: cmd.output_channels.iter().map(|c| c - 1).collect() },
         SR as u32,
         cmd.buffer,
     )?;
