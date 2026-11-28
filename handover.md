@@ -29,10 +29,9 @@
    scp -r ch160:/home/kojirotanaka/kjranyone/LightVC/results/snv_k3g16kv_export results/
    ```
 2. **ビルド・一致試験・関門 S・配布パッケージ生成**:
-   - GPUI アプリのビルド(`fxc.exe` が PATH に必要・`.\dev.ps1 -BuildOnly` が自動で PATH に追加):
+   - GPUI アプリのビルド(`fxc.exe` が PATH に必要・`.\dev.ps1 -BuildOnly` が自動で PATH に追加・標準ビルドでネイティブ COM ASIO 対応):
      ```powershell
-     .\dev.ps1 -BuildOnly
-     # ASIO SDK がある場合: cargo build --release --features asio -p lightvc-app
+     .\dev.ps1 -BuildOnly -Release
      ```
    - Rust 全一致・未来不変性・遅延台帳試験:
      ```powershell
