@@ -120,7 +120,7 @@ icons!(
     "graphic_eq", "graphic_eq_fill1", "audio_file", "audio_file_fill1", "record_voice_over",
     "record_voice_over_fill1", "settings", "settings_fill1", "play_arrow_fill1", "stop_fill1", "mic",
     "mic_off", "volume_up", "volume_off", "check", "close", "add", "folder_open", "delete", "download",
-    "refresh", "person", "arrow_forward", "error", "alt_route", "auto_awesome_fill1", "info",
+    "refresh", "person", "arrow_forward", "error", "alt_route", "auto_awesome_fill1", "info", "remove",
 );
 
 impl AssetSource for Assets {

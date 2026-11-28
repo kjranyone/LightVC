@@ -12,8 +12,15 @@ pub struct DeviceInfo {
     pub name: String,
     pub sample_rate: u32,
     pub channels: u16,
+    /// チャンネルの名前(ASIO の入力はドライバの名前・ほかは 2 ch なら L / R、それ以外は番号)。
+    pub channel_names: Vec<String>,
     pub host: HostPref,
     pub host_index: usize,
+}
+
+/// ドライバが名前を返さない装置のチャンネル名。
+pub fn generic_channel_names(channels: u16) -> Vec<String> {
+    if channels == 2 { vec!["L".into(), "R".into()] } else { (1..=channels).map(|c| c.to_string()).collect() }
 }
 
 pub struct DuplexStream {
@@ -41,6 +48,7 @@ impl DuplexStream {
                             name: d.name,
                             sample_rate: d.sample_rate,
                             channels: d.channels_in,
+                            channel_names: d.in_channel_names,
                             host: HostPref::Asio,
                             host_index: i,
                         })
@@ -82,6 +90,7 @@ impl DuplexStream {
                     name,
                     sample_rate: cfg.sample_rate(),
                     channels: cfg.channels(),
+                    channel_names: generic_channel_names(cfg.channels()),
                     host: pref,
                     host_index: idx,
                 });
@@ -107,6 +116,7 @@ impl DuplexStream {
                             name: d.name,
                             sample_rate: d.sample_rate,
                             channels: d.channels_out,
+                            channel_names: generic_channel_names(d.channels_out),
                             host: HostPref::Asio,
                             host_index: i,
                         })
@@ -148,6 +158,7 @@ impl DuplexStream {
                     name,
                     sample_rate: cfg.sample_rate(),
                     channels: cfg.channels(),
+                    channel_names: generic_channel_names(cfg.channels()),
                     host: pref,
                     host_index: idx,
                 });

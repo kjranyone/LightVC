@@ -8,6 +8,7 @@
 
 mod audio_playback;
 mod cli;
+mod denoise;
 mod enroll;
 mod file_pick;
 mod m3;

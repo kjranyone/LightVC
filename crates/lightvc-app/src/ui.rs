@@ -20,9 +20,9 @@ use crate::state::{self, AppState, RtControl, RtMetrics};
 use crate::voices::{VoiceEntry, VoiceGroup};
 
 mod enroll;
+mod pitch;
 
 const SR: u32 = 48_000;
-const SEMITONES: [(f32, &str); 4] = [(0.0, "+0"), (5.0, "+5"), (7.0, "+7"), (12.0, "+12")];
 const BUFFERS: [u32; 5] = [128, 240, 256, 512, 1024];
 const THREADS: [usize; 3] = [1, 2, 4];
 
@@ -96,6 +96,7 @@ pub struct LightVcUi {
     enroll_playing: Option<PathBuf>,
     /// 登録した音声の長さ(秒)の覚え。
     durations: HashMap<PathBuf, Option<f32>>,
+    pitch_focus: FocusHandle,
 }
 
 pub fn run(state: Arc<Mutex<AppState>>, demo: bool) -> anyhow::Result<()> {
@@ -152,6 +153,7 @@ pub fn run(state: Arc<Mutex<AppState>>, demo: bool) -> anyhow::Result<()> {
                         enroll_player: None,
                         enroll_playing: None,
                         durations: HashMap::new(),
+                        pitch_focus: cx.focus_handle(),
                     };
                     if ui.tab == Tab::Devices { ui.refresh_devices(); }
                     ui
@@ -260,11 +262,19 @@ impl LightVcUi {
         self.devices.outputs = outs;
     }
 
-    fn set_semitones(&mut self, k: f32, cx: &mut Context<Self>) {
-        let mut s = self.state.lock().unwrap();
-        s.settings.semitones = k;
-        if let Some(ref tx) = s.rt_control_tx { let _ = tx.send(RtControl::SetSemitones(k)); }
-        cx.notify();
+    fn denoise_group(&self, cur: crate::denoise::Denoise, cx: &mut Context<Self>) -> Div {
+        let all = crate::denoise::Denoise::ALL;
+        let mut group = m3::segments();
+        for (i, d) in all.into_iter().enumerate() {
+            group = group.child(
+                m3::segment(SharedString::from(format!("dn_{i}")), d.label(), cur == d, i == 0, i == all.len() - 1).on_click(cx.listener(move |this, _, _, cx| {
+                    this.state.lock().unwrap().denoise = d;
+                    state::send_control(&this.state, RtControl::SetDenoise(d));
+                    cx.notify();
+                })),
+            );
+        }
+        group
     }
 
     fn select_voice(&mut self, i: usize, cx: &mut Context<Self>) {
@@ -327,17 +337,14 @@ impl LightVcUi {
         }
         cx.notify();
     }
+}
 
-    fn pitch_group(&self, prefix: &'static str, semitones: f32, cx: &mut Context<Self>) -> Div {
-        let mut group = m3::segments();
-        for (i, (k, name)) in SEMITONES.iter().enumerate() {
-            let k = *k;
-            group = group.child(
-                m3::segment(SharedString::from(format!("{prefix}_{i}")), *name, semitones == k, i == 0, i == SEMITONES.len() - 1)
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_semitones(k, cx))),
-            );
-        }
-        group
+fn denoise_hint(d: crate::denoise::Denoise) -> &'static str {
+    use crate::denoise::Denoise;
+    match d {
+        Denoise::Off => "入力をそのまま変換します",
+        Denoise::Spectral => "ファン・空調・ヒスなど一定の雑音を抑えます(遅延 +5 ms・軽い)",
+        Denoise::Rnnoise => "物音・キーボードなど変化する雑音も抑えます。吐息やささやきも弱まることがあります(遅延 +15 ms)",
     }
 }
 
@@ -465,9 +472,9 @@ impl LightVcUi {
 
     fn render_realtime(&mut self, status: &str, cx: &mut Context<Self>) -> AnyElement {
         let m = self.metrics.clone();
-        let (has_engine, is_loading, cfg, voices, selected_voice, algo_samples) = {
+        let (has_engine, is_loading, cfg, voices, selected_voice, algo_samples, denoise) = {
             let s = self.state.lock().unwrap();
-            (s.model_loaded, s.loading, s.settings.clone(), s.voices.clone(), s.selected_voice, s.algo_latency_samples)
+            (s.model_loaded, s.loading, s.settings.clone(), s.voices.clone(), s.selected_voice, s.algo_latency_samples, s.denoise)
         };
         let force_bypass = !has_engine;
         let voice_name = selected_voice.and_then(|i| voices.get(i)).map(|v| v.name.clone());
@@ -542,8 +549,12 @@ impl LightVcUi {
             (buf_ms, buf_ms, 6.0)
         };
         let algo_ms = algo_samples as f32 / 48.0;
-        let total = (in_buf_ms + out_buf_ms + resamp_ms + algo_ms).max(0.001);
-        let parts: [(&str, f32, f32); 3] = [("バッファ(入出力)", in_buf_ms + out_buf_ms, 0.45), ("リサンプル", resamp_ms, 0.25), ("モデル", algo_ms, 1.0)];
+        let dn_ms = denoise.latency_samples() as f32 / 48.0;
+        let total = (in_buf_ms + out_buf_ms + resamp_ms + algo_ms + dn_ms).max(0.001);
+        let mut parts: Vec<(&str, f32, f32)> = vec![("バッファ(入出力)", in_buf_ms + out_buf_ms, 0.45), ("リサンプル", resamp_ms, 0.25), ("モデル", algo_ms, 1.0)];
+        if dn_ms > 0.0 {
+            parts.push(("ノイズ除去", dn_ms, 0.7));
+        }
         let mut bar = div().w_full().h(px(8.)).flex().gap(px(2.));
         let mut legend = div().flex().flex_wrap().gap_x_4().gap_y_1();
         for (name, ms, a) in parts {
@@ -611,8 +622,11 @@ impl LightVcUi {
         let tuning = m3::card_outlined()
             .child(div().flex().flex_wrap().items_center().gap_3()
                 .child(div().w(px(88.)).flex_none().child(field_label("ピッチ")))
-                .child(self.pitch_group("rt_pitch", cfg.semitones, cx))
-                .child(supporting("半音・固定")))
+                .child(self.pitch_control("rt_pitch", cfg.semitones, true, cx)))
+            .child(div().flex().flex_wrap().items_center().gap_3()
+                .child(div().w(px(88.)).flex_none().child(field_label("ノイズ除去")))
+                .child(self.denoise_group(denoise, cx))
+                .child(div().flex_1().min_w(px(200.)).child(supporting(denoise_hint(denoise)))))
             .child(div().flex().flex_wrap().items_center().gap_3()
                 .child(div().w(px(88.)).flex_none().child(field_label("バッファ")))
                 .child(buf_group)
@@ -777,7 +791,7 @@ impl LightVcUi {
                 cx.notify();
             })))
             .when(self.offline.converting, |s| s.child(m3::loading_indicator(40.)))
-            .child(div().flex().items_center().gap_3().child(field_label("ピッチ")).child(self.pitch_group("off_pitch", semitones, cx)))
+            .child(div().flex().items_center().gap_3().child(field_label("ピッチ")).child(self.pitch_control("off_pitch", semitones, false, cx)))
             .child(div().flex_1().min_w_0().child(supporting(hint)));
 
         let mut el = div().flex().flex_col().gap_4()
@@ -934,7 +948,7 @@ impl LightVcUi {
     // ===== デバイス =====
 
     fn render_devices(&mut self, _status: &str, cx: &mut Context<Self>) -> AnyElement {
-        let (sel_in_host, sel_in, sel_in_name, sel_out_host, sel_out, sel_out_name, sel_host) = {
+        let (sel_in_host, sel_in, sel_in_name, sel_out_host, sel_out, sel_out_name, sel_host, sel_ch) = {
             let s = self.state.lock().unwrap();
             (
                 s.selected_input_host,
@@ -944,6 +958,7 @@ impl LightVcUi {
                 s.selected_output,
                 s.selected_output_name.clone(),
                 s.selected_host,
+                s.selected_input_channel,
             )
         };
         let mut hosts: Vec<(String, lightvc_audio::HostPref)> = vec![("すべて".to_string(), lightvc_audio::HostPref::Default)];
@@ -993,6 +1008,7 @@ impl LightVcUi {
                         .on_click(cx.listener(move |this, _, _, cx| {
                             let mut s = this.state.lock().unwrap();
                             if input {
+                                s.selected_input_channel = None;
                                 if selected {
                                     s.selected_input_host = lightvc_audio::HostPref::Default;
                                     s.selected_input = None;
@@ -1036,11 +1052,50 @@ impl LightVcUi {
             .child(column("入力", "mic", true, &inputs, sel_in_host, sel_in, sel_in_name.as_deref(), cx))
             .child(column("出力", "volume_up", false, &outputs, sel_out_host, sel_out, sel_out_name.as_deref(), cx));
 
+        let sel_dev = inputs.iter().find(|d| match sel_in_name.as_deref() {
+            Some(name) => d.host == sel_in_host && d.name == name,
+            None => sel_in.is_some() && sel_in == Some(d.host_index) && (sel_in_host == lightvc_audio::HostPref::Default || d.host == sel_in_host),
+        });
+        let channels = sel_dev.filter(|d| d.channels > 1).map(|d| self.channel_card(d, sel_ch, cx));
+
         div().flex().flex_col().gap_4()
             .child(page_header("デバイス", "音声の入出力とホストを選びます"))
             .child(host_card)
             .child(lists)
+            .when_some(channels, |s, c| s.child(c))
             .into_any_element()
+    }
+
+    /// 選んだ入力装置のチャンネル(変換はモノラルの 1 本を使う)。ASIO は 1 本ずつ、ほかは平均か 1 本。
+    fn channel_card(&self, d: &lightvc_audio::DeviceInfo, sel: Option<u16>, cx: &mut Context<Self>) -> Div {
+        let asio = d.host == lightvc_audio::HostPref::Asio;
+        let mut opts: Vec<(Option<u16>, String)> = Vec::new();
+        if !asio {
+            opts.push((None, "平均".to_string()));
+        }
+        for (c, n) in d.channel_names.iter().enumerate() {
+            opts.push((Some(c as u16), n.clone()));
+        }
+        let cur = if asio { Some(sel.unwrap_or(0)) } else { sel };
+        let mut chips = div().flex().flex_wrap().gap_2();
+        for (i, (ch, name)) in opts.into_iter().enumerate() {
+            chips = chips.child(
+                m3::chip(SharedString::from(format!("in_ch_{i}")), name, cur == ch).on_click(cx.listener(move |this, _, _, cx| {
+                    this.state.lock().unwrap().selected_input_channel = ch;
+                    cx.notify();
+                })),
+            );
+        }
+        let hint = if asio {
+            "ASIO はチャンネルを 1 本ずつ選びます(マイクをつないだ端子)。"
+        } else {
+            "変換はモノラルです。ステレオの装置は、マイクが入っている側(L / R)を選ぶか、両方の平均を使います。"
+        };
+        m3::card_outlined()
+            .child(div().flex().items_center().gap_2().child(icon("mic", 22., c::on_surface_variant())).child(section_title("入力チャンネル"))
+                .child(div().flex_1()).child(supporting(d.name.clone())))
+            .child(chips)
+            .child(supporting(format!("{hint}変換中に替えたときは、停止して開始し直すと反映されます。")))
     }
 
     // ===== クレジット =====
@@ -1091,8 +1146,9 @@ impl LightVcUi {
                 "Irodori-TTS-v4.1 Anime (phasefield-audio / MIT) と Irodori-TTS-v4.1-Small (Aratako / MIT) で作った架空の声 30 人(女性 15・男性 15)。実在の人物の録音は使っていません",
             ));
 
-        let third_party_items: [(&str, &str); 5] = [
+        let third_party_items: [(&str, &str); 6] = [
             ("GPUI (Zed Industries / Apache-2.0)", "デスクトップ GUI フレームワーク"),
+            ("RNNoise (Xiph.Org・nnnoiseless / BSD-3-Clause)", "入力のノイズ除去「RNNoise」(学習済みの重みを含む・選んだときだけ使う)。「定常の雑音」は LightVC 自作のスペクトルのフィルタ"),
             ("Material Symbols Rounded (Google / Apache-2.0)", "UI アイコン (assets/icons/*.svg)"),
             ("WORLD (M. Morise / modified BSD)", "スペクトル包絡処理 (crates/lightvc-core/src/cheaptrick.rs)"),
             ("音声 I/O (cpal・rubato・rtrb・hound・claxon)", "WASAPI / リサンプリング / リングバッファ / FLAC の読み込み。ASIO は Windows ネイティブ COM 連携を使用し、Steinberg ASIO SDK は同梱していません"),

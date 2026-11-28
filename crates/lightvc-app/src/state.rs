@@ -52,8 +52,10 @@ pub enum RtControl {
     /// Fixed capture/playback buffer size in frames. Applied to the next
     /// engine Start; the UI re-arms a running stream so it takes effect.
     SetBufferSize(u32),
-    /// 固定の半音(運用 = 0 / 5 / 7 / 12)。
+    /// 固定の半音(−12〜+12)。
     SetSemitones(f32),
+    /// 入力のノイズ除去(変換の前)。
+    SetDenoise(crate::denoise::Denoise),
 }
 
 /// SnvStream の部品の書き出し(training/export_{pfront,snv_model,rvoc}.py)と登録。
@@ -130,6 +132,10 @@ pub struct AppState {
     pub selected_input_host: HostPref,
     pub selected_input: Option<usize>,
     pub selected_input_name: Option<String>,
+    /// 入力チャンネル(0 始まり・None = ASIO は最初・ほかは全チャンネルの平均)。装置を替えると None に戻す。
+    pub selected_input_channel: Option<u16>,
+    /// 入力のノイズ除去(リアルタイムの変換の前)。
+    pub denoise: crate::denoise::Denoise,
     pub selected_output_host: HostPref,
     pub selected_output: Option<usize>,
     pub selected_output_name: Option<String>,
@@ -138,6 +144,16 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// 選んでいる入力(装置とチャンネル)。
+    pub fn input_endpoint(&self) -> AudioEndpoint {
+        AudioEndpoint {
+            host: self.selected_input_host,
+            device_index: self.selected_input,
+            device_name: self.selected_input_name.clone(),
+            channel: self.selected_input_channel,
+        }
+    }
+
     pub fn new() -> Self {
         // 同梱のプリセットを最初から選べるようにして、先頭の声を選んでおく
         let voices = crate::voices::bundled_voices();
@@ -158,6 +174,8 @@ impl AppState {
             selected_input_host: HostPref::Default,
             selected_input: None,
             selected_input_name: None,
+            selected_input_channel: None,
+            denoise: crate::denoise::Denoise::Off,
             selected_output_host: HostPref::Default,
             selected_output: None,
             selected_output_name: None,
@@ -201,6 +219,7 @@ pub fn ensure_rt_thread(state: &Arc<Mutex<AppState>>) {
     }
     let (control_tx, control_rx) = unbounded();
     let (metrics_tx, metrics_rx) = unbounded();
+    let _ = control_tx.send(RtControl::SetDenoise(s.denoise));
     s.rt_control_tx = Some(control_tx);
     s.rt_metrics_rx = Some(metrics_rx);
     s.rt_initialized = true;
@@ -259,15 +278,12 @@ pub fn send_control(state: &Arc<Mutex<AppState>>, ctrl: RtControl) {
 pub fn start_msg(state: &Arc<Mutex<AppState>>) -> RtControl {
     let s = state.lock().unwrap();
     RtControl::StartWithDevices {
-        input: AudioEndpoint {
-            host: s.selected_input_host,
-            device_index: s.selected_input,
-            device_name: s.selected_input_name.clone(),
-        },
+        input: s.input_endpoint(),
         output: AudioEndpoint {
             host: s.selected_output_host,
             device_index: s.selected_output,
             device_name: s.selected_output_name.clone(),
+            channel: None,
         },
     }
 }

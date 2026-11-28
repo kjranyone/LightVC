@@ -18,8 +18,13 @@ use nice_plug_egui::{create_egui_editor, EguiState};
 
 const SR: usize = 48_000;
 const HOP: usize = SnvStream::BLOCK;
-/// 固定の半音(運用 = 0 / 5 / 7 / 12)。Pitch パラメータはこの添字。
-const PITCH: [i32; 4] = [0, 5, 7, 12];
+/// 固定の半音の範囲(−12〜+12)。
+const PITCH_MIN: i32 = SnvStream::SEMITONES_MIN as i32;
+const PITCH_MAX: i32 = SnvStream::SEMITONES_MAX as i32;
+
+fn pitch_text(k: i32) -> String {
+    if k > 0 { format!("+{k}") } else { k.to_string() }
+}
 
 // ---------------------------------------------------------------------------
 // Parameters
@@ -30,7 +35,7 @@ struct LightVcParams {
     #[id = "bypass"]
     pub bypass: BoolParam,
 
-    #[id = "pitch"]
+    #[id = "semitones"]
     pub pitch: IntParam,
 
     #[id = "mix"]
@@ -68,8 +73,10 @@ impl Default for LightVcParams {
     fn default() -> Self {
         Self {
             bypass: BoolParam::new("Bypass", false),
-            pitch: IntParam::new("Pitch", 0, IntRange::Linear { min: 0, max: 3 })
-                .with_value_to_string(Arc::new(|v| format!("+{}", PITCH[v.clamp(0, 3) as usize]))),
+            pitch: IntParam::new("Pitch", 0, IntRange::Linear { min: PITCH_MIN, max: PITCH_MAX })
+                .with_unit(" st")
+                .with_value_to_string(Arc::new(pitch_text))
+                .with_string_to_value(Arc::new(|s| s.trim().trim_end_matches("st").trim().trim_start_matches('+').replace('−', "-").parse().ok())),
             mix: FloatParam::new(
                 "Mix",
                 100.0,
@@ -114,7 +121,7 @@ impl LightVcParams {
             operator: lines(&self.operator_wavs),
             target: lines(&self.target_wavs),
             threads: *self.threads.lock().unwrap(),
-            semitones: PITCH[self.pitch.value().clamp(0, 3) as usize] as f32,
+            semitones: self.pitch.value().clamp(PITCH_MIN, PITCH_MAX) as f32,
         }
     }
 }
@@ -410,27 +417,27 @@ impl Plugin for LightVcPlugin {
 
                 ui.add_space(6.0);
 
-                // Pitch buttons (fixed semitones)
+                // Pitch (fixed semitones, -12..=+12)
                 ui.label(egui::RichText::new("Pitch").size(11.0).color(TEXT_DIM));
                 ui.horizontal(|ui| {
                     let cur = params.pitch.value();
-                    for (i, k) in PITCH.iter().enumerate() {
-                        let selected = cur == i as i32;
-                        let btn = egui::Button::new(
-                            egui::RichText::new(format!("+{k}")).size(11.0).color(if selected {
-                                TEXT
-                            } else {
-                                TEXT_DIM
-                            }),
-                        )
-                        .fill(if selected { PINK } else { PANEL })
-                        .stroke(egui::Stroke::new(
-                            1.0,
-                            if selected { PINK_BRIGHT } else { LAVENDER },
-                        ));
-                        if ui.add(btn).clicked() {
-                            setter.set_parameter(&params.pitch, i as i32);
-                        }
+                    let set = |k: i32| setter.set_parameter(&params.pitch, k.clamp(PITCH_MIN, PITCH_MAX));
+                    if ui.add_enabled(cur > PITCH_MIN, egui::Button::new("-")).clicked() {
+                        set(cur - 1);
+                    }
+                    let mut v = cur;
+                    let drag = egui::DragValue::new(&mut v)
+                        .range(PITCH_MIN..=PITCH_MAX)
+                        .speed(0.1)
+                        .custom_formatter(|n, _| pitch_text(n as i32));
+                    if ui.add(drag).changed() {
+                        set(v);
+                    }
+                    if ui.add_enabled(cur < PITCH_MAX, egui::Button::new("+")).clicked() {
+                        set(cur + 1);
+                    }
+                    if ui.add_enabled(cur != 0, egui::Button::new("0")).clicked() {
+                        set(0);
                     }
                 });
 
@@ -582,7 +589,7 @@ impl Plugin for LightVcPlugin {
         let bypass = self.params.bypass.value() || !self.shared.ready.load(Ordering::Relaxed);
         self.shared
             .semitones
-            .store(PITCH[self.params.pitch.value().clamp(0, 3) as usize], Ordering::Relaxed);
+            .store(self.params.pitch.value().clamp(PITCH_MIN, PITCH_MAX), Ordering::Relaxed);
 
         let (Some(tx), Some(rx)) = (self.capture_tx.as_mut(), self.playback_rx.as_mut()) else {
             return ProcessStatus::Normal;

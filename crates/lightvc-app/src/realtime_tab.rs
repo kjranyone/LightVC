@@ -6,6 +6,7 @@ use crossbeam_channel::{Receiver, Sender};
 use lightvc_audio::AudioEndpoint;
 use lightvc_core::snv_stream::SnvStream;
 
+use crate::denoise::Denoiser;
 use crate::state::{RtControl, RtMetrics};
 
 const SR: usize = 48_000;
@@ -32,6 +33,8 @@ pub fn inference_loop(control_rx: Receiver<RtControl>, metrics_tx: Sender<RtMetr
     let mut down: Option<lightvc_audio::RateConv> = None;
     let (mut cap, mut in48, mut out48): (Vec<f32>, Vec<f32>, Vec<f32>) = (Vec::new(), Vec::new(), Vec::new());
     let mut out = vec![0f32; HOP];
+    let mut blk = vec![0f32; HOP];
+    let mut dn = Denoiser::new(crate::denoise::Denoise::Off);
     let (mut in_rms, mut out_rms, mut rtf) = (0.0f32, 0.0f32, 0.0f32);
     let mut algo_ms = SnvStream::LATENCY_SAMPLES as f32 / 48.0;
     let mut times: Vec<f64> = Vec::new();
@@ -96,6 +99,11 @@ pub fn inference_loop(control_rx: Receiver<RtControl>, metrics_tx: Sender<RtMetr
                 RtControl::Bypass(b) => bypass = b,
                 RtControl::Mute(m) => muted = m,
                 RtControl::SetBufferSize(n) => buffer_frames = n,
+                RtControl::SetDenoise(d) => {
+                    if dn.kind() != d {
+                        dn = Denoiser::new(d);
+                    }
+                }
                 RtControl::SetSemitones(k) => {
                     if let Some(s) = stream.as_mut() {
                         s.set_semitones(k);
@@ -152,7 +160,9 @@ pub fn inference_loop(control_rx: Receiver<RtControl>, metrics_tx: Sender<RtMetr
 
         while in48.len() >= HOP {
             let t0 = Instant::now();
-            let blk = &in48[..HOP];
+            blk.copy_from_slice(&in48[..HOP]);
+            dn.process(&mut blk);
+            let blk = &blk[..];
             let mut converted = false;
             if !bypass && let Some(s) = stream.as_mut() {
                 s.process_block(blk, &mut out);
@@ -223,7 +233,7 @@ pub fn inference_loop(control_rx: Receiver<RtControl>, metrics_tx: Sender<RtMetr
         let _ = metrics_tx.send(RtMetrics {
             input_rms: in_rms,
             output_rms: out_rms,
-            latency_ms: in_buf_ms + out_buf_ms + resamp_ms + algo_ms,
+            latency_ms: in_buf_ms + out_buf_ms + resamp_ms + algo_ms + dn.kind().latency_samples() as f32 / 48.0,
             rtf,
             disconnected: false,
             error: None,

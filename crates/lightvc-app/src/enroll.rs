@@ -116,10 +116,7 @@ impl Drop for Session {
 
 /// 選んでいる入力装置(未選択なら既定)を開いて見張りを始める。
 pub fn open(state: Arc<Mutex<AppState>>) -> Session {
-    let ep = {
-        let s = state.lock().unwrap();
-        AudioEndpoint { host: s.selected_input_host, device_index: s.selected_input, device_name: s.selected_input_name.clone() }
-    };
+    let ep = state.lock().unwrap().input_endpoint();
     let live = Arc::new(Mutex::new(Live::default()));
     let (record, abort, stop) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
     let session = Session { live: live.clone(), record: record.clone(), abort: abort.clone(), stop: stop.clone() };
@@ -133,7 +130,10 @@ fn db(x: f32) -> f32 {
 
 fn run(state: Arc<Mutex<AppState>>, ep: AudioEndpoint, live: Arc<Mutex<Live>>, record: Arc<AtomicBool>, abort: Arc<AtomicBool>, stop: Arc<AtomicBool>) {
     let fail = |msg: String| live.lock().unwrap().phase = Phase::Failed(msg);
-    let device = lightvc_audio::engine::input_device_name(&ep).unwrap_or_else(|_| "既定の入力装置".to_string());
+    let mut device = lightvc_audio::engine::input_device_name(&ep).unwrap_or_else(|_| "既定の入力装置".to_string());
+    if let Some(ch) = lightvc_audio::engine::input_channel_label(&ep) {
+        device = format!("{device}・{ch}");
+    }
     let (engine, mut rx) = match AudioEngine::start_capture_only(ep, 48_000, 240) {
         Ok(v) => v,
         Err(e) => return fail(format!("入力装置「{device}」を開けません: {e}")),

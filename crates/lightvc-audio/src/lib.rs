@@ -13,4 +13,4 @@ pub mod stream;
 pub use engine::{AudioBuffers, AudioEndpoint, AudioEngine};
 pub use host::HostPref;
 pub use resample::RateConv;
-pub use stream::{DeviceInfo, DuplexStream};
+pub use stream::{generic_channel_names, DeviceInfo, DuplexStream};

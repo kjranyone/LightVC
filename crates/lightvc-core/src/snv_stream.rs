@@ -170,6 +170,9 @@ pub struct SnvStream {
 impl SnvStream {
     pub const BLOCK: usize = HOP;
     pub const LATENCY_SAMPLES: usize = HOP + 2 * HOP;
+    /// 選べる固定の半音の範囲。
+    pub const SEMITONES_MIN: f32 = -12.0;
+    pub const SEMITONES_MAX: f32 = 12.0;
 
     pub fn load(front: &Path, model: &Path, voc: &Path) -> Result<Self> {
         let man: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(voc.join("manifest.json")).context("rvoc の manifest")?)?;
@@ -220,9 +223,9 @@ impl SnvStream {
         self.gate.as_ref().is_some_and(|g| g.last().1)
     }
 
-    /// 固定の半音(運用 = +0 / +5 / +7 / +12)。
+    /// 固定の半音(利用者が決める・SEMITONES_MIN〜SEMITONES_MAX に収める)。
     pub fn set_semitones(&mut self, k: f32) {
-        self.k = k;
+        self.k = k.clamp(Self::SEMITONES_MIN, Self::SEMITONES_MAX);
     }
 
     /// 発話の波形(48 kHz)を新しい前段(gated = 門も新しく通す)に通した特徴。固定の窓の包絡は門に依らず元の波形から(発話ごとに新しい流し)。

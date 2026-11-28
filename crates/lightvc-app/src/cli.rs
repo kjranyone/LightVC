@@ -73,12 +73,18 @@ pub struct SnvModel {
     /// 目標の参照(目標の声の普通の発話・計 20 秒以上・複数可。同梱のプリセットは `voices/<id>.flac`)
     #[arg(long, required = true, num_args = 1..)]
     pub target: Vec<std::path::PathBuf>,
-    /// 固定の半音(運用 = 0 / 5 / 7 / 12)
-    #[arg(long, default_value_t = 0.0)]
+    /// 固定の半音(−12〜+12・負は `--semitones=-5` の形で書く)
+    #[arg(long, default_value_t = 0.0, value_parser = semitones)]
     pub semitones: f32,
     /// 変換網のスレッド数(1 = 全部逐次・2 / 4 = K3G の組の分割 + 門と描画器の並列・実時間には 4)
     #[arg(long, default_value_t = 4)]
     pub threads: usize,
+}
+
+fn semitones(v: &str) -> std::result::Result<f32, String> {
+    let k: f32 = v.parse().map_err(|_| format!("数値ではありません: {v}"))?;
+    let (lo, hi) = (lightvc_core::snv_stream::SnvStream::SEMITONES_MIN, lightvc_core::snv_stream::SnvStream::SEMITONES_MAX);
+    if (lo..=hi).contains(&k) { Ok(k) } else { Err(format!("{lo}〜{hi} の範囲で指定します: {v}")) }
 }
 
 impl SnvModel {
@@ -145,6 +151,12 @@ pub struct RealtimeSnvCmd {
     /// 入力装置(`devices` の一覧の番号・未指定 = 既定)
     #[arg(long)]
     pub input: Option<usize>,
+    /// 入力のノイズ除去(off / spectral = 定常の雑音・+5 ms / rnnoise = RNNoise・+15 ms)
+    #[arg(long, default_value = "off", value_parser = crate::denoise::Denoise::parse)]
+    pub denoise: crate::denoise::Denoise,
+    /// 入力チャンネル(1 始まり・`devices` に名前が出る。未指定 = ASIO は 1・ほかは全チャンネルの平均)
+    #[arg(long, value_parser = clap::value_parser!(u16).range(1..))]
+    pub input_channel: Option<u16>,
     /// 出力装置(`devices` の一覧の番号・未指定 = 既定)
     #[arg(long)]
     pub output: Option<usize>,
@@ -163,6 +175,10 @@ pub fn run_devices() -> Result<()> {
         println!("host {name}:");
         for (i, d) in inputs.iter().enumerate() {
             println!("  in  {i}: {} ({}Hz, {}ch)", d.name, d.sample_rate, d.channels);
+            if d.channels > 1 {
+                let names: Vec<String> = d.channel_names.iter().enumerate().map(|(c, n)| format!("{}={n}", c + 1)).collect();
+                println!("          --input-channel {}", names.join(" "));
+            }
         }
         for (i, d) in outputs.iter().enumerate() {
             println!("  out {i}: {} ({}Hz, {}ch)", d.name, d.sample_rate, d.channels);
@@ -243,8 +259,8 @@ pub fn run_realtime_snv(cmd: RealtimeSnvCmd) -> Result<()> {
     let in_host = lightvc_audio::HostPref::parse(cmd.input_host.as_deref().unwrap_or(&cmd.host))?;
     let out_host = lightvc_audio::HostPref::parse(cmd.output_host.as_deref().unwrap_or(&cmd.host))?;
     let (engine, mut io) = lightvc_audio::AudioEngine::start_endpoints(
-        lightvc_audio::AudioEndpoint { host: in_host, device_index: cmd.input, device_name: None },
-        lightvc_audio::AudioEndpoint { host: out_host, device_index: cmd.output, device_name: None },
+        lightvc_audio::AudioEndpoint { host: in_host, device_index: cmd.input, device_name: None, channel: cmd.input_channel.map(|c| c - 1) },
+        lightvc_audio::AudioEndpoint { host: out_host, device_index: cmd.output, device_name: None, channel: None },
         SR as u32,
         cmd.buffer,
     )?;
@@ -254,8 +270,8 @@ pub fn run_realtime_snv(cmd: RealtimeSnvCmd) -> Result<()> {
     let mk = |a: usize, b: usize| if a == b { Ok(None) } else { lightvc_audio::RateConv::new(a, b, HOP).map(Some) };
     let mut up = mk(csr, SR)?;
     let mut down = mk(SR, psr)?;
-    println!("snv realtime | host {host_name} | in {csr} Hz・out {psr} Hz{} | algorithmic latency {:.1} ms(ブロック + 出力部)+ resampler + device buffers | 半音 {:+} | スレッド {}",
-             if conv { " (48 kHz へ/からの変換)" } else { "" }, vc.latency_samples() as f64 / 48.0, cmd.model.semitones, cmd.model.threads);
+    println!("snv realtime | host {host_name} | in {csr} Hz・out {psr} Hz{} | algorithmic latency {:.1} ms(ブロック + 出力部)+ ノイズ除去 {:.1} ms + resampler + device buffers | 半音 {:+} | スレッド {}",
+             if conv { " (48 kHz へ/からの変換)" } else { "" }, vc.latency_samples() as f64 / 48.0, cmd.denoise.latency_samples() as f64 / 48.0, cmd.model.semitones, cmd.model.threads);
     for _ in 0..1024 {
         let _ = io.playback.push(0.0);
     }
@@ -263,6 +279,8 @@ pub fn run_realtime_snv(cmd: RealtimeSnvCmd) -> Result<()> {
     let mut in48: Vec<f32> = Vec::new();
     let mut out48: Vec<f32> = Vec::new();
     let mut out = vec![0f32; HOP];
+    let mut blk = vec![0f32; HOP];
+    let mut dn = crate::denoise::Denoiser::new(cmd.denoise);
     let mut times: Vec<f64> = Vec::new();
     let t_start = std::time::Instant::now();
     let mut last_report = std::time::Instant::now();
@@ -293,7 +311,9 @@ pub fn run_realtime_snv(cmd: RealtimeSnvCmd) -> Result<()> {
         }
         while in48.len() >= HOP {
             let t0 = std::time::Instant::now();
-            vc.process_block(&in48[..HOP], &mut out);
+            blk.copy_from_slice(&in48[..HOP]);
+            dn.process(&mut blk);
+            vc.process_block(&blk, &mut out);
             times.push(t0.elapsed().as_secs_f64() * 1000.0);
             in48.drain(..HOP);
             out48.extend(out.iter().map(|v| v.clamp(-1.0, 1.0)));

@@ -44,6 +44,7 @@ docs/screenshots/*.png
 !docs/screenshots/.gitkeep
 
 # ===== Temporary files =====
+stub/
 *.log
 *.tmp
 nul
