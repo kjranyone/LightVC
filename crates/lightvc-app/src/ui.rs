@@ -327,6 +327,19 @@ fn file_name(p: &std::path::Path) -> String {
     p.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_else(|| p.display().to_string())
 }
 
+/// 書き出しの場所を「親/名前」で示す(results/snv_p126_k3g16kv_export・snv_p123_s/export_20k・models/rvoc3hi)。
+fn export_name(p: &std::path::Path) -> String {
+    let mut it = p.components().rev().filter_map(|c| match c {
+        std::path::Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+        _ => None,
+    });
+    match (it.next(), it.next()) {
+        (Some(n), Some(d)) => format!("{d}/{n}"),
+        (Some(n), None) => n,
+        _ => p.display().to_string(),
+    }
+}
+
 fn stop_player(slot: &mut Option<AudioPlayer>) {
     if let Some(p) = slot.take() { p.stop(); }
 }
@@ -432,10 +445,11 @@ impl LightVcUi {
 
     fn render_realtime(&mut self, status: &str, cx: &mut Context<Self>) -> AnyElement {
         let m = self.metrics.clone();
-        let (has_engine, is_loading, cfg, voices, selected_voice, rec) = {
+        let (has_engine, is_loading, cfg, voices, selected_voice, rec, algo_samples) = {
             let s = self.state.lock().unwrap();
             (s.model_loaded, s.loading, s.settings.clone(), s.voices.clone(), s.selected_voice,
-             s.operator_rec.as_ref().map(|r| r.seconds.saturating_sub(r.started.elapsed().as_secs() as u32)))
+             s.operator_rec.as_ref().map(|r| r.seconds.saturating_sub(r.started.elapsed().as_secs() as u32)),
+             s.algo_latency_samples)
         };
         let force_bypass = !has_engine;
         let voice_name = selected_voice.and_then(|i| voices.get(i)).map(|v| v.name.clone());
@@ -509,7 +523,7 @@ impl LightVcUi {
         } else {
             (buf_ms, buf_ms, 6.0)
         };
-        let algo_ms = lightvc_core::snv_stream::SnvStream::LATENCY_SAMPLES as f32 / 48.0;
+        let algo_ms = algo_samples as f32 / 48.0;
         let total = (in_buf_ms + out_buf_ms + resamp_ms + algo_ms).max(0.001);
         let parts: [(&str, f32, f32); 3] = [("バッファ(入出力)", in_buf_ms + out_buf_ms, 0.45), ("リサンプル", resamp_ms, 0.25), ("モデル", algo_ms, 1.0)];
         let mut bar = div().w_full().h(px(8.)).flex().gap(px(2.));
@@ -652,7 +666,7 @@ impl LightVcUi {
             paths = paths.child(
                 div().h(px(40.)).flex().items_center().gap_2()
                     .child(div().w(px(48.)).flex_none().label_m().text_color(c::on_surface_variant()).child(label))
-                    .child(div().flex_1().min_w_0().body_m().text_color(c::on_surface()).truncate().child(file_name(std::path::Path::new(&cur))))
+                    .child(div().flex_1().min_w_0().body_m().text_color(c::on_surface()).truncate().child(export_name(std::path::Path::new(&cur))))
                     .child(m3::icon_button(SharedString::from(format!("pick_{id}")), "folder_open", false, c::on_surface_variant()).on_click(cx.listener(move |this, _, _, cx| {
                         match id {
                             "front" => this.picks.front.open(),
@@ -1084,11 +1098,11 @@ impl LightVcUi {
                 "Irodori-TTS-v4.1-Small (Aratako / MIT)、WORLD (M. Morise / modified BSD)、非音声音源 (MUSAN・FMA・FSD50K の CC0 / Public Domain / CC BY のみ・音声除去済み。個別帰属は同梱の ATTRIBUTION_SOURCES.md)",
             ))
             .child(row(
-                "変換モデル (models/k3g)",
+                "変換モデル K3G-v4 (models/k3g)",
                 "Irodori-TTS-v4.1-Small (Aratako / MIT・VoiceDesign による架空の 564 話者、実在話者の参照なし。台詞出典の非公開データセットは非同梱)",
             ))
             .child(row(
-                "出力部ボコーダ (models/rvoc3hi)",
+                "出力部 snv_p123_s (models/rvoc3hi)",
                 "Irodori-TTS-v4.1-Small (Aratako / MIT・上記架空 564 話者) による追い学習。基盤重みは非公開の音声データセット (非同梱) および同音声を参照とした Irodori-TTS-600M-v3-VoiceDesign (Aratako / MIT)",
             ))
             .child(row(

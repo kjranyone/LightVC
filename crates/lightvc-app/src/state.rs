@@ -68,12 +68,42 @@ pub struct SnvSettings {
     pub semitones: f32,
 }
 
+/// 製品の書き出し(配布物の models/ の名前, 作業ツリーの results/ の名前)。
+pub const EXPORTS: [(&str, &str); 3] = [
+    ("front_gate", "snv_p126_gate_export"),
+    ("k3g", "snv_p126_k3g16kv_export"),
+    ("rvoc3hi", "snv_p123_s/export_20k"),
+];
+
+/// 書き出しの既定の場所: 実行形式の隣(と 3 つ上まで)の models/ → %APPDATA%\LightVC\models → カレントの results/ → 実行形式の上の results/。見つからなければ results/ の相対パス。
+pub fn resolve_export(sub: &str, dev: &str) -> String {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        let mut d = exe.parent().map(Path::to_path_buf);
+        for _ in 0..4 {
+            let Some(p) = d else { break };
+            d = p.parent().map(Path::to_path_buf);
+            roots.push(p);
+        }
+    }
+    let app = std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("LightVC"));
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let models = roots.iter().chain(app.iter()).map(|r| r.join("models").join(sub));
+    let results = std::iter::once(&cwd).chain(roots.iter()).map(|r| r.join("results").join(dev));
+    models
+        .chain(results)
+        .find(|d| d.join("manifest.json").is_file())
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| format!("results/{dev}"))
+}
+
 impl Default for SnvSettings {
     fn default() -> Self {
+        let [f, m, v] = EXPORTS.map(|(sub, dev)| resolve_export(sub, dev));
         Self {
-            front: "results/snv_p126_gate_export".into(),
-            model: "results/snv_p126_k3g16kv_export".into(),
-            voc: "results/snv_p123_s/export_20k".into(),
+            front: f,
+            model: m,
+            voc: v,
             operator: Vec::new(),
             threads: 4,
             semitones: 0.0,
@@ -86,6 +116,8 @@ pub struct AppState {
     pub model_loaded: bool,
     pub loading: bool,
     pub settings: SnvSettings,
+    /// 読み込んだ経路のアルゴリズム遅延(標本・48 kHz。未読み込みは製品の既定)。
+    pub algo_latency_samples: usize,
     pub voices: Vec<VoiceEntry>,
     pub selected_voice: Option<usize>,
     pub error: Option<String>,
@@ -116,6 +148,7 @@ impl AppState {
             model_loaded: false,
             loading: false,
             settings: SnvSettings::default(),
+            algo_latency_samples: SnvStream::LATENCY_SAMPLES,
             voices,
             selected_voice,
             error: None,
@@ -213,9 +246,11 @@ pub fn load_engine(state: &Arc<Mutex<AppState>>) {
         s.loading = false;
         match r {
             Ok(engine) => {
+                let lat = engine.latency_samples();
                 let sent = s.rt_control_tx.as_ref().map(|tx| tx.send(RtControl::Stream(Box::new(engine))).is_ok()).unwrap_or(false);
                 if sent {
                     s.model_loaded = true;
+                    s.algo_latency_samples = lat;
                     s.status = format!("モデルを読み込みました(登録 {:.1} 秒)", t0.elapsed().as_secs_f64());
                 } else {
                     s.error = Some("読み込みに失敗: リアルタイムの処理が止まっています".to_string());

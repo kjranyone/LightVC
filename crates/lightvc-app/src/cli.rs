@@ -1,6 +1,6 @@
 //! CLI argument parsing and subcommand dispatch.
 //!
-//! 製品の経路は paper_snv の段 P(前段 v3 → E / C → rvoc3hi・`lightvc_core::snv_stream::SnvStream`)だけ。
+//! 製品の経路は paper_snv の段 P126(門と重みつきの前段 v4_dual → K3G-v4 → 出力部 snv_p123_s・`lightvc_core::snv_stream::SnvStream`)だけ。
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -18,7 +18,7 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// paper_snv の製品経路(前段 v3 → E / C → rvoc3hi)のオフライン変換: WAV(48 kHz)→ WAV。240 サンプル単位の流しをそのまま通す。
+    /// paper_snv の製品経路(段 P126: 前段 v4_dual → K3G-v4 → snv_p123_s)のオフライン変換: WAV(48 kHz)→ WAV。240 サンプル単位の流しをそのまま通す。
     Snv(SnvCmd),
     /// paper_snv の製品経路のリアルタイム変換(マイク → 48 kHz・240 サンプル単位 → スピーカー)。
     RealtimeSnv(RealtimeSnvCmd),
@@ -45,14 +45,22 @@ pub fn run_gui(cmd: GuiCmd) -> Result<()> {
     crate::ui::run(state, cmd.demo)
 }
 
-/// paper_snv の製品経路の部品(training/export_{pfront,snv_model,rvoc}.py の出力)と登録の波形(48 kHz)。
+fn default_export(i: usize) -> std::path::PathBuf {
+    let (sub, dev) = crate::state::EXPORTS[i];
+    crate::state::resolve_export(sub, dev).into()
+}
+
+/// paper_snv の製品経路の部品(training/export_{snv_gate,snv_k3g,rvoc}.py の出力)と登録の波形(48 kHz)。
 #[derive(Parser, Clone)]
 pub struct SnvModel {
-    #[arg(long, default_value = "results/snv_p126_gate_export")]
+    /// 前段と門(既定 = 実行形式の隣の models/front_gate → results/snv_p126_gate_export)
+    #[arg(long, default_value_os_t = default_export(0))]
     pub front: std::path::PathBuf,
-    #[arg(long, default_value = "results/snv_p126_k3g16kv_export")]
+    /// 変換網 K3G-v4(既定 = models/k3g → results/snv_p126_k3g16kv_export)
+    #[arg(long, default_value_os_t = default_export(1))]
     pub model: std::path::PathBuf,
-    #[arg(long, default_value = "results/snv_p123_s/export_20k")]
+    /// 出力部 snv_p123_s(既定 = models/rvoc3hi → results/snv_p123_s/export_20k)
+    #[arg(long, default_value_os_t = default_export(2))]
     pub voc: std::path::PathBuf,
     /// 操作者の登録(自分の普通の発話・計 30 秒程度・複数可)
     #[arg(long, required = true, num_args = 1..)]
@@ -63,7 +71,7 @@ pub struct SnvModel {
     /// 固定の半音(運用 = 0 / 5 / 7 / 12)
     #[arg(long, default_value_t = 0.0)]
     pub semitones: f32,
-    /// E / C のスレッド数(1 = 全部逐次・2 / 4 = 出力チャンネルの分割 + 描画器の並列)
+    /// 変換網のスレッド数(1 = 全部逐次・2 / 4 = K3G の組の分割 + 門と描画器の並列・実時間には 4)
     #[arg(long, default_value_t = 4)]
     pub threads: usize,
 }
