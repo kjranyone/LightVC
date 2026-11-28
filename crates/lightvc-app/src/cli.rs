@@ -37,6 +37,11 @@ pub struct GuiCmd {
 }
 
 pub fn run_gui(cmd: GuiCmd) -> Result<()> {
+    // 多重起動の禁止(デモ表示は開発の撮影で本番と並べて使うので除く)
+    if !cmd.demo && !crate::single_instance::acquire() {
+        crate::single_instance::notify_running();
+        return Ok(());
+    }
     println!("LightVC GUI starting...");
     let state = std::sync::Arc::new(std::sync::Mutex::new(crate::state::AppState::new()));
     if cmd.demo {

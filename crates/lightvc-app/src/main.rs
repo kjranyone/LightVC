@@ -13,6 +13,7 @@ mod file_pick;
 mod m3;
 mod offline_tab;
 mod realtime_tab;
+mod single_instance;
 mod state;
 mod ui;
 mod voices;
