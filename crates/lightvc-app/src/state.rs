@@ -126,8 +126,6 @@ pub struct AppState {
     pub rt_control_tx: Option<Sender<RtControl>>,
     pub rt_metrics_rx: Option<Receiver<RtMetrics>>,
     pub rt_initialized: bool,
-    /// 進行中の操作者の録音(無し = 通常)。
-    pub operator_rec: Option<OperatorRecording>,
     /// App-wide audio device selection (None = system default).
     pub selected_input_host: HostPref,
     pub selected_input: Option<usize>,
@@ -157,7 +155,6 @@ impl AppState {
             rt_control_tx: None,
             rt_metrics_rx: None,
             rt_initialized: false,
-            operator_rec: None,
             selected_input_host: HostPref::Default,
             selected_input: None,
             selected_input_name: None,
@@ -169,15 +166,6 @@ impl AppState {
     }
 }
 
-/// 進行中の操作者の録音(GUI からマイク録音・30 秒ほど)。
-pub struct OperatorRecording {
-    pub started: std::time::Instant,
-    pub seconds: u32,
-    pub path: PathBuf,
-    /// キャンセルの合図(録音の糸が每周確認する)。
-    pub cancel: Arc<std::sync::atomic::AtomicBool>,
-}
-
 /// WAV / FLAC を読み、48 kHz のモノラルにする。
 pub fn load_48k(path: &Path) -> anyhow::Result<Vec<f32>> {
     let (x, sr) = crate::audio_playback::load_audio_mono(path)?;
@@ -186,7 +174,7 @@ pub fn load_48k(path: &Path) -> anyhow::Result<Vec<f32>> {
 
 /// 設定と目標の参照から SnvStream を組む(読み込み + 登録 + ウォームアップ)。
 pub fn build_stream(cfg: &SnvSettings, target: &[PathBuf]) -> anyhow::Result<SnvStream> {
-    anyhow::ensure!(!cfg.operator.is_empty(), "操作者の登録の WAV がありません(Realtime タブの Operator)");
+    anyhow::ensure!(!cfg.operator.is_empty(), "話者登録がありません(リアルタイムの画面の「話者登録」で録音します)");
     anyhow::ensure!(!target.is_empty(), "目標の声がありません(Voices で選ぶ)");
     let mut s = SnvStream::load(Path::new(&cfg.front), Path::new(&cfg.model), Path::new(&cfg.voc))?;
     if cfg.threads > 1 {
@@ -199,7 +187,7 @@ pub fn build_stream(cfg: &SnvSettings, target: &[PathBuf]) -> anyhow::Result<Snv
     s.enroll_target(&tg.iter().map(|x| x.as_slice()).collect::<Vec<_>>())?;
     {
         // 重みのページインと常駐スレッドの起動を済ませる(開始直後の無音の窓を防ぐ・状態は 5 ms の無音ぶんだけ先行する)。
-        let mut warm = vec![0f32; SnvStream::BLOCK];
+        let warm = vec![0f32; SnvStream::BLOCK];
         let mut sink = vec![0f32; SnvStream::BLOCK];
         s.process_block(&warm, &mut sink);
     }
@@ -282,67 +270,4 @@ pub fn start_msg(state: &Arc<Mutex<AppState>>) -> RtControl {
             device_name: s.selected_output_name.clone(),
         },
     }
-}
-
-/// 操作者の発話を現在の入力装置から seconds 秒録って 48 kHz の WAV に納め、登録の列に加える。
-pub fn record_operator(state: &Arc<Mutex<AppState>>, seconds: u32) {
-    use std::sync::atomic::AtomicBool;
-    let input_ep = {
-        let mut s = state.lock().unwrap();
-        if s.operator_rec.is_some() || s.loading {
-            return;
-        }
-        let dir = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_default().join("LightVC").join("recordings");
-        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-        let path = if dir.is_dir() || std::fs::create_dir_all(&dir).is_ok() {
-            dir.join(format!("operator_{stamp}.wav"))
-        } else {
-            PathBuf::from(format!("operator_{stamp}.wav"))
-        };
-        s.operator_rec = Some(OperatorRecording { started: std::time::Instant::now(), seconds, path, cancel: Arc::new(AtomicBool::new(false)) });
-        AudioEndpoint {
-            host: s.selected_input_host,
-            device_index: s.selected_input,
-            device_name: s.selected_input_name.clone(),
-        }
-    };
-    let st = state.clone();
-    std::thread::spawn(move || {
-        let cancel = st.lock().unwrap().operator_rec.as_ref().map(|r| r.cancel.clone());
-        let r = (|| -> anyhow::Result<PathBuf> {
-            let (engine, mut cap_rx) = lightvc_audio::AudioEngine::start_capture_only(input_ep, 48_000, 240)?;
-            let dev_sr = engine.capture_sample_rate as usize;
-            let want = seconds as usize * dev_sr;
-            let mut cap = Vec::with_capacity(want + 4800);
-            while cap.len() < want {
-                if engine.is_disconnected() {
-                    anyhow::bail!("オーディオ装置が切断された");
-                }
-                if cancel.as_ref().is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
-                    anyhow::bail!("cancelled");
-                }
-                while let Ok(s) = cap_rx.pop() {
-                    cap.push(s);
-                }
-                std::thread::sleep(std::time::Duration::from_millis(2));
-            }
-            drop(engine);
-            cap.truncate(want);
-            let x48 = crate::cli::resample_to_48k(&cap, dev_sr as u32)?;
-            let path = st.lock().unwrap().operator_rec.as_ref().map(|r| r.path.clone()).unwrap_or_default();
-            crate::cli::save_wav_mono(&path, &x48, 48_000)?;
-            Ok(path)
-        })();
-        let mut s = st.lock().unwrap();
-        let cancelled = r.as_ref().err().is_some_and(|e| e.to_string().contains("cancelled"));
-        s.operator_rec = None;
-        match r {
-            Ok(path) => {
-                s.settings.operator.push(path.clone());
-                s.status = format!("操作者の録音を保存した: {}", path.display());
-            }
-            Err(_e) if cancelled => s.status = "操作者の録音を中止した".to_string(),
-            Err(e) => s.error = Some(format!("録音の失敗: {e}")),
-        }
-    });
 }

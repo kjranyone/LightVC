@@ -231,7 +231,7 @@ pub fn run_realtime_snv(cmd: RealtimeSnvCmd) -> Result<()> {
     let mut vc = cmd.model.load()?;
     {
         // 重みのページインと常駐スレッドの起動を済ませる(開始直後の無音の窓を防ぐ)。
-        let mut warm = vec![0f32; HOP];
+        let warm = vec![0f32; HOP];
         let mut sink = vec![0f32; HOP];
         vc.process_block(&warm, &mut sink);
     }

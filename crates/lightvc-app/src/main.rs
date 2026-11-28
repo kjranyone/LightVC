@@ -8,6 +8,7 @@
 
 mod audio_playback;
 mod cli;
+mod enroll;
 mod file_pick;
 mod m3;
 mod offline_tab;

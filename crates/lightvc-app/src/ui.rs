@@ -2,13 +2,14 @@
 //!
 //! デザインの正本は DESIGN.md。トークンと部品は m3.rs。
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use gpui::{
     div, prelude::*, px, relative, size, Animation, AnimationExt as _, AnyElement, App, Application,
-    Bounds, Context, Div, FontWeight, Render, Rgba, SharedString, TitlebarOptions, Window,
+    Bounds, Context, Div, FocusHandle, FontWeight, Render, Rgba, SharedString, TitlebarOptions, Window,
     WindowAppearance, WindowBounds, WindowOptions,
 };
 
@@ -17,6 +18,8 @@ use crate::file_pick::FilePick;
 use crate::m3::{self, c, icon, shape, Btn, Typo};
 use crate::state::{self, AppState, RtControl, RtMetrics};
 use crate::voices::{VoiceEntry, VoiceGroup};
+
+mod enroll;
 
 const SR: u32 = 48_000;
 const SEMITONES: [(f32, &str); 4] = [(0.0, "+0"), (5.0, "+5"), (7.0, "+7"), (12.0, "+12")];
@@ -85,6 +88,14 @@ pub struct LightVcUi {
     /// リアルタイム・ファイル変換の「目標の声」に出す chip の区分。
     voice_group: VoiceGroup,
     show_full_notice: bool,
+    /// 話者登録の窓(モーダル)。
+    enroll_open: bool,
+    enroll: Option<crate::enroll::Session>,
+    enroll_focus: FocusHandle,
+    enroll_player: Option<AudioPlayer>,
+    enroll_playing: Option<PathBuf>,
+    /// 登録した音声の長さ(秒)の覚え。
+    durations: HashMap<PathBuf, Option<f32>>,
 }
 
 pub fn run(state: Arc<Mutex<AppState>>, demo: bool) -> anyhow::Result<()> {
@@ -135,6 +146,12 @@ pub fn run(state: Arc<Mutex<AppState>>, demo: bool) -> anyhow::Result<()> {
                         voice_filter: None,
                         voice_group: VoiceGroup::Female,
                         show_full_notice: false,
+                        enroll_open: std::env::var("LVC_ENROLL").is_ok(),
+                        enroll: None,
+                        enroll_focus: cx.focus_handle(),
+                        enroll_player: None,
+                        enroll_playing: None,
+                        durations: HashMap::new(),
                     };
                     if ui.tab == Tab::Devices { ui.refresh_devices(); }
                     ui
@@ -195,7 +212,8 @@ impl LightVcUi {
 
     fn needs_tick(&self) -> bool {
         self.rt_running || self.picks.any_pending()
-            || self.state.lock().map(|s| s.loading || s.operator_rec.is_some()).unwrap_or(false)
+            || self.enroll_open
+            || self.state.lock().map(|s| s.loading).unwrap_or(false)
             || self.offline.converting
             || self.offline.player.as_ref().is_some_and(|p| p.is_playing())
             || self.offline.source_preview.as_ref().is_some_and(|p| p.is_playing())
@@ -434,9 +452,11 @@ impl Render for LightVcUi {
             );
         }
 
-        div().id("root").size_full().flex().bg(c::surface_container()).text_color(c::on_surface())
+        let enroll = self.render_enroll(cx);
+        div().id("root").relative().size_full().flex().bg(c::surface_container()).text_color(c::on_surface())
             .child(rail)
             .child(div().flex_1().min_w_0().h_full().py_2().pr_2().child(pane))
+            .when_some(enroll, |r, m| r.child(m))
     }
 }
 
@@ -445,11 +465,9 @@ impl LightVcUi {
 
     fn render_realtime(&mut self, status: &str, cx: &mut Context<Self>) -> AnyElement {
         let m = self.metrics.clone();
-        let (has_engine, is_loading, cfg, voices, selected_voice, rec, algo_samples) = {
+        let (has_engine, is_loading, cfg, voices, selected_voice, algo_samples) = {
             let s = self.state.lock().unwrap();
-            (s.model_loaded, s.loading, s.settings.clone(), s.voices.clone(), s.selected_voice,
-             s.operator_rec.as_ref().map(|r| r.seconds.saturating_sub(r.started.elapsed().as_secs() as u32)),
-             s.algo_latency_samples)
+            (s.model_loaded, s.loading, s.settings.clone(), s.voices.clone(), s.selected_voice, s.algo_latency_samples)
         };
         let force_bypass = !has_engine;
         let voice_name = selected_voice.and_then(|i| voices.get(i)).map(|v| v.name.clone());
@@ -621,44 +639,7 @@ impl LightVcUi {
                 .child(self.voice_chips("tgt", &voices, |i| selected_voice == Some(i), cx, Self::select_voice));
         }
 
-        let mut operator = m3::card().child(
-            div().flex().items_center().gap_3()
-                .child(section_title("操作者"))
-                .child(div().flex_1())
-                .child(supporting(if cfg.operator.is_empty() { "未登録".to_string() } else { format!("{} 本を登録済み", cfg.operator.len()) })),
-        );
-        operator = operator.child(supporting("自分の普通の発話を 30 秒ほど登録します。"));
-        let mut op_row = div().flex().flex_wrap().items_center().gap_2();
-        if let Some(rem) = rec {
-            op_row = op_row
-                .child(div().h(px(40.)).px_4().flex().items_center().gap_2().rounded_full().bg(c::error_container())
-                    .child(m3::rec_dot())
-                    .child(div().label_l().text_color(c::on_error_container()).child(format!("録音中 残り {rem} 秒"))))
-                .child(m3::button("op_cancel", None, "中止", Btn::Text, true).on_click(cx.listener(|this, _, _, cx| {
-                    if let Some(r) = this.state.lock().unwrap().operator_rec.as_ref() {
-                        r.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-                    }
-                    cx.notify();
-                })));
-        } else {
-            let can_rec = !self.rt_running;
-            op_row = op_row
-                .child(m3::button("op_rec", Some("mic"), "録音", Btn::Tonal, can_rec).on_click(cx.listener(|this, _, _, cx| {
-                    if !this.rt_running && !this.demo { state::record_operator(&this.state, 30); }
-                    cx.notify();
-                })))
-                .child(m3::button("op_add", Some("folder_open"), "WAV", Btn::Outlined, true).on_click(cx.listener(|this, _, _, cx| {
-                    this.picks.operator.open();
-                    cx.notify();
-                })));
-            if !cfg.operator.is_empty() {
-                op_row = op_row.child(m3::button("op_clear", None, "消去", Btn::Text, true).on_click(cx.listener(|this, _, _, cx| {
-                    this.state.lock().unwrap().settings.operator.clear();
-                    cx.notify();
-                })));
-            }
-        }
-        operator = operator.child(op_row);
+        let operator = self.enroll_card(&cfg.operator, cx);
 
         let mut model = m3::card().child(section_title("モデル"));
         let mut paths = div().flex().flex_col();
@@ -690,7 +671,7 @@ impl LightVcUi {
         model = model.child(div().flex().items_center().gap_3().child(field_label("スレッド")).child(div().flex_1()).child(th_group));
         let can_load = !cfg.operator.is_empty() && voice_name.is_some() && !is_loading;
         let hint = if is_loading { status.to_string() }
-            else if cfg.operator.is_empty() { "操作者の登録が必要です".into() }
+            else if cfg.operator.is_empty() { "話者登録が必要です".into() }
             else if voice_name.is_none() { "目標の声を選んでください".into() }
             else if has_engine { "読み込み済み".into() }
             else { "準備ができました".into() };
@@ -778,7 +759,7 @@ impl LightVcUi {
 
         let can = self.offline.source.is_some() && self.offline.reference.is_some() && has_operator && !self.offline.converting;
         let hint = if self.offline.converting { "変換しています…".to_string() }
-            else if !has_operator { "操作者の登録がありません(リアルタイムの画面で登録します)".into() }
+            else if !has_operator { "話者登録がありません(リアルタイムの画面で登録します)".into() }
             else if self.offline.source.is_none() { "変換元を選んでください".into() }
             else if self.offline.reference.is_none() { "目標の声を選んでください".into() }
             else { status.to_string() };

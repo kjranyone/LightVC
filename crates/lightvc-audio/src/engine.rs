@@ -707,6 +707,17 @@ impl AudioEngine {
     }
 }
 
+/// 入力の指定(未指定なら既定)が実際に開く装置の表示名。
+pub fn input_device_name(input: &AudioEndpoint) -> Result<String> {
+    let in_host = crate::host::resolve(input.host)?;
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    if in_host == HostPref::Asio {
+        return pick_asio_driver_name(input, true);
+    }
+    let dev = pick_cpal_input(&crate::host::pick(in_host)?, input)?;
+    Ok(dev.description().map(|d| d.name().to_string()).unwrap_or_else(|_| "入力装置".to_string()))
+}
+
 pub fn default_input() -> Result<Device> {
     crate::host::pick(HostPref::Default)?
         .default_input_device()
