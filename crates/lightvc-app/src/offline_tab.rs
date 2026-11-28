@@ -10,7 +10,7 @@ use crate::state::AppState;
 /// 240 サンプルずつ流し、経路の遅れ(LATENCY_SAMPLES)を落として入力と時刻を揃える。
 pub fn convert(stream: &mut SnvStream, x: &[f32]) -> Vec<f32> {
     const HOP: usize = SnvStream::BLOCK;
-    let lat = SnvStream::LATENCY_SAMPLES;
+    let lat = stream.latency_samples();
     let n = (x.len() + lat).div_ceil(HOP);
     let mut xin = x.to_vec();
     xin.resize(n * HOP, 0.0);

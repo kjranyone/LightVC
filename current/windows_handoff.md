@@ -11,7 +11,7 @@ Windows 実機の初回の確認の結果と、組み込みの指示は `current
 
 ## 1. 製品の経路
 
-前段(門と重みの網つき)→ K3G(符号と回路の 3 組の平均・錨)→ 出力部 rvoc3hi → 出力の番。`lightvc_core::snv_stream::SnvStream` が 48 kHz・240 サンプル単位で流す。
+前段(`v4_dual` + 門と瞬時重みの網つき)→ K3G-v4(符号と回路の 3 組の平均・錨)→ 出力部 `snv_p123_s`(`delay = 480`) → 出力の番。`lightvc_core::snv_stream::SnvStream` が 48 kHz・240 サンプル単位で流す(段 P126・2026-11-28 採用)。
 
 - 実時間には **4 スレッド**が要る(`enable_parallel(4)`・GUI と CLI の既定は 4・プラグインの既定も 4)。2 スレッドでは p95 5.05 ms で予算を超える。
 - 重みは f16 で持つ(manifest の `cfg.half` と `cfg.kv16`)。F16C の命令が無い CPU では遅い経路に落ちる(出力は同じ)。
@@ -23,9 +23,9 @@ Windows 実機の初回の確認の結果と、組み込みの指示は `current
 
 | 部品 | 作業ツリーの場所 | 配布物の中 | weights.bin | sha256 の先頭 |
 |---|---|---|---|---|
-| 前段 | `results/snv_p45_gate_t80_export/` | `models/front_gate/` | 20,888,584 B | 4efdc07af3a2391a |
-| K3G | `results/snv_k3g16kv_export/` | `models/k3g/` | 135,379,140 B | 3110a86b029f8e05 |
-| 出力部 | `results/rvoc3hi/export_330k/` | `models/rvoc3hi/` | 13,020,228 B | 5ffbc09b362da00d |
+| 前段 | `results/snv_p126_gate_export/` | `models/front_gate/` | 20,888,584 B | 4efdc07af3a2391a |
+| K3G | `results/snv_p126_k3g16kv_export/` | `models/k3g/` | 135,379,140 B | 5afd51c2fdc5a487 |
+| 出力部 | `results/snv_p123_s/export_20k/` | `models/rvoc3hi/` | 13,020,228 B | 7984a4226b8af238 |
 
 Linux の配布物 `target/LightVC-0.1.0-linux.zip` の `models/` は OS に依らない。GUI と CLI の既定はリポジトリの根からの `results/...`。配布物の形で動かすときは `--front models/front_gate --model models/k3g --voc models/rvoc3hi`。
 
@@ -40,7 +40,7 @@ Linux から Windows 向けに型の検査を済ませた(2026-11-20・`cargo ch
 2. **一致**: `cargo test --release -p lightvc-core`。`results/` の 3 つの書き出しと `fixture*/` が要る。`results/snv_k3g_export`・`results/snv_k3g16_export` が無い試験は読み飛ばす。
 3. **1 ブロックの時間(関門 S)**: 4 スレッドで p99 < 5 ms。6 回測り、最悪の値で判定する。
    ```
-   set LVC_K3G=results/snv_k3g16kv_export
+   set LVC_K3G=results/snv_p126_k3g16kv_export
    cargo test --release -p lightvc-core gate_s_k3g16 -- --ignored --nocapture --test-threads=1
    ```
 4. **マイク → スピーカー**: `lightvc-app realtime-snv --operator <自分の声.wav> --target <目標の声.wav> --threads 4 --seconds 300`。5 秒ごとの表示で次を確かめる。
@@ -56,7 +56,7 @@ Linux から Windows 向けに型の検査を済ませた(2026-11-20・`cargo ch
 
 ## 4. 間に合わないとき
 
-- **内訳を出す**: `set LVC_K3G=results/snv_k3g16kv_export` の上で `cargo test --release -p lightvc-core profile_k3g -- --ignored --nocapture --test-threads=1`。Linux の 4 スレッドの内訳(ブロックあたり)は次のとおり。
+- **内訳を出す**: `set LVC_K3G=results/snv_p126_k3g16kv_export` の上で `cargo test --release -p lightvc-core profile_k3g -- --ignored --nocapture --test-threads=1`。Linux の 4 スレッドの内訳(ブロックあたり)は次のとおり。
 
   | 段 | ms |
   |---|---|

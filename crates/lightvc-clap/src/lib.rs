@@ -142,9 +142,9 @@ fn resolve_export(user: &str, sub: &str) -> String {
     let found = [
         ("models", sub),
         ("results", match sub {
-            "front_gate" => "snv_p45_gate_t80_export",
-            "k3g" => "snv_k3g16kv_export",
-            _ => "rvoc3hi/export_330k",
+            "front_gate" => "snv_p126_gate_export",
+            "k3g" => "snv_p126_k3g16kv_export",
+            _ => "snv_p123_s/export_20k",
         }),
     ]
     .iter()

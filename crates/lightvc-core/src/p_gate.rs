@@ -168,6 +168,7 @@ pub struct Gate {
     off: usize,
     thr: f64,
     gamma: f64,
+    inst_mask: bool,
     raw: Vec<f32>,
     feat: Vec<f32>,
     zg: Vec<f32>,
@@ -214,8 +215,9 @@ impl Gate {
         let (eps, leps) = (num("ln_eps")?, num("log_eps")?);
         let front = NetFront::new(&ts, "gate", leps)?;
         ensure!(front.same(&NetFront::new(&ts, "mask", leps)?), "門の網と重みの網の前段の窓と帯が違う");
+        let inst_mask = cfg.get("inst_mask").and_then(|v| v.as_bool()).unwrap_or(false);
         Ok(Some(Self {
-            front, g: MaskNet::new(&ts, "gate", &dils("gate_dil")?, eps)?, m: MaskNet::new(&ts, "mask", &dils("mask_dil")?, eps)?, on: hy[0], off: hy[1], thr: num("thr")?, gamma: num("gamma")?,
+            front, g: MaskNet::new(&ts, "gate", &dils("gate_dil")?, eps)?, m: MaskNet::new(&ts, "mask", &dils("mask_dil")?, eps)?, on: hy[0], off: hy[1], thr: num("thr")?, gamma: num("gamma")?, inst_mask,
             raw: vec![0.0; NFFT], feat: vec![0.0; D_IN], zg: vec![0.0; 1], zm: vec![0.0; NB], w: vec![1.0; NB], open: false, c_on: 0, c_off: 0, re: vec![0.0; NFFT], im: vec![0.0; NFFT], team: None,
         }))
     }
@@ -233,16 +235,18 @@ impl Gate {
         } else {
             prof!(GATE_NET, self.g.step(&self.feat, Some(&mut self.zg)));
         }
-        (self.c_on, self.c_off) = if sigmoid(self.zg[0]) >= self.thr { (self.c_on + 1, 0) } else { (0, self.c_off + 1) };
+        let p_g = sigmoid(self.zg[0]);
+        (self.c_on, self.c_off) = if p_g >= self.thr { (self.c_on + 1, 0) } else { (0, self.c_off + 1) };
         if !self.open && self.c_on >= self.on {
             self.open = true;
         } else if self.open && self.c_off >= self.off {
             self.open = false;
         }
+        let mask_on = self.open || (self.inst_mask && p_g >= self.thr);
         if !both {
-            prof!(MASK_NET, self.m.step(&self.feat, if self.open { Some(&mut self.zm) } else { None }));
+            prof!(MASK_NET, self.m.step(&self.feat, if mask_on { Some(&mut self.zm) } else { None }));
         }
-        if !self.open {
+        if !mask_on {
             return None;
         }
         prof!(MASK_HEAD, for (w, &z) in self.w.iter_mut().zip(&self.zm) {
@@ -260,6 +264,10 @@ impl Gate {
     /// 直前のブロックの門のロジット・開いているか。
     pub fn last(&self) -> (f32, bool) {
         (self.zg[0], self.open)
+    }
+
+    pub fn last_prob(&self) -> f64 {
+        sigmoid(self.zg[0])
     }
 }
 
@@ -357,23 +365,36 @@ pub(crate) mod tests {
     fn clean_input_equals_v3() {
         for dir in gate_exports() {
             let fx = dir.join("fixture");
-            let (x, st_p, zg_p) = (rd(&fx.join("clean_x.f32")), rd(&fx.join("clean_state.f32")), rd(&fx.join("clean_gate_logit.f32")));
+            let sh: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(fx.join("shapes.json")).unwrap()).unwrap();
+            let same_v3 = sh.get("clean_same_as_v3").and_then(|v| v.as_bool()).unwrap_or(true);
+            let (x, st_p, zg_p, cy_p) = (rd(&fx.join("clean_x.f32")), rd(&fx.join("clean_state.f32")), rd(&fx.join("clean_gate_logit.f32")), rd(&fx.join("clean_y.f32")));
             let mut gt = Gate::load(&dir).unwrap().unwrap();
             let (mut fg, mut fv) = (PFront::load(&dir).unwrap(), PFront::load(&dir).unwrap());
-            let (mut opened, mut diff, mut zg_max) = (0usize, 0usize, 0f32);
+            let (mut opened, mut masked, mut diff, mut zg_max, mut cy_max) = (0usize, 0usize, 0usize, 0f32, 0f32);
+            let mut yy = vec![0.0f32; 29];
             for (t, blk) in x.chunks_exact(HOP).enumerate() {
                 let m = gt.step(blk).map(|m| m.to_vec());
-                opened += usize::from(m.is_some());
+                masked += usize::from(m.is_some());
+                opened += usize::from(gt.last().1);
                 zg_max = zg_max.max((gt.last().0 - zg_p[t]).abs());
                 let (a, b) = (fg.process_block_masked(blk, m.as_deref()), fv.process_block(blk));
-                if a.f0.to_bits() != b.f0.to_bits() || a.env.iter().zip(&b.env).any(|(p, q)| p.to_bits() != q.to_bits()) || a.per.iter().zip(&b.per).any(|(p, q)| p.to_bits() != q.to_bits()) {
+                let _ = to_y(&a, &mut yy);
+                for k in 0..29 {
+                    cy_max = cy_max.max((yy[k] - cy_p[t * 29 + k]).abs());
+                }
+                if a.f0.to_bits() != b.f0.to_bits() || a.f0_voc.to_bits() != b.f0_voc.to_bits() || a.env.iter().zip(&b.env).any(|(p, q)| p.to_bits() != q.to_bits()) || a.per.iter().zip(&b.per).any(|(p, q)| p.to_bits() != q.to_bits()) {
                     diff += 1;
                 }
             }
             let name = dir.file_name().unwrap().to_string_lossy().to_string();
-            eprintln!("{name}: 音楽なし {} フレーム・開いたフレーム {opened}(Python {})・前段 v3 と違うフレーム {diff}・門のロジットの最大差 {zg_max:.2e}", x.len() / HOP, st_p.iter().filter(|&&v| v > 0.5).count());
+            eprintln!("{name}: 音楽なし {} フレーム・開いたフレーム {opened}(マスク {masked}・Python {})・前段 v3 と違うフレーム {diff}・clean_y 最大差 {cy_max:.2e}・門のロジットの最大差 {zg_max:.2e}", x.len() / HOP, st_p.iter().filter(|&&v| v > 0.5).count());
             assert_eq!(opened, 0);
-            assert_eq!(diff, 0);
+            if same_v3 {
+                assert_eq!(masked, 0);
+                assert_eq!(diff, 0);
+            } else {
+                assert!(cy_max < 1e-3, "{name}: clean_y 差 {cy_max}");
+            }
         }
     }
 }

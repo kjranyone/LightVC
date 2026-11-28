@@ -56,6 +56,7 @@ fn to_yc(e: &[f32; D_ENV], y: &[f32], yc: &mut [f32]) {
 struct Utt {
     y: Vec<f32>,
     yc: Option<Vec<f32>>,
+    c0_20: Option<Vec<f32>>,
     v: Vec<f32>,
     t: usize,
 }
@@ -93,13 +94,20 @@ impl Model {
         }
     }
 
+    fn fix20(&self) -> Option<FixEnv> {
+        match self {
+            Self::K3g(m) => m.fix20(),
+            _ => None,
+        }
+    }
+
     fn enroll_operator(&mut self, u: &Utt) {
         match self {
             Self::P11(m) => {
                 m.enroll_operator(&u.y, &u.v, u.t);
             }
             Self::P30(m) => m.enroll_operator(&u.y, &u.v, u.t),
-            Self::K3g(m) => m.enroll_operator(&u.y, u.yc.as_deref(), &u.v, u.t),
+            Self::K3g(m) => m.enroll_operator(&u.y, u.yc.as_deref(), u.c0_20.as_deref(), &u.v, u.t),
         }
     }
 
@@ -119,23 +127,26 @@ impl Model {
 
     /// yc = 固定の窓の包絡つきの符号の特徴・open = 門が開いているフレーム(どちらも K3G だけが読む)。
     #[allow(clippy::too_many_arguments)]
-    fn step(&mut self, y: &[f32], yc: Option<&[f32]>, v: f32, lf: f32, open: bool, a_out: &mut [f32], y_out: &mut [f32]) {
+    fn step(&mut self, y: &[f32], yc: Option<&[f32]>, c0_20: Option<f32>, v: f32, lf: f32, open: bool, gate_p: f64, a_out: &mut [f32], y_out: &mut [f32]) {
         match self {
             Self::P11(m) => m.step(y, v, lf, a_out, y_out),
             Self::P30(m) => m.step(y, v, lf, a_out, y_out),
-            Self::K3g(m) => m.step(y, yc, v, lf, open, a_out, y_out),
+            Self::K3g(m) => m.step(y, yc, c0_20, v, lf, open, gate_p, a_out, y_out),
         }
     }
 }
 
 pub struct SnvStream {
     front_dir: PathBuf,
+    target_v4: bool,
     front: PFront,
     gate: Option<Gate>,
     fix: Option<FixEnv>,
+    fix20: Option<FixEnv>,
     model: Model,
     exc: Excite,
     voc: RVoc,
+    voc_delay: usize,
     k: f32,
     y: Vec<f32>,
     yc: Vec<f32>,
@@ -150,23 +161,35 @@ pub struct SnvStream {
     esm: f32,
     esm_on: bool,
     eh: Option<[[f32; D_ENV]; 2]>,
+    ek: Option<([f32; 4], [[f32; D_ENV]; 3])>,
+    ek0: Option<([f32; 4], [f32; 3])>,
+    e1e: Option<(f32, f32, Option<f32>)>,
+    c0x: Option<(f32, Option<(f32, f32)>)>,
 }
 
 impl SnvStream {
     pub const BLOCK: usize = HOP;
-    pub const LATENCY_SAMPLES: usize = HOP + DELAY;
+    pub const LATENCY_SAMPLES: usize = HOP + 2 * HOP;
 
     pub fn load(front: &Path, model: &Path, voc: &Path) -> Result<Self> {
         let man: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(voc.join("manifest.json")).context("rvoc の manifest")?)?;
         let c = &man["const"];
         let num = |k: &str| c[k].as_f64().with_context(|| format!("const {k}"));
         let esm = c["env_smooth"].as_f64().unwrap_or(0.0) as f32;
+        let voc_delay = c.get("DELAY").and_then(|v| v.as_u64()).unwrap_or(DELAY as u64) as usize;
         let exc = Excite::new(num("H_MAX")? as f32, num("H_ROLL")? as f32, num("K_MAX")? as usize, 1);
+        let m_man: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(model.join("manifest.json")).context("model の manifest")?)?;
+        let target_v4 = m_man.get("cfg").and_then(|g| g.get("target_v4")).and_then(|v| v.as_bool()).unwrap_or(false);
         let model = Model::load(model)?;
+        let (fix, fix20) = (model.fixenv(), model.fix20());
         Ok(Self {
-            front_dir: front.to_path_buf(), front: PFront::load(front)?, gate: Gate::load(front)?, fix: model.fixenv(), model, exc, voc: RVoc::load(voc)?, k: 0.0,
-            y: vec![0.0; D_Y], yc: vec![0.0; D_Y], a: vec![0.0; D_A], yo: vec![0.0; D_Y], cond: vec![0.0; D_COND], e: vec![0.0; 2 * HOP], noise: None, copy: false, guard: Some(OutGuard::default()), prog: [P_NOMINAL; 2], esm, esm_on: true, eh: None,
+            front_dir: front.to_path_buf(), target_v4, front: PFront::load(front)?, gate: Gate::load(front)?, fix, fix20, model, exc, voc: RVoc::load(voc)?, voc_delay, k: 0.0,
+            y: vec![0.0; D_Y], yc: vec![0.0; D_Y], a: vec![0.0; D_A], yo: vec![0.0; D_Y], cond: vec![0.0; D_COND], e: vec![0.0; 2 * HOP], noise: None, copy: false, guard: Some(OutGuard::default()), prog: [P_NOMINAL; 2], esm, esm_on: true, eh: None, ek: None, ek0: None, e1e: None, c0x: None,
         })
+    }
+
+    pub fn latency_samples(&self) -> usize {
+        HOP + self.voc_delay
     }
 
     /// 模型の網(P11 = E / C・p30 = C)を n スレッドに分け(n = 1・2・4・K3G は組を min(n, 組の数) スレッドに分ける)、描画器の最も重い残差ブロックをワーカーへ移す。
@@ -204,13 +227,16 @@ impl SnvStream {
 
     /// 発話の波形(48 kHz)を新しい前段(gated = 門も新しく通す)に通した特徴。固定の窓の包絡は門に依らず元の波形から(発話ごとに新しい流し)。
     fn analyze(&self, pcm: &[f32], gated: bool) -> Result<Utt> {
-        let mut fr = PFront::load(&self.front_dir)?;
+        let mut fr = if gated || self.target_v4 { PFront::load(&self.front_dir)? } else { PFront::load_plain(&self.front_dir)? };
         let mut gt = if gated { Gate::load(&self.front_dir)? } else { None };
         let mut fx = self.fix.as_ref().map(FixEnv::fresh);
+        let mut fx20 = if gated { self.fix20.as_ref().map(FixEnv::fresh) } else { None };
         let t = pcm.len() / HOP;
         let (mut y, mut v) = (vec![0.0f32; D_Y * t], vec![0.0f32; t]);
         let mut yc = fx.as_ref().map(|_| vec![0.0f32; D_Y * t]);
+        let mut c0_20 = fx20.as_ref().map(|_| vec![0.0f32; t]);
         let (mut yy, mut yk) = (vec![0.0f32; D_Y], vec![0.0f32; D_Y]);
+        let cs = c0_sil();
         for tt in 0..t {
             let blk = &pcm[tt * HOP..(tt + 1) * HOP];
             let m = gt.as_mut().and_then(|g| g.step(blk));
@@ -225,8 +251,11 @@ impl SnvStream {
                     yc[c * t + tt] = yk[c];
                 }
             }
+            if let (Some(fx20), Some(c20)) = (fx20.as_mut(), c0_20.as_mut()) {
+                c20[tt] = (fx20.step(blk)[0] - cs) / 10.0;
+            }
         }
-        Ok(Utt { y, yc, v, t })
+        Ok(Utt { y, yc, c0_20, v, t })
     }
 
     fn concat(parts: &[Utt]) -> Utt {
@@ -243,7 +272,8 @@ impl SnvStream {
             y
         };
         let yc = parts.iter().all(|p| p.yc.is_some()).then(|| cat(&|p| p.yc.as_deref().unwrap_or(&[])));
-        Utt { y: cat(&|p| &p.y), yc, v: parts.iter().flat_map(|p| p.v.iter().copied()).collect(), t }
+        let c0_20 = parts.iter().all(|p| p.c0_20.is_some()).then(|| parts.iter().flat_map(|p| p.c0_20.as_deref().unwrap_or(&[]).iter().copied()).collect());
+        Utt { y: cat(&|p| &p.y), yc, c0_20, v: parts.iter().flat_map(|p| p.v.iter().copied()).collect(), t }
     }
 
     /// 操作者の登録(発話の波形の組・48 kHz・門のある前段なら門も通す)。
@@ -276,6 +306,26 @@ impl SnvStream {
     }
 
     /// 描画器の manifest の包絡の平滑の重み w(0 = 平滑なしで学習した描画器)。
+    /// 診断(段 P96): 界面の平滑をフレーム t・t−1・t−2・t−3 の重みで差し替える。製品の経路は使わない。
+    pub fn set_env_kernel(&mut self, w: Option<[f32; 4]>) {
+        self.ek = w.map(|w| (w, [[0.0; D_ENV]; 3]));
+    }
+
+    /// 診断(段 P97 step d): 包絡の 0 行目(音量 c0)だけ、界面の平滑を別の重み(t・t−1・t−2・t−3)に差し替える。製品の経路は使わない。
+    pub fn set_env_kernel0(&mut self, w: Option<[f32; 4]>) {
+        self.ek0 = w.map(|w| (w, [0.0; 3]));
+    }
+
+    /// 診断(段 P97 step e): 包絡の 0 行目(音量 c0)だけ、動きの大きさに応じる 1 次の平滑(係数 = min(1, a0 + |差| / θ))に差し替える。製品の経路は使わない。
+    pub fn set_env_adaptive0(&mut self, p: Option<(f32, f32)>) {
+        self.e1e = p.map(|(a0, th)| (a0, th, None));
+    }
+
+    /// 診断(段 P97 step f): 描画器へ渡す音量 c0 = 模型の出力の c0 の遅い成分(時定数 tau フレームの 1 次の走行平均)+ 源の c0 の速い成分(源の c0 − その走行平均)。製品の経路は使わない。
+    pub fn set_c0_from_source(&mut self, tau: Option<f32>) {
+        self.c0x = tau.map(|t| (1.0 - (-1.0 / t).exp(), None));
+    }
+
     pub fn env_smooth(&self) -> f32 {
         self.esm
     }
@@ -303,20 +353,36 @@ impl SnvStream {
 
     fn block(&mut self, x: &[f32], out: &mut [f32]) {
         let m = prof!(GATE, self.gate.as_mut().and_then(|g| g.step(x)));
-        let open = m.is_some();
         let fr = prof!(FRONT, self.front.process_block_masked(x, m));
+        let open = self.gate_open();
+        let gate_p = self.gate.as_ref().map_or(0.0, Gate::last_prob);
         let (v, lf) = to_y(&fr, &mut self.y);
         let lfk = lf + self.k * LN2_12 * v;
         if let Some(f) = self.fix.as_mut() {
             prof!(FIXENV, to_yc(&f.step(x), &self.y, &mut self.yc));
         }
+        let c0_20 = self.fix20.as_mut().map(|f| (f.step(x)[0] - c0_sil()) / 10.0);
         let yc = self.fix.is_some().then_some(self.yc.as_slice());
-        prof!(MODEL, self.model.step(&self.y, yc, v, lfk, open, &mut self.a, &mut self.yo));
-        if self.copy {
-            self.yo.copy_from_slice(&self.y);
-        }
+        prof!(MODEL, self.model.step(&self.y, yc, c0_20, v, lfk, open, gate_p, &mut self.a, &mut self.yo));
+        let (f0_r, v_r, lfk_r) = if self.copy {
+            self.yo[..D_ENV].copy_from_slice(&self.y[..D_ENV]);
+            let vv = if fr.f0_voc > 0.0 { 1.0 } else { 0.0 };
+            for k in 0..4 {
+                self.yo[D_ENV + k] = fr.per[k].clamp(0.0, 1.5) * vv;
+            }
+            let lfv = if vv > 0.0 { (fr.f0_voc.max(1.0) / 200.0).ln() } else { 0.0 };
+            (fr.f0_voc, vv, lfv + self.k * LN2_12 * vv)
+        } else {
+            (fr.f0, v, lfk)
+        };
         self.cond[..D_ENV].copy_from_slice(&self.yo[..D_ENV]);
-        if self.esm_on && self.esm > 0.0 {
+        if let Some((w, h)) = self.ek.as_mut() {
+            let cur: [f32; D_ENV] = std::array::from_fn(|k| self.yo[k]);
+            for k in 0..D_ENV {
+                self.cond[k] = w[0] * cur[k] + w[1] * h[2][k] + w[2] * h[1][k] + w[3] * h[0][k];
+            }
+            *h = [h[1], h[2], cur];
+        } else if self.esm_on && self.esm > 0.0 {
             let cur: [f32; D_ENV] = std::array::from_fn(|k| self.yo[k]);
             let [e2, e1] = self.eh.unwrap_or([cur; 2]);
             for k in 0..D_ENV {
@@ -324,12 +390,31 @@ impl SnvStream {
             }
             self.eh = Some([e1, cur]);
         }
-        self.cond[25] = lfk;
-        self.cond[26] = v;
-        for k in 0..4 {
-            self.cond[27 + k] = self.yo[25 + k].clamp(0.0, 1.5) * v;
+        if let Some((b, st)) = self.c0x.as_mut() {
+            let (lo, ls) = st.unwrap_or((self.yo[0], self.y[0]));
+            let (lo, ls) = (lo + *b * (self.yo[0] - lo), ls + *b * (self.y[0] - ls));
+            self.cond[0] = lo + self.y[0] - ls;
+            *st = Some((lo, ls));
         }
-        let f0k = if fr.f0 > 0.0 { fr.f0 * (self.k / 12.0).exp2() } else { 0.0 };
+        if let Some((a0, th, st)) = self.e1e.as_mut() {
+            let cur = self.yo[0];
+            let prev = st.unwrap_or(cur);
+            let d = cur - prev;
+            let o = prev + (*a0 + d.abs() / *th).min(1.0) * d;
+            self.cond[0] = o;
+            *st = Some(o);
+        }
+        if let Some((w, h)) = self.ek0.as_mut() {
+            let cur = self.yo[0];
+            self.cond[0] = w[0] * cur + w[1] * h[2] + w[2] * h[1] + w[3] * h[0];
+            *h = [h[1], h[2], cur];
+        }
+        self.cond[25] = lfk_r;
+        self.cond[26] = v_r;
+        for k in 0..4 {
+            self.cond[27 + k] = self.yo[25 + k].clamp(0.0, 1.5) * v_r;
+        }
+        let f0k = if f0_r > 0.0 { f0_r * (self.k / 12.0).exp2() } else { 0.0 };
         prof!(EXC, self.exc.block(f0k, &mut self.e));
         if let Some((nz, i)) = self.noise.as_mut() {
             self.e[HOP..].copy_from_slice(&nz[*i..*i + HOP]);
@@ -372,7 +457,10 @@ mod tests {
     const K3G: &str = "results/snv_k3g_export";
     const K3G16: &str = "results/snv_k3g16_export";
     const K3G16KV: &str = "results/snv_k3g16kv_export";
+    const K3G_P126: &str = "results/snv_p126_k3g16kv_export";
     const V3: &str = "results/pfront_export";
+    const V31: &str = "results/pfront_export_p100";
+    const V4: &str = "results/pfront_export_p124";
 
     fn root() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -466,11 +554,12 @@ mod tests {
         let mut ys = Vec::new();
         let (out, _, op) = run(&mut s, &x, Some(&mut ys));
         let (w, yo) = (rd(&fx.join("w.f32")), rd(&fx.join("yo.f32")));
-        let ry = ys.iter().zip(&yo).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max) / yo.iter().map(|v| v.abs()).fold(0.0f32, f32::max);
+        let (ymx_i, ymx_v) = ys.iter().zip(&yo).enumerate().map(|(i, (a, b))| (i, (a - b).abs())).max_by(|p, q| p.1.partial_cmp(&q.1).unwrap()).unwrap_or((0, 0.0));
+        let ry = ymx_v / yo.iter().map(|v| v.abs()).fold(0.0f32, f32::max);
         let n = strict.unwrap_or(out.len()).min(out.len());
-        let md = out[..n].iter().zip(&w).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max);
+        let (wmx_i, md) = out[..n].iter().zip(&w).enumerate().map(|(i, (a, b))| (i, (a - b).abs())).max_by(|p, q| p.1.partial_cmp(&q.1).unwrap()).unwrap_or((0, 0.0));
         let rms = (w.iter().map(|v| v * v).sum::<f32>() / w.len() as f32).sqrt();
-        eprintln!("端から端({kind}・前段 {front}): C の出力 Y の相対の最大差 {ry:.2e}・波形 max|Rust − Python| {md:.3e}(先頭 {n} 標本・RMS {rms:.3e})・{} フレーム(門が開いたフレーム {})", x.len() / HOP, op.iter().filter(|&&o| o).count());
+        eprintln!("端から端({kind}・前段 {front}): C の出力 Y の相対の最大差 {ry:.2e}(t={} c={} rust={} py={})・波形 max|Rust − Python| {md:.3e}(sample={wmx_i} 先頭 {n} 標本・RMS {rms:.3e})・{} フレーム(門が開いたフレーム {})", ymx_i / D_Y, ymx_i % D_Y, ys[ymx_i], yo[ymx_i], x.len() / HOP, op.iter().filter(|&&o| o).count());
         let sc = (n < out.len()).then(|| {
             let ma = out[n..].iter().zip(&w[n..]).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max);
             let sc = spec_conv(&out[n..], &w[n..]);
@@ -485,7 +574,7 @@ mod tests {
     /// 門の書き出しの fixture の最初に門が開くフレーム。
     fn first_open(d: &Path) -> usize {
         let sh: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(d.join("fixture/shapes.json")).unwrap()).unwrap();
-        sh["transitions"].as_array().unwrap().iter().find(|v| v[1].as_u64() == Some(1)).and_then(|v| v[0].as_u64()).expect("開く遷移") as usize
+        sh.get("first_mask").and_then(|v| v.as_u64()).or_else(|| sh["transitions"].as_array().unwrap().iter().find(|v| v[1].as_u64() == Some(1)).and_then(|v| v[0].as_u64())).expect("開く遷移") as usize
     }
 
     /// 出荷の関門: 未来不変性(実音声・入力の n 以降を別の実音声に差し替えて n より前の出力が 1 bit も動かない・n 以降が動く)・静的な遅延の台帳・RTF。
@@ -493,7 +582,10 @@ mod tests {
         let Some(sh) = open(fx) else { return };
         let (x, alt) = (rd(&fx.join("src_x.f32")), rd(&fx.join("alt_x.f32")));
         let t = (x.len() / HOP).min(alt.len() / HOP);
-        let (o1, _, op) = run(&mut build(fx, &sh, None), &x[..t * HOP], None);
+        let mut s0 = build(fx, &sh, None);
+        let v_del = s0.voc_delay;
+        let lat_ms = s0.latency_samples() as f64 / 48.0;
+        let (o1, _, op) = run(&mut s0, &x[..t * HOP], None);
         let mut worst = 0usize;
         for &cut in [t / 4, t / 2, 3 * t / 4].iter().chain(extra) {
             let n = cut * HOP;
@@ -507,9 +599,8 @@ mod tests {
             eprintln!("未来不変性({kind}・前段 {front}): 差し替え {n} サンプル目(門 {})→ 最初に動く出力 {first}(先読み {la} サンプル)", if op[cut.saturating_sub(1)] { "開" } else { "閉" });
         }
         assert_eq!(worst, 0, "先読み {worst} サンプル");
-        let lat_ms = SnvStream::LATENCY_SAMPLES as f64 / 48.0;
         let ledger = lat_ms + 10.0;
-        eprintln!("静的な遅延の台帳({kind}・前段 {front}): ブロック {HOP} + rvoc の DELAY {DELAY} = {lat_ms:.1} ms + 内容の符号器の予備 10 ms = {ledger:.1} ms(< 30 ms)");
+        eprintln!("静的な遅延の台帳({kind}・前段 {front}): ブロック {HOP} + rvoc の DELAY {v_del} = {lat_ms:.1} ms + 内容の符号器の予備 10 ms = {ledger:.1} ms(< 30 ms)");
         assert!(ledger < 30.0);
         if front == "v3" {
             rtf(fx, &sh, kind, "");
@@ -622,10 +713,15 @@ mod tests {
         k3g_parity(&root().join(K3G16KV));
     }
 
+    #[test]
+    fn parity_end_to_end_p126() {
+        k3g_parity(&root().join(K3G_P126));
+    }
+
     /// 並べた経路(模型の組・描画器のワーカー・門の網と重みの網)の出力が、逐次と 1 bit 同じ(K3G の f16・f32 と門つきの p30・音楽つきと音楽なし)。
     #[test]
     fn parallel_bit_identical() {
-        let mut fxs: Vec<PathBuf> = [K3G16KV, K3G16, K3G].iter().flat_map(|d| ["fixture_stream", "fixture_stream_music"].map(|n| root().join(d).join(n))).collect();
+        let mut fxs: Vec<PathBuf> = [K3G_P126, K3G16KV, K3G16, K3G].iter().flat_map(|d| ["fixture_stream", "fixture_stream_music"].map(|n| root().join(d).join(n))).collect();
         fxs.extend(gate_exports().into_iter().map(|d| d.join("fixture_stream")));
         for fx in fxs {
             let Some(sh) = open(&fx) else { continue };
@@ -655,7 +751,7 @@ mod tests {
     #[ignore]
     fn gate_s_k3g16() {
         let n: usize = std::env::var("LVC_S_N").ok().and_then(|v| v.parse().ok()).unwrap_or(6);
-        let k3g = std::env::var("LVC_K3G").unwrap_or_else(|_| K3G16.to_string());
+        let k3g = std::env::var("LVC_K3G").unwrap_or_else(|_| K3G_P126.to_string());
         let mut fxs = vec![(format!("{k3g} 音楽つき"), root().join(&k3g).join("fixture_stream_music")), (format!("{k3g} 音楽なし"), root().join(&k3g).join("fixture_stream"))];
         fxs.extend(gate_exports().into_iter().take(1).map(|d| ("p30 + 門(対照)".to_string(), d.join("fixture_stream"))));
         let mut worst: Vec<(f64, f64)> = vec![(0.0, 0.0); fxs.len()];
@@ -680,10 +776,18 @@ mod tests {
     }
 
     fn k3g_parity(d: &Path) {
-        if open(&d.join("fixture_stream")).is_none() {
+        let Some(sh_s) = open(&d.join("fixture_stream")) else {
             return;
-        }
-        parity(&d.join("fixture_stream"), "k3g", "gate", None);
+        };
+        let front_dir = root().join(sh_s["front"].as_str().unwrap());
+        let gman: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(front_dir.join("manifest.json")).unwrap()).unwrap();
+        let inst = gman["cfg"].get("inst_mask").and_then(|v| v.as_bool()).unwrap_or(false);
+        let clean_strict = inst.then(|| {
+            let zg = rd(&front_dir.join("fixture/clean_gate_logit.f32"));
+            let thr = gman["cfg"]["thr"].as_f64().unwrap_or(0.5);
+            zg.iter().position(|&z| 1.0 / (1.0 + (-(z as f64)).exp()) >= thr).unwrap_or(zg.len()) * HOP
+        });
+        parity(&d.join("fixture_stream"), "k3g", "gate", clean_strict);
         if open(&d.join("fixture_stream_music")).is_some() {
             parity(&d.join("fixture_stream_music"), "k3g", "gate", Some(first_open(d) * HOP));
         }
@@ -705,6 +809,11 @@ mod tests {
     #[test]
     fn ship_gate_k3g16kv() {
         k3g_gate(&root().join(K3G16KV));
+    }
+
+    #[test]
+    fn ship_gate_p126() {
+        k3g_gate(&root().join(K3G_P126));
     }
 
     fn k3g_gate(d: &Path) {
@@ -750,7 +859,7 @@ mod tests {
     #[ignore]
     fn profile_k3g() {
         use crate::prof as pf;
-        let k3g = std::env::var("LVC_K3G").unwrap_or_else(|_| K3G.to_string());
+        let k3g = std::env::var("LVC_K3G").unwrap_or_else(|_| K3G_P126.to_string());
         for name in ["fixture_stream_music", "fixture_stream"] {
             let fx = root().join(&k3g).join(name);
             let Some(sh) = open(&fx) else { return };
@@ -781,22 +890,35 @@ mod tests {
         }
     }
 
-    /// 音楽を足さない入力(R1 の fixture_stream)では、門つきの前段の出力が前段 v3 の p30 と 1 bit 同じ(登録の門も開かない)。
+    /// 音楽を足さない入力(R1 の fixture_stream)では、門つきの前段の出力が、同じ定数の門なしの前段の p30 と 1 bit 同じ(登録の門も開かない)。
     #[test]
     fn clean_gate_equals_p30() {
         let fx = root().join(P30_FX);
         let Some(sh) = open(&fx) else { return };
         let x = rd(&fx.join("src_x.f32"));
         let w = rd(&fx.join("w.f32"));
+        let consts = |d: &Path| -> Option<String> {
+            let m: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(d.join("manifest.json")).ok()?).ok()?;
+            let fm = m["const"].get("F0_MODE").or_else(|| m.get("cfg").and_then(|c| c.get("f0_mode"))).unwrap_or(&serde_json::Value::Null);
+            Some(format!("{} {} {} {}", m["const"]["W_YIN"], m["const"]["ENV_CAP_MS"], m["const"]["TAU_UV_HZ"], fm))
+        };
         for d in gate_exports() {
-            let (mut a, mut b) = (build(&fx, &sh, Some(&d)), build(&fx, &sh, None));
+            let sh_g: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(d.join("fixture/shapes.json")).unwrap()).unwrap();
+            if !sh_g.get("clean_same_as_v3").and_then(|v| v.as_bool()).unwrap_or(true) {
+                continue;
+            }
+            let Some(plain) = [V3, V31, V4].iter().map(|n| root().join(n)).find(|q| consts(q).is_some() && consts(q) == consts(&d)) else {
+                eprintln!("skip: {} と同じ定数の門なしの前段の書き出しが無い(training/export_pfront.py)", d.display());
+                continue;
+            };
+            let (mut a, mut b) = (build(&fx, &sh, Some(&d)), build(&fx, &sh, Some(&plain)));
             assert_eq!((a.front_kind(), b.front_kind()), ("gate", "v3"));
             a.set_noise_fixture(rd(&fx.join("noise.f32")));
             b.set_noise_fixture(rd(&fx.join("noise.f32")));
             let ((oa, _, op), (ob, _, _)) = (run(&mut a, &x, None), run(&mut b, &x, None));
             let diff = oa.iter().zip(&ob).filter(|(p, q)| p.to_bits() != q.to_bits()).count();
             let md = oa.iter().zip(&w).map(|(p, q)| (p - q).abs()).fold(0.0f32, f32::max);
-            eprintln!("{}: 音楽なしの源 {} フレーム・門が開いたフレーム {}・前段 v3 の p30 と違う標本 {diff}・R1 の Python の波形との max 差 {md:.3e}", d.file_name().unwrap().to_string_lossy(), x.len() / HOP, op.iter().filter(|&&o| o).count());
+            eprintln!("{}: 音楽なしの源 {} フレーム・門が開いたフレーム {}・同じ定数の門なしの前段の p30 と違う標本 {diff}・R1 の Python の波形との max 差 {md:.3e}", d.file_name().unwrap().to_string_lossy(), x.len() / HOP, op.iter().filter(|&&o| o).count());
             assert_eq!(diff, 0);
         }
     }

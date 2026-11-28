@@ -42,7 +42,8 @@ def feat(x: np.ndarray, npz: Path) -> tuple[np.ndarray, dict]:
     x = x[: P.n_frames(len(x)) * P.H]
     d = P.analyze(x)
     ref = np.load(npz)
-    for k in ("f0", "env", "per"):
+    v3 = P.W_YIN == 1200 and P.WIN_CAP_MS >= 1000.0 and P.TAU_UV_HZ == 200.0 and P.WIN_K == 3.0 and not P.CT_MODE
+    for k in ("f0", "env", "per") if v3 else ():
         assert np.array_equal(d[k].astype(np.float32), ref[k]), f"{npz.name}: {k} が data/snv_p_feat と違う"
     f0, env, per = d["f0"].astype(np.float32), d["env"].astype(np.float32), d["per"].astype(np.float32)
     lf = np.where(f0 > 0, np.log(np.maximum(f0, 1.0) / 200.0), 0.0).astype(np.float32)

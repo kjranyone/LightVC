@@ -71,9 +71,9 @@ pub struct SnvSettings {
 impl Default for SnvSettings {
     fn default() -> Self {
         Self {
-            front: "results/snv_p45_gate_t80_export".into(),
-            model: "results/snv_k3g16kv_export".into(),
-            voc: "results/rvoc3hi/export_330k".into(),
+            front: "results/snv_p126_gate_export".into(),
+            model: "results/snv_p126_k3g16kv_export".into(),
+            voc: "results/snv_p123_s/export_20k".into(),
             operator: Vec::new(),
             threads: 4,
             semitones: 0.0,

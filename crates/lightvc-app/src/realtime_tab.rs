@@ -33,7 +33,7 @@ pub fn inference_loop(control_rx: Receiver<RtControl>, metrics_tx: Sender<RtMetr
     let (mut cap, mut in48, mut out48): (Vec<f32>, Vec<f32>, Vec<f32>) = (Vec::new(), Vec::new(), Vec::new());
     let mut out = vec![0f32; HOP];
     let (mut in_rms, mut out_rms, mut rtf) = (0.0f32, 0.0f32, 0.0f32);
-    let algo_ms = SnvStream::LATENCY_SAMPLES as f32 / 48.0;
+    let mut algo_ms = SnvStream::LATENCY_SAMPLES as f32 / 48.0;
     let mut times: Vec<f64> = Vec::new();
     let mut window = (0.0f32, 0.0f32, 0.0f32, 0u32);
     let mut gate_open = false;
@@ -81,7 +81,10 @@ pub fn inference_loop(control_rx: Receiver<RtControl>, metrics_tx: Sender<RtMetr
                         Err(e) => send_err(format!("{e}")),
                     }
                 }
-                RtControl::Stream(s) => stream = Some(*s),
+                RtControl::Stream(s) => {
+                    algo_ms = s.latency_samples() as f32 / 48.0;
+                    stream = Some(*s);
+                }
                 RtControl::Stop => {
                     running = false;
                     engine = None;

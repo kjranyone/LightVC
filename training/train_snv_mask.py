@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import time
 from pathlib import Path
 
@@ -124,6 +125,7 @@ class Gated(nn.Module):
         self.hyst = None
         self.thr = 0.5
         self.gamma = 1.0
+        self.inst_mask = False
 
 
 def hysteresis(p: torch.Tensor, on: int, off: int, thr: float = 0.5) -> torch.Tensor:
@@ -152,37 +154,67 @@ def features(M: nn.Module, x: np.ndarray, dev: str) -> dict:
         xin = xt[None].to(dev)
         p = torch.sigmoid(M.gate(xin)[0, 0].double()).cpu()[:Tn]
         op = hysteresis(p, *M.hyst, M.thr) if M.hyst else p >= M.thr
+        mon = (op | (p >= M.thr)) if getattr(M, "inst_mask", False) else op
         mm = torch.sigmoid(M.mask(xin)[0].double()).transpose(0, 1).cpu()[:Tn].sqrt()
         if M.gamma != 1.0:
             mm = mm.pow(M.gamma)
-        m = torch.where(op[:, None], mm, torch.ones_like(mm))
-        u = features_with_mask(x, m, P.f0_track_myin(xt, m)[0] if M.dec == "myin" else None)
+        m = torch.where(mon[:, None], mm, torch.ones_like(mm))
+        if os.environ.get("SNV_F0V4") == "1":
+            import snv_f0v4 as V4
+            fn, fv, bn = V4.f0_dual_track(xt)
+            if mon.any() and M.dec == "myin":
+                fm, bm = P.f0_track_myin(xt, m)
+                fn = torch.where(mon, fm, fn)
+                fv = torch.where(mon, fm, fv)
+                bn = torch.where(mon, bm, bn)
+            f_ep = torch.where((fv <= 0) & (fn > 0), fn, fv)
+            u = features_with_mask(x, m, (fn, bn), f0_env=f_ep)
+            u["c0_20"] = V4.short_c0(x, Tn, 20.0)
+            u["f0_voc"] = fv.cpu().numpy().astype(np.float32)
+            return u | {"gate_open": float(op.double().mean()), "gate": op.numpy().astype(np.float32), "gate_p": p.numpy().astype(np.float32)}
+        u = features_with_mask(x, m, P.f0_track_myin(xt, m) if M.dec == "myin" else None)
+        if os.environ.get("SNV_C020") == "1":
+            import snv_f0v4 as V4
+            u["c0_20"] = V4.short_c0(x, Tn, 20.0)
         return u | {"gate_open": float(op.double().mean()), "gate": op.numpy().astype(np.float32), "gate_p": p.numpy().astype(np.float32)}
     m = weight(M, M(xt[None].to(dev))[0].double()).transpose(0, 1).cpu()[:Tn]
-    return features_with_mask(x, m, P.f0_track_myin(xt, m)[0] if getattr(M, "dec", None) == "myin" else None)
+    if os.environ.get("SNV_F0V4") == "1":
+        import snv_f0v4 as V4
+        fn, fv, bn = V4.f0_dual_track(xt)
+        f_ep = torch.where((fv <= 0) & (fn > 0), fn, fv)
+        u = features_with_mask(x, m, (fn, bn), f0_env=f_ep)
+        u["c0_20"] = V4.short_c0(x, Tn, 20.0)
+        u["f0_voc"] = fv.cpu().numpy().astype(np.float32)
+        return u
+    return features_with_mask(x, m, P.f0_track_myin(xt, m) if getattr(M, "dec", None) == "myin" else None)
 
 
 @torch.no_grad()
-def features_with_mask(x: np.ndarray, m: torch.Tensor, f0: torch.Tensor | None = None) -> dict:
+def features_with_mask(x: np.ndarray, m: torch.Tensor, f0: torch.Tensor | tuple | None = None, f0_env: torch.Tensor | None = None) -> dict:
     Tn = P.n_frames(len(x))
     x = np.asarray(x[: Tn * H], np.float32)
     xt = torch.from_numpy(x)
+    ap = None
+    if isinstance(f0, tuple):
+        f0, ap = f0
     if f0 is None:
-        f0, _ = P.f0_track(xt)
+        f0, ap = P.f0_track(xt)
+    fe = f0 if f0_env is None else f0_env
     f0n = f0.cpu().numpy().astype(np.float64)
+    fen = fe.cpu().numpy().astype(np.float64)
     m = m.double()[:Tn]
     pw = P.power_p(xt, Tn)
     pm = pw * m.pow(2)
-    per = P.periodicity_from_power(pm, f0).cpu().numpy()
+    per = P.periodicity_from_power(pm, fe).cpu().numpy()
     fb, _ = PA._np_consts()
     num, den = pm.numpy() @ fb.T, pw.numpy() @ fb.T
     g = np.where(den > 0, np.sqrt(np.divide(num, den, out=np.ones_like(num), where=den > 0)), 1.0)
-    env = P.envelope_from_amp(P.envelope_amp(x, f0n) * g)
+    env = P.envelope_from_amp(P.envelope_amp(x, fen) * g)
     y = T.to_y(env, per, f0n)
     v = (f0n > 0).astype(np.float32)
     s, n = T.voiced_mean(env, f0n)
     lf = np.where(f0n > 0, np.log(np.maximum(f0n, 1.0) / 200.0), 0.0).astype(np.float32)
-    return {"y": y, "lf": lf, "v": v, "f0": f0n.astype(np.float32), "vs": s.astype(np.float32), "vn": n, "mask_mean": float(m.mean())}
+    return {"y": y, "lf": lf, "v": v, "f0": f0n.astype(np.float32), "vs": s.astype(np.float32), "vn": n, "mask_mean": float(m.mean()), "ap": ap.cpu().numpy().astype(np.float32) if ap is not None else np.zeros(len(f0n), np.float32)}
 
 
 def load(path: Path, dev: str) -> nn.Module:
@@ -195,6 +227,7 @@ def load(path: Path, dev: str) -> nn.Module:
         out.hyst = st["cfg"].get("hyst")
         out.thr = float(st["cfg"].get("thr", 0.5))
         out.gamma = float(st["cfg"].get("gamma", 1.0))
+        out.inst_mask = bool(st["cfg"].get("inst_mask", False))
         return out
     M = MaskNet(st["cfg"]["ch"], dil=tuple(st["cfg"].get("dil", SEP.DIL))).to(dev).eval()
     M.load_state_dict(st["M"])

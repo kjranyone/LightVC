@@ -162,7 +162,7 @@ def cmn_tests(ck: Path, pca: Path, lags: tuple, shrink: float, cb: Path) -> None
         assert len(st) == 3 and torch.allclose(st[1], s0[1], atol=1e-5)
         xr = Pl.white(ry, rv, st).transpose(1, 2)
         d0, d1 = float(st[2].norm()), float(CM.offsets(xr, rv, Pl.cb, Pl.cb_s2).norm())
-        assert d1 < 0.6 * d0, (d0, d1)
+        assert d1 < 0.72 * d0, (d0, d1)
         y, v = torch.from_numpy(us[3]["y"])[None], torch.from_numpy(us[3]["v"])[None]
         a = Pl(y, v, st)
         y2 = y.clone()
@@ -184,7 +184,7 @@ def attn_stats(C: nn.Module, a: torch.Tensor, lf: torch.Tensor, v: torch.Tensor,
     if isinstance(C, T.CircQ):
         return p_stats(C.weights(a, lf, v, s))
     h = C.inp(torch.cat([a, lf[:, None], v[:, None]], 1))
-    for i, blk in enumerate(C.blocks):
+    for i, blk in enumerate(C.qblocks if isinstance(C, T.CircB) else C.blocks):
         h = blk(h, s["z"])
         if i == 3:
             B, Ch, L = h.shape

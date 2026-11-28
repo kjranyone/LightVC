@@ -12,6 +12,7 @@
 --w_bt w(段 P78 step b・paper_snv 系 2x (xiv)): 源が擬似の操作者の版の発話で、今の回路が束の隣の声の構造へ描いた出力(勾配なし・高さは隣の声の平均へ)を源の側に置き、元の声の構造で描き直して加工しない Y に当てる項。操作者の統計は隣の声の参照。
 --init <ckpt> = 線形と回路の初めの値(診断の短い学習用)。
 --no_rend(段 P91)= rend の項を外す。環境変数 SNV_ENVC=1(段 P91)= 符号の入力(源・操作者の登録・目標の構造の鍵)を、固定の窓の包絡(data/snv_p_feat_st・data/snv_p_feat_st_x16 = snv_p91_stenv.py)に替える。当てる先と構造の値は今の包絡のまま。rend の項は符号の入力の型と合わないので --no_rend と組む。
+--sdir <dir> --dly d(段 P102・results/snv_p102/prereg.yaml): 源が元の声の発話のとき、源と操作者の登録を --sdir の特徴(速い前段で読んだ同じ発話)から取る(当てる先・構造は T.FEAT のまま = 目標の側は元の前段)。--dly d = 源の側(包絡・高さ・有声)だけを d フレーム遅らせる(当てる先は加工しない Y のまま)。推論は遅らせない = 回路は d フレーム先の Y を描くよう学ぶ。rend の項の入力も同じだけ遅らせる。
 --cn σ(段 P83・paper_snv 系 2x (xvii))= 学習のときだけ、源の白くした符号(PlayW.feat・線形の前)に、フレームと次元ごとに独立な正規の雑音(標準偏差 σ)を足す。当てる先・構造・検証は変えない(読み違いに対する回路の頑健さを学ぶ)。
 """
 from __future__ import annotations
@@ -78,19 +79,22 @@ def with_pads(tgt: dict, nk: dict) -> tuple[dict, dict]:
 
 
 class XBatches:
-    def __init__(self, corpus: dict, xcorpus: dict, dlf: dict, names: list[str], seed: int, p_x: float, p_nv: float = T.P_NV, ncorpus: dict | None = None, p_n: float = 0.0, p_nref: float = 0.5, n_plain: bool = False) -> None:
+    def __init__(self, corpus: dict, xcorpus: dict, dlf: dict, names: list[str], seed: int, p_x: float, p_nv: float = T.P_NV, ncorpus: dict | None = None, p_n: float = 0.0, p_nref: float = 0.5, n_plain: bool = False, scorpus: dict | None = None, dly: int = 0, rnv: float = 0.0) -> None:
         self.c, self.x, self.dlf, self.names, self.p_x, self.p_nv = corpus, xcorpus, dlf, names, p_x, p_nv
+        self.s, self.dly = scorpus, dly
+        self.rnv = rnv
         self.n, self.p_n, self.p_nref, self.n_plain = ncorpus, p_n, p_nref, n_plain
         self.rng = random.Random(seed)
 
-    def _crop(self, us: tuple, L: int) -> tuple:
+    def _crop(self, us: tuple, L: int, dly: tuple = ()) -> tuple:
         n_all = us[0]["y"].shape[1]
         s = self.rng.randint(0, max(0, n_all - L))
         n = min(L, n_all - s)
         out = []
-        for u in us:
+        for i, u in enumerate(us):
             y, lf, v = np.zeros((T.D_Y, L), np.float32), np.zeros(L, np.float32), np.zeros(L, np.float32)
-            y[:, :n], lf[:n], v[:n] = u["y"][:, s:s + n], u["lf"][s:s + n], u["v"][s:s + n]
+            j = np.maximum(np.arange(s, s + n) - (dly[i] if dly else 0), 0)
+            y[:, :n], lf[:n], v[:n] = u["y"][:, j], u["lf"][j], u["v"][j]
             out.append((y, lf, v))
         ok = np.zeros(L, np.float32)
         ok[:n] = 1.0
@@ -113,15 +117,16 @@ class XBatches:
             isn = self.n is not None and self.rng.random() < self.p_n and not (self.n_plain and isx)
             nref = isn and self.rng.random() < self.p_nref
             kn = self.rng.randrange(2) if self.n_plain else int(isx)
-            src = xt if isx else tgt
+            sd = self.s[name] if self.s is not None else d
+            src = xt if isx else ((sd["nv"][j] if use_nv else sd["norm"][j]) if self.s is not None else tgt)
             if isn:
                 tgt, src = with_pads(tgt, (self.n[name]["nv"] if use_nv else self.n[name]["norm"])[j][kn])
-            (a, b), ok, _ = self._crop((tgt, T.code_y(src)), T.CROP)
+            (a, b), ok, _ = self._crop((tgt, T.code_y(src)), T.CROP, (0, self.dly))
             for k, z in zip(K, (a[0], a[1], a[2], ok, b[0], b[1], b[2], np.float32(self.dlf[name] if isx else 0.0), np.float32(isx))):
                 B[k].append(z)
             ry, rv, xry, xrv, ryc = [], [], [], [], []
             for i in ri:
-                rs = x["norm"][i] if isx else d["norm"][i]
+                rs = x["norm"][i] if isx else sd["norm"][i]
                 if nref:
                     nm = self.n[name]["norm"][i][kn]["main"]
                     nn_ = min(nm["y"].shape[1], rs["y"].shape[1])
@@ -130,6 +135,13 @@ class XBatches:
                     rc = d["norm"][i]
                 (a, b, c), _, n = self._crop((rc, T.code_y(rs), T.code_y(rc)), T.REF_MAX)
                 ry.append(a[0][:, :n]), rv.append(a[2][:n]), xry.append(b[0][:, :n]), xrv.append(b[2][:n]), ryc.append(c[0][:, :n])
+            if self.rnv > 0 and d["nv"] and self.rng.random() < self.rnv:
+                ks = [q for q in range(len(d["nv"])) if not (use_nv and q == j)]
+                if ks:
+                    q = self.rng.choice(ks)
+                    rc, rs = d["nv"][q], (x["nv"][q] if isx else sd["nv"][q])
+                    (a, b, c), _, n = self._crop((rc, T.code_y(rs), T.code_y(rc)), T.REF_MAX)
+                    ry.append(a[0][:, :n]), rv.append(a[2][:n]), xry.append(b[0][:, :n]), xrv.append(np.zeros(n, np.float32)), ryc.append(c[0][:, :n])
             RY.append(np.concatenate(ry, 1)), RV.append(np.concatenate(rv)), XRY.append(np.concatenate(xry, 1)), XRV.append(np.concatenate(xrv)), RYC.append(np.concatenate(ryc, 1))
         L = max(r.shape[1] for r in RY)
         pad_y = lambda zs: np.stack([np.pad(z, ((0, 0), (0, L - z.shape[1]))) for z in zs])
@@ -163,7 +175,8 @@ def main() -> int:
     ap.add_argument("--pca", default="results/snv_p8b/pca_c_P2b.npy")
     ap.add_argument("--xdir", default="data/snv_p_feat_x16")
     ap.add_argument("--lags", default="0,8,16,24")
-    ap.add_argument("--circ", choices=["x", "q"], default="x")
+    ap.add_argument("--circ", choices=["x", "q", "b"], default="x")
+    ap.add_argument("--bneck", type=int, default=8)
     ap.add_argument("--cb", default="")
     ap.add_argument("--shrink", type=float, default=0.1)
     ap.add_argument("--p_x", type=float, default=0.5)
@@ -189,6 +202,9 @@ def main() -> int:
     ap.add_argument("--cn", type=float, default=0.0)
     ap.add_argument("--no_rend", action="store_true")
     ap.add_argument("--init", default="")
+    ap.add_argument("--sdir", default="")
+    ap.add_argument("--dly", type=int, default=0)
+    ap.add_argument("--rnv", type=float, default=0.0)
     a = ap.parse_args()
     out = ROOT / "results" / a.tag
     out.mkdir(parents=True, exist_ok=True)
@@ -217,6 +233,8 @@ def main() -> int:
     corpus = T.load_corpus()
     xcorpus = load_x(corpus, ROOT / a.xdir)
     ncorpus = load_n(corpus, ROOT / a.ndir) if a.ndir else None
+    scorpus = load_x(corpus, ROOT / a.sdir) if a.sdir else None
+    print("rnv", a.rnv, "sdir", a.sdir, "dly", a.dly, flush=True)
     man = json.loads((ROOT / a.xdir / "manifest.json").read_text())["voices"]
     dlf = {v: -math.log(man[v]["r"]) for v in corpus}
     tr, va = T.split(sorted(corpus))
@@ -226,7 +244,7 @@ def main() -> int:
     (out / "split.json").write_text(json.dumps({"train": tr, "val": va}))
     chk = data_check(corpus, xcorpus, dlf, tr)
     dev = "cuda"
-    Pl, C = P3.PlayW(ROOT / a.cpc, ROOT / a.pca, lags=lags, shrink=a.shrink, cb=ROOT / a.cb if a.cb else None, xc0=a.xc0).to(dev), (T.CircQ() if a.circ == "q" else T.Circ()).to(dev)
+    Pl, C = P3.PlayW(ROOT / a.cpc, ROOT / a.pca, lags=lags, shrink=a.shrink, cb=ROOT / a.cb if a.cb else None, xc0=a.xc0).to(dev), (T.CircQ() if a.circ == "q" else T.CircB(d=a.bneck) if a.circ == "b" else T.Circ()).to(dev)
     if a.init:
         ck0 = torch.load(ROOT / a.init, map_location="cpu", weights_only=False)
         Pl.proj.load_state_dict(ck0["proj"]), C.load_state_dict(ck0["C"])
@@ -254,8 +272,8 @@ def main() -> int:
     opt = torch.optim.AdamW(params, lr=a.lr, weight_decay=0.0)
     steps = 200 if a.smoke else a.steps
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1.0, s / 1000) * 0.5 * (1 + math.cos(math.pi * min(s, steps) / steps)))
-    trb = XBatches(corpus, xcorpus, dlf, tr, a.seed, a.p_x, ncorpus=ncorpus, p_n=a.p_n, p_nref=a.p_nref, n_plain=a.n_plain)
-    vc, vx = XBatches(corpus, xcorpus, dlf, va, 12345, 0.0, p_nv=0.0), XBatches(corpus, xcorpus, dlf, va, 12345, 1.0, p_nv=0.0)
+    trb = XBatches(corpus, xcorpus, dlf, tr, a.seed, a.p_x, ncorpus=ncorpus, p_n=a.p_n, p_nref=a.p_nref, n_plain=a.n_plain, scorpus=scorpus, dly=a.dly, rnv=a.rnv)
+    vc, vx = XBatches(corpus, xcorpus, dlf, va, 12345, 0.0, p_nv=0.0, scorpus=scorpus, dly=a.dly), XBatches(corpus, xcorpus, dlf, va, 12345, 1.0, p_nv=0.0, scorpus=scorpus, dly=a.dly)
     vbs = {"c": [vc.sample(a.bs) for _ in range(8)], "x": [vx.sample(a.bs) for _ in range(8)]}
     if ncorpus is not None:
         vn, vxn = XBatches(corpus, xcorpus, dlf, va, 12345, 0.0, p_nv=0.0, ncorpus=ncorpus, p_n=1.0, p_nref=a.p_nref, n_plain=a.n_plain), XBatches(corpus, xcorpus, dlf, va, 12345, 1.0, p_nv=0.0, ncorpus=ncorpus, p_n=1.0, p_nref=a.p_nref)
@@ -318,7 +336,8 @@ def main() -> int:
         cap.clear()
         yA = C(a_src, lf, b["xv"], s)
         l_self = T.masked_l1(yA, b["y"], ms)
-        l_rend = torch.zeros((), device=dev) if a.no_rend else T.masked_l1(C(Pl(yA.detach(), b["xv"], st_ref), lf, b["xv"], s), b["y"], mc)
+        yR = yA.detach() if a.dly == 0 else torch.cat([yA.detach()[..., :1].expand(-1, -1, a.dly), yA.detach()[..., :-a.dly]], -1)
+        l_rend = torch.zeros((), device=dev) if a.no_rend else T.masked_l1(C(Pl(yR, b["xv"], st_ref), lf, b["xv"], s), b["y"], mc)
         loss = l_self + l_rend
         l_bt = T.masked_l1(back(b, st_ref, s, lf, a_src), b["y"], mc * b["isx"][:, None]) if a.w_bt > 0 else torch.zeros((), device=dev)
         loss = loss + a.w_bt * l_bt
@@ -337,7 +356,7 @@ def main() -> int:
             cap.clear()
             log["evals"].append(rec)
             print("eval", json.dumps(rec), flush=True)
-            ck = {"proj": Pl.proj.state_dict(), "C": C.state_dict(), "cpc": a.cpc, "step": step, "circ": a.circ, "play": "wst", "pca": a.pca, "xdir": a.xdir, "p_x": a.p_x, "ndir": a.ndir, "p_n": a.p_n, "p_nref": a.p_nref, "n_plain": a.n_plain, "lags": list(lags), "shrink": a.shrink, "cb": a.cb, "xc0": a.xc0, "ent": [a.ent_lo, a.ent_hi, a.ent_w, a.marg_lo], "w_bt": a.w_bt, "init": a.init, "cn": a.cn, "no_rend": a.no_rend, "envc": T.ENVC}
+            ck = {"proj": Pl.proj.state_dict(), "C": C.state_dict(), "cpc": a.cpc, "step": step, "circ": a.circ, "play": "wst", "pca": a.pca, "xdir": a.xdir, "p_x": a.p_x, "ndir": a.ndir, "p_n": a.p_n, "p_nref": a.p_nref, "n_plain": a.n_plain, "lags": list(lags), "shrink": a.shrink, "cb": a.cb, "xc0": a.xc0, "ent": [a.ent_lo, a.ent_hi, a.ent_w, a.marg_lo], "w_bt": a.w_bt, "init": a.init, "cn": a.cn, "no_rend": a.no_rend, "envc": T.ENVC, "sdir": a.sdir, "dly": a.dly, "rnv": a.rnv, "bneck": a.bneck}
             torch.save(ck, out / "last.pt")
             if step == steps // 2:
                 torch.save(ck, out / f"step{step // 1000}k.pt")

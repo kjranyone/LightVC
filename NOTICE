@@ -5,9 +5,10 @@ Model weights
 The weights are not stored in this repository. `cargo run -p lightvc-xtask -- package`
 copies three exported parts into models/ of the distribution:
 
-  - models/front_gate — front end v3 (fixed mel filterbank and DCT matrix; signal
-    processing) plus a gate network and a time-frequency mask network
-    (checkpoint snv_p45_gate_t80: gate from snv_p40_gate_t80, mask from snv_p45_mask).
+  - models/front_gate — front end v4_dual (fixed mel filterbank, DCT matrix and
+    causal dual pitch tracker; signal processing) plus a gate network and a
+    time-frequency mask network with instantaneous mask activation
+    (checkpoint snv_p126_gate_i80: gate from snv_p40_gate_t80, mask from snv_p45_mask).
     Trained on mixtures of
       - speech generated with Irodori-TTS-v4.1-Small (Aratako; MIT) by the fictional
         voices described below, and versions of that speech re-synthesized with
@@ -19,17 +20,20 @@ copies three exported parts into models/ of the distribution:
         are listed in ATTRIBUTION_SOURCES.md. No source audio is distributed.
 
   - models/k3g — three content encoders and circuits whose outputs are averaged
-    (checkpoints snv_p24_c, snv_p30_c and snv_p91e_c; the frame-wise weights are
-    and the attention keys and values are stored as 16-bit floats). Trained only on speech generated with
-    Irodori-TTS-v4.1-Small (Aratako; MIT): 564 fictional voices (VoiceDesign, made
-    from text descriptions; no recording of a real person was used as a voice
-    reference), 10 utterances per voice, non-verbal vocalizations by the same
-    voices, and the same sentences read by different voices; the encoders also saw
-    WORLD re-synthesized and recording-chain versions of that speech.
+    (checkpoints snv_p125a_c, snv_p125b_c and snv_p125e_c; the frame-wise weights
+    and the attention keys and values are stored as 16-bit floats). Trained only on
+    speech generated with Irodori-TTS-v4.1-Small (Aratako; MIT): 564 fictional voices
+    (VoiceDesign, made from text descriptions; no recording of a real person was used
+    as a voice reference), 10 utterances per voice, non-verbal vocalizations by the
+    same voices, and the same sentences read by different voices; the encoders also
+    saw WORLD re-synthesized and recording-chain versions of that speech.
     The sentences were taken from the transcripts of a non-public speech dataset,
     which is not distributed.
 
-  - models/rvoc3hi — vocoder rvoc3hi (step 330000). Trained on:
+  - models/rvoc3hi — vocoder snv_p123_s (step 20000), fine-tuned from rvoc3hi
+    (step 330000) on speech and non-verbal vocalizations generated with
+    Irodori-TTS-v4.1-Small (Aratako; MIT) by the 564 fictional voices above.
+    The base checkpoint rvoc3hi (step 330000) was trained on:
       - a non-public dataset of real speech, which is not distributed;
       - speech generated with Irodori-TTS-600M-v3-VoiceDesign (Aratako; MIT)
         using clips of that dataset as voice references.

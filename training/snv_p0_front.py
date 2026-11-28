@@ -11,6 +11,7 @@ cond = 描画器 rvoc の界面 [31, T](c0n・c1..c24 / 10・log(f0 / 200)・有
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -22,7 +23,7 @@ import pae as PA
 
 SR = N.SR
 H = N.HOP
-W_YIN = 1200
+W_YIN = int(os.environ.get("SNV_W_YIN", "1200"))
 LP_HZ = 1500.0
 LP_ORDER = 4
 K_CAND = 6
@@ -47,6 +48,12 @@ OE_UP = -6.0
 OE_W = 2.0
 ETA = 0.0
 PAD_L = 4096
+TAU_UV_HZ = float(os.environ.get("SNV_TAU_UV", "200"))
+WIN_K = float(os.environ.get("SNV_WIN_K", "3"))
+WIN_CAP_MS = float(os.environ.get("SNV_WIN_CAP_MS", "1000"))
+CT_MODE = os.environ.get("SNV_CT_MODE", "")
+CT_FSW = float(os.environ.get("SNV_CT_FSW", "1e9"))
+CT_CAP_MS = float(os.environ.get("SNV_CT_CAP", "1e12"))
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -258,14 +265,18 @@ def f0_track_myin(x: torch.Tensor, m: torch.Tensor) -> tuple[torch.Tensor, torch
 
 
 def envelope_amp(x: np.ndarray, f0: np.ndarray) -> np.ndarray:
+    if CT_MODE:
+        import snv_ct
+        return snv_ct.amp(x, f0, CT_MODE, CT_FSW, CT_CAP_MS)
     import pyworld
     fb, _ = PA._np_consts()
     T = len(f0)
     xa = np.concatenate([np.zeros(PAD_L), x.astype(np.float64), np.zeros(PA.A)])
-    T0 = 1.0 / np.where(f0 > 0, f0, 200.0)
+    T0 = 1.0 / np.where(f0 > 0, f0, TAU_UV_HZ)
     t = np.arange(T)
-    tau = np.minimum(t * H, (t + 1) * H - 2 - np.ceil(1.5 * T0 * SR))
-    sp = pyworld.cheaptrick(xa, np.where(f0 > 0, f0, 0.0).astype(np.float64), (PAD_L + tau) / SR, SR, fft_size=PA.NFFT)
+    half = np.where(f0 > 0, np.minimum(WIN_K / 2 * T0, WIN_CAP_MS * 1e-3), 1.5 * T0)
+    tau = np.minimum(t * H, (t + 1) * H - 2 - np.ceil(half * SR))
+    sp = pyworld.cheaptrick(xa, np.where(f0 > 0, 1.5 / half, 0.0).astype(np.float64), (PAD_L + tau) / SR, SR, fft_size=PA.NFFT)
     return np.sqrt(sp) @ fb.T
 
 

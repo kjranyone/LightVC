@@ -42,7 +42,7 @@ def main() -> int:
     m.load_state_dict(st["ema"])
     m.eval()
     ten = tensors(m)
-    man = {"tensors": {}, "cfg": m.cfg, "const": {"SR": N.SR, "HOP": N.HOP, "DELAY": N.DELAY, "D_COND": int(c["d_cond"]), "UPS": list(R.UPS),
+    man = {"tensors": {}, "cfg": m.cfg, "const": {"SR": N.SR, "HOP": N.HOP, "DELAY": int(st.get("delay", N.DELAY)), "D_COND": int(c["d_cond"]), "UPS": list(R.UPS),
                                                   "step": int(st.get("step", 0)), "H_MAX": N.H_MAX, "H_ROLL": N.H_ROLL, "K_MAX": N.K_MAX, "env_smooth": float(TR.ckpt_env_smooth(st, None)), "macs_per_second": R.macs_per_second(m)}}
     off = 0
     with open(out / "weights.bin", "wb") as f:

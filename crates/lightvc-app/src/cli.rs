@@ -48,11 +48,11 @@ pub fn run_gui(cmd: GuiCmd) -> Result<()> {
 /// paper_snv の製品経路の部品(training/export_{pfront,snv_model,rvoc}.py の出力)と登録の波形(48 kHz)。
 #[derive(Parser, Clone)]
 pub struct SnvModel {
-    #[arg(long, default_value = "results/snv_p45_gate_t80_export")]
+    #[arg(long, default_value = "results/snv_p126_gate_export")]
     pub front: std::path::PathBuf,
-    #[arg(long, default_value = "results/snv_k3g16kv_export")]
+    #[arg(long, default_value = "results/snv_p126_k3g16kv_export")]
     pub model: std::path::PathBuf,
-    #[arg(long, default_value = "results/rvoc3hi/export_330k")]
+    #[arg(long, default_value = "results/snv_p123_s/export_20k")]
     pub voc: std::path::PathBuf,
     /// 操作者の登録(自分の普通の発話・計 30 秒程度・複数可)
     #[arg(long, required = true, num_args = 1..)]
@@ -195,7 +195,7 @@ pub fn run_snv(cmd: SnvCmd) -> Result<()> {
             first.map_or("null".to_string(), |f| format!("{:.2}", f as f64 / 48.0)),
             ms.iter().sum::<f64>() / n as f64, pc(0.5), pc(0.95), pc(0.99), q[q.len() - 1],
             ms.iter().sum::<f64>() / n as f64 / (HOP as f64 / 48.0),
-            cmd.model.threads, SnvStream::LATENCY_SAMPLES as f64 / 48.0
+            cmd.model.threads, vc.latency_samples() as f64 / 48.0
         );
         return Ok(());
     }
@@ -242,7 +242,7 @@ pub fn run_realtime_snv(cmd: RealtimeSnvCmd) -> Result<()> {
     let mut up = mk(csr, SR)?;
     let mut down = mk(SR, psr)?;
     println!("snv realtime | host {host_name} | in {csr} Hz・out {psr} Hz{} | algorithmic latency {:.1} ms(ブロック + 出力部)+ resampler + device buffers | 半音 {:+} | スレッド {}",
-             if conv { " (48 kHz へ/からの変換)" } else { "" }, SnvStream::LATENCY_SAMPLES as f64 / 48.0, cmd.model.semitones, cmd.model.threads);
+             if conv { " (48 kHz へ/からの変換)" } else { "" }, vc.latency_samples() as f64 / 48.0, cmd.model.semitones, cmd.model.threads);
     for _ in 0..1024 {
         let _ = io.playback.push(0.0);
     }

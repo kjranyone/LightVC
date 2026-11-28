@@ -1,0 +1,119 @@
+2026-11-25T00:50Z 段 P101 の smoke(入力の洗い出し・training/snv_diag/p101_chain.sh snv_p101sm_e e 200 200):
+results/snv_p101sm_e_cpc/
+results/snv_p101sm_e_c/
+# 2026-11-25T06:59:38Z 段 P101: 手元の保険の走行(snv_p101l_b・snv_p101l_e)。Colab の snv_p101r_* が先に終わったので、登録の規則どおり評価せずに止めて消す(回路は step 9000 / 13000 で中断)。
+results/snv_p101l_b_cpc/codebook_k128.npz	18862
+results/snv_p101l_b_cpc/step10k.pt	14293017
+results/snv_p101l_b_cpc/pca_c.npy	262272
+results/snv_p101l_b_cpc/step15k.pt	14293017
+results/snv_p101l_b_cpc/last.pt	14290493
+results/snv_p101l_b_cpc/step20k.pt	14293017
+results/snv_p101l_b_cpc/sig.npy	248
+results/snv_p101l_e_cpc/codebook_k128.npz	18862
+results/snv_p101l_e_cpc/step10k.pt	14293017
+results/snv_p101l_e_cpc/pca_c.npy	262272
+results/snv_p101l_e_cpc/step15k.pt	14293017
+results/snv_p101l_e_cpc/last.pt	14290493
+results/snv_p101l_e_cpc/step20k.pt	14293017
+results/snv_p101l_e_cpc/sig.npy	248
+results/snv_p101l_b_c/train_log.json	2523
+results/snv_p101l_b_c/split.json	5420
+results/snv_p101l_b_c/last.pt	32489349
+results/snv_p101l_e_c/train_log.json	3425
+results/snv_p101l_e_c/split.json	5420
+results/snv_p101l_e_c/last.pt	32489413
+results/snv_p101l_b.chain.log
+results/snv_p101l_e.chain.log
+# 2026-11-25T08:04:18Z 段 P102 の動作確認(200 歩)
+results/snv_p102sm_m1_a_c/train_log.json	1028
+results/snv_p102sm_m1_a_c/split.json	5420
+results/snv_p102sm_m1_a_c/last.pt	32489413
+results/snv_p102sm_m1_e_c/train_log.json	1011
+results/snv_p102sm_m1_e_c/split.json	5420
+results/snv_p102sm_m1_e_c/last.pt	32489477
+
+## 2026-11-25T16:27:49Z 段 P101・P102 の判定の記録の後(候補なし)= 中間の snap・Colab の走行ログ・半フレームの特徴(training/snv_p102_feat.py で作り直せる)
+results/snv_p101a_cpc/step10k.pt
+results/snv_p101a_cpc/step15k.pt
+results/snv_p101a_cpc/step20k.pt
+results/snv_p101a_c/step20k.pt
+results/snv_p101r_b_cpc/step10k.pt
+results/snv_p101r_b_cpc/step15k.pt
+results/snv_p101r_b_cpc/step20k.pt
+results/snv_p101r_b_c/step20k.pt
+results/snv_p101r_e_cpc/step10k.pt
+results/snv_p101r_e_cpc/step15k.pt
+results/snv_p101r_e_cpc/step20k.pt
+results/snv_p101r_e_c/step20k.pt
+results/snv_p102m0_a_c/step20k.pt
+results/snv_p102m0_b_c/step20k.pt
+results/snv_p102m0_e_c/step20k.pt
+results/snv_p102m1_a_c/step20k.pt
+results/snv_p102m1_b_c/step20k.pt
+results/snv_p102m1_e_c/step20k.pt
+results/snv_p102mh_a_c/step20k.pt
+results/snv_p102mh_b_c/step20k.pt
+results/snv_p102mh_e_c/step20k.pt
+results/snv_p101/colab_new.log
+results/snv_p101/colab_push.log
+results/snv_p101/colab_up.log
+results/snv_p101r.colab.exit
+results/snv_p101r.colab.launch.log
+results/snv_p101r.colab.watch.log
+results/snv_p101/trace_e.log
+results/snv_p102c0.colab.exit
+results/snv_p102c0.colab.launch.log
+results/snv_p102c0.colab.watch.log
+results/snv_p102cb.colab.exit
+results/snv_p102cb.colab.launch.log
+results/snv_p102cb.colab.watch.log
+results/snv_p102ch.colab.exit
+results/snv_p102ch.colab.launch.log
+results/snv_p102ch.colab.watch.log
+results/snv_p102/colab_c0.log
+results/snv_p102/colab_cb.log
+results/snv_p102/colab_ch.log
+results/snv_p102/colab_claim_snv_p102c0
+results/snv_p102/colab_claim_snv_p102ch
+results/snv_p102/colab_drive.log
+results/snv_p102/colab_up_snv_p102c0.log
+results/snv_p102/colab_up_snv_p102cb.log
+results/snv_p102/colab_up_snv_p102ch.log
+results/snv_p102/smoke_m1_a.log
+results/snv_p102/smoke_m1_e.log
+data/snv_p_feat_v31h/ (10221 npz・1.8G)
+data/snv_p_feat_x16_v31h/ (10221 npz・1.8G)
+data/snv_p_feat_st_v31h/ (10221 npz・1.8G)
+data/snv_p_feat_st_x16_v31h/ (10221 npz・1.8G)
+
+## 2026-11-25T16:31:56Z 段 P103 の smoke(当日中に削除)
+results/snv_p103sm_b_cpc
+results/snv_p103sm_b_c
+results/snv_p103/trace_b.log
+
+## 2026-11-25T20:39:52Z 段 P103 の判定の記録の後(対照・候補にしない)= 中間の snap・Colab の走行ログ
+results/snv_p103a.colab.exit
+results/snv_p103a.colab.launch.log
+results/snv_p103a.colab.watch.log
+results/snv_p103a_cpc/step10k.pt
+results/snv_p103a_cpc/step15k.pt
+results/snv_p103a_cpc/step20k.pt
+results/snv_p103a_c/step20k.pt
+results/snv_p103b.colab.exit
+results/snv_p103b.colab.launch.log
+results/snv_p103b.colab.watch.log
+results/snv_p103b_cpc/step10k.pt
+results/snv_p103b_cpc/step15k.pt
+results/snv_p103b_cpc/step20k.pt
+results/snv_p103b_c/step20k.pt
+results/snv_p103/colab_a2.log
+results/snv_p103/colab_a.log
+results/snv_p103/colab_b.log
+results/snv_p103/colab_claim_snv_p103a
+results/snv_p103/colab_claim_snv_p103b
+results/snv_p103/colab_up_snv_p103a.log
+results/snv_p103/colab_up_snv_p103b.log
+results/snv_p103e_cpc/step10k.pt
+results/snv_p103e_cpc/step15k.pt
+results/snv_p103e_cpc/step20k.pt
+results/snv_p103e_c/step20k.pt

@@ -205,7 +205,7 @@ class System:
             self.M12.load_state_dict(st["M"])
             self.C = lambda a, lf, v, th: self.M12.dec(a, lf, v, th)
         else:
-            self.C = (T.CircQ() if st.get("circ") == "q" else T.Circ()).to(DEV).eval()
+            self.C = (T.CircQ() if st.get("circ") == "q" else T.CircB(d=st.get("bneck", 8)) if st.get("circ") == "b" else T.Circ()).to(DEV).eval()
             self.C.load_state_dict(st["C"])
         self.p11 = "Es" in st
         self.p3 = "proj" in st
@@ -446,13 +446,46 @@ class System:
                 r = r - ((self.classes(y, v, self.op_stat(stat)) @ Rk).T[None] if kind[4] == "k" else Rc[None, :, None])
                 return torch.cat([yo[:, :25] + float(kind[5:]) * r, yo[:, 25:]], 1)
             return torch.cat([yo[:, :25] + float(kind[7:] if al else kind[4:]) * (1.0 if al else g) * r, yo[:, 25:]], 1)
-        if kind in ("c0s", "c0lo", "c0hi") or kind.startswith(("c0j", "c0g")):
-            key = tuple(id(u) for u in stat)
+        if kind in ("c0s", "c0lo", "c0hi") or kind.startswith(("c0j", "c0g", "c0bg")):
+            use_20 = kind.startswith("c0bg") and "c0_20" in src
+            key = (tuple(id(u) for u in stat), use_20)
             if key not in self.c0cache:
-                c = np.concatenate([u["y"][0][u["v"] > 0.5] for u in (self.prep(u) for u in stat)])
+                us_p = [self.prep(u) for u in stat]
+                c = np.concatenate([(u["c0_20"] if (use_20 and "c0_20" in u) else u["y"][0])[u["v"] > 0.5] for u in us_p])
                 self.c0cache[key] = (stat, float(c.mean()), max(float(c.std()), 1e-3))
             _, m0, s0 = self.c0cache[key]
-            d = self.hc0[id(S)][0] + self.hc0[id(S)][1] * (y[:, :1] - m0) / s0
+            src_c0 = torch.from_numpy(src["c0_20"])[None, None].to(DEV) if use_20 else y[:, :1]
+            z_src = (src_c0 - m0) / s0
+            d = self.hc0[id(S)][0] + self.hc0[id(S)][1] * z_src
+            if kind.startswith("c0bgr"):
+                pts = kind[5:].split("_")
+                lam = float(pts[0])
+                th_lo = float(pts[1]) if len(pts) > 1 and pts[1] else 0.10
+                th_hi = float(pts[2]) if len(pts) > 2 and pts[2] else 0.20
+                gp = torch.from_numpy(src["gate_p"])[None, None].to(DEV) if "gate_p" in src else torch.zeros_like(v)[:, None]
+                vn = v[0].cpu().numpy() > 0.5
+                act = np.zeros(len(vn), dtype=np.float32)
+                since = 999
+                for ti, vv in enumerate(vn):
+                    since = 0 if vv else since + 1
+                    act[ti] = 1.0 if since <= 6 else 0.0
+                w_gp = ((th_hi - gp) / max(th_hi - th_lo, 1e-6)).clamp(0.0, 1.0)
+                w_act = torch.maximum(torch.from_numpy(act)[None, None].to(DEV), ((z_src + 1.4) / 0.4).clamp(0.0, 1.0))
+                w_eff = lam * w_gp * w_act
+                return torch.cat([(1.0 - w_eff) * yo[:, :1] + w_eff * d, yo[:, 1:]], 1)
+            if kind.startswith("c0bg"):
+                lam_s, _, th_s = kind[4:].partition("_")
+                lam, th = float(lam_s), float(th_s or "0.15")
+                gp = torch.from_numpy(src["gate_p"])[None, None].to(DEV) if "gate_p" in src else torch.zeros_like(v)[:, None]
+                vn = v[0].cpu().numpy() > 0.5
+                act = np.zeros(len(vn), dtype=bool)
+                since = 999
+                for ti, vv in enumerate(vn):
+                    since = 0 if vv else since + 1
+                    act[ti] = since <= 6
+                act_t = torch.from_numpy(act)[None, None].to(DEV) | (z_src > -1.2)
+                mixed = (1.0 - lam) * yo[:, :1] + lam * d
+                return torch.cat([torch.where((gp < th) & act_t, mixed, yo[:, :1]), yo[:, 1:]], 1)
             if kind.startswith("c0g"):
                 gp = torch.from_numpy(src["gate_p"])[None, None].to(DEV) if "gate_p" in src else torch.zeros_like(v)[:, None]
                 return torch.cat([torch.where(gp < float(kind[3:]), d, yo[:, :1]), yo[:, 1:]], 1)
@@ -473,7 +506,8 @@ class System:
         return torch.cat([torch.where(g > 0.5, yw, yo[:, :29]), yo[:, 29:]], 1)
 
     @torch.no_grad()
-    def convert(self, src: dict, stat: list[dict], S: dict, k: int, with_y: bool = False, dlf_c: float | None = None):
+    def convert(self, src: dict, stat: list[dict], S: dict, k: int, with_y: bool = False, dlf_c: float | None = None, draw: bool = True):
+        wav = src_wav(src) if draw and (getattr(self.gen, "fast", 0) or getattr(self.gen, "msub", 0)) else None
         if self.vtl and self.p11:
             src = warp_utt(src, self.fit_vtl(stat))
         src = self.prep(src)
@@ -500,21 +534,79 @@ class System:
         if self.ml:
             mo = (yo[:, 1:25] * v[:, None]).sum(-1, keepdim=True) / v.sum().clamp(min=1.0)
             yo = torch.cat([yo[:, :1], torch.where(v[:, None] > 0, yo[:, 1:25] + self.ml * (self.hmu[id(S)][None, 1:25, None] - mo), yo[:, 1:25]), yo[:, 25:]], 1)
-        w = self.render(src, yo, k)
+        w = self.render(src, yo, k, wav) if draw else None
         return (w, yo) if with_y else w
 
     @torch.no_grad()
-    def render(self, src: dict, yo: torch.Tensor, k: int) -> np.ndarray:
+    def render(self, src: dict, yo: torch.Tensor, k: int, wav: np.ndarray | None = None) -> np.ndarray:
         f0s, vs, lfs = src["f0"], src["v"], src["lf"]
         if getattr(self, "f0_med", 0.0) > 0:
             f0s = FG.clean(f0s, self.f0_med)
+            if os.environ.get("SNV_F0G") == "2" and "ap" in src:
+                f0s = FG.unhold(f0s, src["ap"][: len(f0s)])
             vs = (f0s > 0).astype(np.float32)
             lfs = np.where(f0s > 0, np.log(np.maximum(f0s, 1.0) / 200.0), 0.0).astype(np.float32)
         v = torch.from_numpy(vs)[None].to(DEV)
         lf = torch.from_numpy(lfs)[None].to(DEV) + k * T.LN2_12 * v
+        if os.environ.get("SNV_C0X"):
+            import math
+            bb = 1.0 - math.exp(-1.0 / float(os.environ["SNV_C0X"]))
+            sc = torch.from_numpy(src["y"][0])[None].to(DEV)
+
+            def lp(x: torch.Tensor) -> torch.Tensor:
+                o = [x[:, 0]]
+                for t in range(1, x.shape[-1]):
+                    o.append(o[-1] + bb * (x[:, t] - o[-1]))
+                return torch.stack(o, -1)
+
+            yo = torch.cat([(lp(yo[:, 0]) + sc - lp(sc))[:, None], yo[:, 1:]], 1)
         cond = torch.cat([smooth_env(self.gen, yo[:, :25]), lf[:, None], v[:, None], yo[:, 25:29].clamp(0, 1.5) * v[:, None]], 1)
         f0 = torch.from_numpy(f0s * 2 ** (k / 12))[None].to(DEV)
-        return self.gen(cond, TR.excitation(f0, cond.shape[-1] * N.HOP, torch.Generator().manual_seed(0)))[0].cpu().numpy()[N.DELAY:].astype(np.float32)
+        return draw(self.gen, cond, f0, wav, f0s)
+
+
+def draw(gen: torch.nn.Module, cond: torch.Tensor, f0: torch.Tensor, wav: np.ndarray | None = None, f0_src: np.ndarray | None = None) -> np.ndarray:
+    n = cond.shape[-1]
+    fast = getattr(gen, "fast", 0)
+    if fast and gen.ylag:
+        cond = torch.cat([cond[..., :1].expand(-1, -1, gen.ylag), cond[..., : -gen.ylag]], -1)
+        f0 = torch.cat([f0[..., :1].expand(-1, gen.ylag), f0[..., : -gen.ylag]], -1)
+    ex = TR.excitation(f0, n * N.HOP, torch.Generator().manual_seed(0))
+    if fast:
+        import snv_p98_cue as Q
+        import train_snv_p98 as T98
+        assert wav is not None, "速い道つきの描画器は源の波形が要る"
+        fr = T98.fast_rows(Q.cue(Q.followers(wav)[T98.ROWS[fast]]), n, gen.delay)
+        ex = torch.cat([ex, torch.from_numpy(fr)[None].to(DEV).repeat_interleave(Q.SUB, -1)[..., : n * N.HOP]], 1)
+    if getattr(gen, "msub", 0) == 2:
+        import librosa
+        import snv_p116_res as S116
+        import train_snv_p114 as T114
+        assert wav is not None, "鳴りの信号を読む描画器は源の波形が要る"
+        x = np.asarray(wav, np.float32)
+        fs = f0[0].cpu().numpy() if f0_src is None else np.asarray(f0_src, np.float32)
+        fo = f0[0].cpu().numpy()
+        both = (fs > 0) & (fo > 0)
+        st = 12.0 * float(np.log2(np.median(fo[both] / fs[both]))) if both.any() else 0.0
+        if abs(st) > 0.05:
+            x = librosa.effects.pitch_shift(x, sr=N.SR, n_steps=st, res_type="soxr_hq").astype(np.float32)
+        x = x[: P0.n_frames(len(x)) * N.HOP]
+        r = S116.whiten(x, P0.analyze(x)["env"])
+        r = r / (np.abs(r).max() + 1e-9) * 0.5
+        rr = np.concatenate([np.zeros(gen.delay, np.float32), r, np.zeros(max(0, n * N.HOP - len(r) - gen.delay), np.float32)])[: n * N.HOP]
+        ex = torch.cat([ex[:, :2], torch.from_numpy(rr)[None, None].to(DEV) * T114.RES_GAIN], 1)
+        if getattr(gen, "pdrop", 0.0) >= 1.0:
+            ex = torch.cat([torch.zeros_like(ex[:, :1]), ex[:, 1:]], 1)
+    elif getattr(gen, "msub", 0):
+        import snv_p114_sal as S114
+        import train_snv_p114 as T114
+        assert wav is not None, "複数の周期の励起の描画器は源の波形が要る"
+        fs = f0[0].cpu().numpy() if f0_src is None else np.asarray(f0_src, np.float32)
+        m = min(n, len(wav) // N.HOP)
+        sal = np.zeros((T114.N_SAL, n), np.float32)
+        sal[:, :m] = S114.salience(np.asarray(wav, np.float32), fs[:m])
+        ex = T114.exc_all(f0, torch.from_numpy(sal)[None].to(DEV), n * N.HOP, torch.Generator().manual_seed(0))
+    return gen(cond, ex)[0].cpu().numpy()[gen.delay :].astype(np.float32)
 
 
 class Ens:
@@ -532,13 +624,41 @@ class Ens:
 
     @torch.no_grad()
     def convert(self, src: dict, stat: list[dict], S: list, k: int, with_y: bool = False, dlf_c: float | None = None):
-        yo = sum(p.convert(src, stat, s, k, with_y=True, dlf_c=dlf_c)[1][:, :29] for p, s in zip(self.parts, S)) / len(self.parts)
-        w = self.parts[0].render(self.parts[0].prep(src), yo, k)
+        yo = sum(p.convert(src, stat, s, k, with_y=True, dlf_c=dlf_c, draw=False)[1][:, :29] for p, s in zip(self.parts, S)) / len(self.parts)
+        wav = src_wav(src) if (getattr(self.parts[0].gen, "fast", 0) or getattr(self.parts[0].gen, "msub", 0)) else None
+        w = self.parts[0].render(self.parts[0].prep(src), yo, k, wav)
         return (w, yo) if with_y else w
 
 
+def src_wav(src: dict) -> np.ndarray:
+    w = src.get("wav")
+    if w is None:
+        import librosa
+        w = librosa.load(src["wav_path"], sr=SR, mono=True)[0]
+    return np.asarray(w, np.float32)
+
+
 def smooth_env(gen: torch.nn.Module, env: torch.Tensor) -> torch.Tensor:
+    if os.environ.get("SNV_EK0"):
+        k0 = [float(v) for v in os.environ["SNV_EK0"].split(",")]
+        q, n = torch.nn.functional.pad(env[:, :1], (3, 0), mode="replicate"), env.shape[-1]
+        return torch.cat([sum(k0[j] * q[..., 3 - j : 3 - j + n] for j in range(4)), _smooth_env(gen, env)[:, 1:]], 1)
+    if os.environ.get("SNV_E1E"):
+        a0, th = (float(v) for v in os.environ["SNV_E1E"].split(","))
+        x, o = env[:, 0], [env[:, 0, 0]]
+        for t in range(1, x.shape[-1]):
+            d = x[:, t] - o[-1]
+            o.append(o[-1] + (a0 + d.abs() / th).clamp(max=1.0) * d)
+        return torch.cat([torch.stack(o, -1)[:, None], _smooth_env(gen, env)[:, 1:]], 1)
+    return _smooth_env(gen, env)
+
+
+def _smooth_env(gen: torch.nn.Module, env: torch.Tensor) -> torch.Tensor:
     w = getattr(gen, "env_smooth", 0.0)
+    if os.environ.get("SNV_EK"):
+        k = [float(v) for v in os.environ["SNV_EK"].split(",")]
+        q, n = torch.nn.functional.pad(env, (3, 0), mode="replicate"), env.shape[-1]
+        return sum(k[j] * q[..., 3 - j : 3 - j + n] for j in range(4))
     if w <= 0 or os.environ.get("SNV_ESM") == "0":
         return env
     q = torch.nn.functional.pad(env, (2, 0), mode="replicate")
@@ -546,11 +666,15 @@ def smooth_env(gen: torch.nn.Module, env: torch.Tensor) -> torch.Tensor:
 
 
 def load_gen() -> torch.nn.Module:
-    st = torch.load(CK_R, map_location="cpu", weights_only=False)
+    st = torch.load(ROOT / os.environ["SNV_RCK"] if os.environ.get("SNV_RCK") else CK_R, map_location="cpu", weights_only=False)
     cfg = st["cfg"]
-    g = R.RVoc(ch=cfg["ch"], kernels=tuple(cfg["kernels"]), dils=tuple(cfg["dils"]), d_cond=cfg["d_cond"]).to(DEV)
+    g = R.RVoc(ch=cfg["ch"], kernels=tuple(cfg["kernels"]), dils=tuple(cfg["dils"]), d_cond=cfg["d_cond"], d_exc=cfg.get("d_exc", 2)).to(DEV)
     g.load_state_dict(st["ema"])
     g.env_smooth = float(st.get("env_smooth", 0.0))
+    g.delay = int(st.get("delay", N.DELAY))
+    g.fast, g.ylag = int(st.get("fast", 0)), int(st.get("ylag", 0))
+    g.msub = int(st.get("msub", 0))
+    g.pdrop = float(st.get("pdrop", 0.0))
     return g.eval().requires_grad_(False)
 
 

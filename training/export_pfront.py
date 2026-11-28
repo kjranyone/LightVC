@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -33,6 +34,14 @@ def main() -> int:
     const = {k: getattr(P, k) for k in ("SR", "H", "W_YIN", "LP_HZ", "LP_ORDER", "K_CAND", "C_MAX", "BETA", "LAMBDA", "GAMMA", "U_COST", "HOLD_BASE", "HOLD_STEP",
                                         "LB_HZ", "LB_MIN", "TMIN", "TMAX", "E_FLOOR", "NFFT_P", "NFFT_X", "NFFT_S", "ETA", "PAD_L")}
     const |= {"butter_b": b.tolist(), "butter_a": aa.tolist(), "NFFT": PA.NFFT, "HB": [list(x) for x in PA.HB], "C0_SIL": PA.C0_SIL}
+    if P.WIN_CAP_MS < 1000.0:
+        const["ENV_CAP_MS"] = P.WIN_CAP_MS
+    if P.TAU_UV_HZ != 200.0:
+        const["TAU_UV_HZ"] = P.TAU_UV_HZ
+    f0v4 = os.environ.get("SNV_F0V4") == "1"
+    if f0v4:
+        const["F0_MODE"] = "v4_dual"
+    assert P.WIN_K == 3.0 and not P.CT_MODE, "窓の倍率と窓の形の診断のスイッチは移植に含めていない"
     assert const["ETA"] == 0.0, "倍音の検査(ETA > 0)は移植に含めていない"
     man = {"tensors": {}, "const": const}
     off = 0
@@ -47,15 +56,28 @@ def main() -> int:
         x = F.load48(src)
         T = P.n_frames(len(x))
         x = x[: T * P.H]
-        r = P.analyze(x)
         d = out / "fixture" / name
         d.mkdir(parents=True, exist_ok=True)
         x.astype("<f4").tofile(d / "x.f32")
-        r["f0"].astype("<f4").tofile(d / "f0.f32")
-        r["ap"].astype("<f4").tofile(d / "ap.f32")
-        r["env"].T.astype("<f4").tofile(d / "env.f32")
-        r["per"].T.astype("<f4").tofile(d / "per.f32")
-        print(name, "frames", T, "voiced", float((r["f0"] > 0).mean()), flush=True)
+        if f0v4:
+            import snv_f0v4 as V4
+            fn, fv, bn = V4.f0_dual_track(torch.from_numpy(x))
+            f_ep = torch.where((fv <= 0) & (fn > 0), fn, fv)
+            env = P.envelope(x, f_ep.numpy().astype(np.float64))
+            per = P.periodicity(torch.from_numpy(x), f_ep).numpy()
+            fn.numpy().astype("<f4").tofile(d / "f0.f32")
+            fv.numpy().astype("<f4").tofile(d / "f0_voc.f32")
+            bn.numpy().astype("<f4").tofile(d / "ap.f32")
+            env.T.astype("<f4").tofile(d / "env.f32")
+            per.T.astype("<f4").tofile(d / "per.f32")
+            print(name, "frames", T, "voiced_net", float((fn.numpy() > 0).mean()), "voiced_voc", float((fv.numpy() > 0).mean()), flush=True)
+        else:
+            r = P.analyze(x)
+            r["f0"].astype("<f4").tofile(d / "f0.f32")
+            r["ap"].astype("<f4").tofile(d / "ap.f32")
+            r["env"].T.astype("<f4").tofile(d / "env.f32")
+            r["per"].T.astype("<f4").tofile(d / "per.f32")
+            print(name, "frames", T, "voiced", float((r["f0"] > 0).mean()), flush=True)
     return 0
 
 

@@ -30,7 +30,7 @@ import train_snv_p1 as T
 
 ROOT = EV.ROOT
 DEV = EV.DEV
-KS = (0, 7)
+KS = tuple(int(v) for v in os.environ.get("SNV_KS", "0,7").split(","))
 EMOS = ("anger", "disgust", "fear", "happy", "sad", "surprise")
 
 
@@ -132,7 +132,7 @@ def main() -> int:
                             cond = torch.from_numpy(np.concatenate([y[:25], lf[None], vv[None], np.clip(y[25:29], 0, 1.5) * vv[None]], 0))[None].to(DEV)
                             cond = torch.cat([EV.smooth_env(gen, cond[:, :25]), cond[:, 25:]], 1)
                             with torch.no_grad():
-                                w = gen(cond, TR.excitation(torch.from_numpy(f0.astype(np.float32))[None].to(DEV), cond.shape[-1] * N.HOP, torch.Generator().manual_seed(0)))[0].cpu().numpy()[N.DELAY:].astype(np.float32)
+                                w = gen(cond, TR.excitation(torch.from_numpy(f0.astype(np.float32))[None].to(DEV), cond.shape[-1] * N.HOP, torch.Generator().manual_seed(0)))[0].cpu().numpy()[gen.delay:].astype(np.float32)
                         else:
                             w = s.convert(u, enr, s.structure(f"t|{v}", trefs[v]), k)
                         r["m"] = hit(w16(w), v)
@@ -157,13 +157,12 @@ def main() -> int:
     gen = EV.load_gen()
 
     @torch.no_grad()
-    def render(y: np.ndarray, f0: np.ndarray) -> np.ndarray:
+    def render(y: np.ndarray, f0: np.ndarray, wav: np.ndarray | None = None) -> np.ndarray:
         v = (f0 > 0).astype(np.float32)
         lf = np.where(f0 > 0, np.log(np.maximum(f0, 1.0) / 200.0), 0.0).astype(np.float32)
         cond = torch.from_numpy(np.concatenate([y[:25], lf[None], v[None], np.clip(y[25:29], 0, 1.5) * v[None]], 0))[None].to(DEV)
         cond = torch.cat([EV.smooth_env(gen, cond[:, :25]), cond[:, 25:]], 1)
-        ex = TR.excitation(torch.from_numpy(f0.astype(np.float32))[None].to(DEV), cond.shape[-1] * N.HOP, torch.Generator().manual_seed(0))
-        return gen(cond, ex)[0].cpu().numpy()[N.DELAY:].astype(np.float32)
+        return EV.draw(gen, cond, torch.from_numpy(f0.astype(np.float32))[None].to(DEV), wav)
 
     wav48 = lambda q: librosa.load(q["wav_path"], sr=EV.SR, mono=True)[0].astype(np.float32)
     lv = {}
@@ -181,7 +180,7 @@ def main() -> int:
     for it in items:
         it["tg"] = [tgts[it["idx"] % 4], tgts[(it["idx"] + 2) % 4]]
         it["ref_o"] = tr(w16(librosa.load(it["u"]["wav_path"], sr=EV.SR, mono=True)[0]))
-        it["ref_c"] = tr(w16(render(it["u"]["y"], it["u"]["f0"])))
+        it["ref_c"] = tr(w16(render(it["u"]["y"], it["u"]["f0"], wav48(it["u"]) if getattr(gen, "fast", 0) else None)))
         res["ref"][it["src"]] = {"orig": it["ref_o"], "copy": it["ref_c"], "text_vs_orig": round(cer(kana(it["text"]), it["ref_o"]), 4)}
     print("items", len(items), "文 対 元の音の書き起こし の CER の中央値", {g: round(float(np.median([res["ref"][i["src"]]["text_vs_orig"] for i in items if i["group"] == g])), 4) for g in dict.fromkeys(i["group"] for i in items)}, flush=True)
     for tag in tags:
@@ -197,13 +196,13 @@ def main() -> int:
                 if tag == "orig":
                     w = librosa.load(u["wav_path"], sr=EV.SR, mono=True)[0]
                 elif tag == "copy":
-                    w = render(u["y"], u["f0"])
+                    w = render(u["y"], u["f0"], wav48(u) if getattr(gen, "fast", 0) else None)
                 elif tag == "anchor":
                     env = np.concatenate([u["y"][:1] * 10 + T.PA.C0_SIL, u["y"][1:25] * 10], 0)
                     al = AN.fit_alpha(EV.mu_of(enr)[0].cpu().numpy(), mu_t[v])
                     ew = AN.warp_env(env, al)
                     y = np.concatenate([(ew[:1] - T.PA.C0_SIL) / 10, ew[1:25] / 10, u["y"][25:29]], 0).astype(np.float32)
-                    w = render(y, u["f0"] * 2 ** (k / 12))
+                    w = render(y, u["f0"] * 2 ** (k / 12), wav48(u) if getattr(gen, "fast", 0) else None)
                 else:
                     w = s.convert(u, enr, s.structure(f"t|{v}", trefs[v]), k)
                     if os.environ.get("SNV_GUARD"):

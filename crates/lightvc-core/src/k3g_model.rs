@@ -156,11 +156,60 @@ impl Ptr {
     }
 }
 
+struct C0Bg {
+    lam: f32,
+    thr: f64,
+    thr_lo: f64,
+    thr_hi: f64,
+    soft: bool,
+    fix20: FixEnv,
+    m0: f32,
+    s0: f32,
+    mt: f32,
+    st: f32,
+    since_voiced: usize,
+}
+
+impl C0Bg {
+    fn new(ts: &Tensors, cfg: &serde_json::Value) -> Result<Self> {
+        let lam = cfg["lam"].as_f64().context("cfg.c0bg.lam")? as f32;
+        let thr = cfg["thr"].as_f64().context("cfg.c0bg.thr")?;
+        let thr_lo = cfg.get("thr_lo").and_then(|v| v.as_f64()).unwrap_or(thr);
+        let thr_hi = cfg.get("thr_hi").and_then(|v| v.as_f64()).unwrap_or(thr);
+        let soft = cfg.get("soft").and_then(|v| v.as_bool()).unwrap_or(false);
+        let fix20 = FixEnv::new(ts, &cfg["fixed_env"])?;
+        Ok(Self { lam, thr, thr_lo, thr_hi, soft, fix20, m0: 0.0, s0: 1.0, mt: 0.0, st: 1.0, since_voiced: 999 })
+    }
+
+    fn set_op(&mut self, c0_20: &[f32], v: &[f32]) {
+        let vals: Vec<f64> = c0_20.iter().zip(v).filter(|(_, w)| **w > 0.5).map(|(&x, _)| x as f64).collect();
+        if vals.is_empty() {
+            (self.m0, self.s0) = (0.0, 1.0);
+        } else {
+            let n = vals.len() as f64;
+            let m = vals.iter().sum::<f64>() / n;
+            let s = (vals.iter().map(|&x| (x - m).powi(2)).sum::<f64>() / n).sqrt().max(1e-3);
+            (self.m0, self.s0) = (m as f32, s as f32);
+        }
+        self.since_voiced = 999;
+    }
+
+    fn set_tgt(&mut self, y: &[f32], v: &[f32], t: usize) {
+        let den = v.iter().map(|&w| w as f64).sum::<f64>().max(1.0);
+        let y0 = &y[..t];
+        let m = y0.iter().zip(v).map(|(&x, &w)| x as f64 * w as f64).sum::<f64>() / den;
+        let s = (y0.iter().zip(v).map(|(&x, &w)| ((x as f64 - m).powi(2)) * w as f64).sum::<f64>() / den).sqrt().max(1e-3);
+        (self.mt, self.st) = (m as f32, s as f32);
+        self.since_voiced = 999;
+    }
+}
+
 /// 変換器(K3G): 組ごとの操作者の登録の統計と目標の構造で、フレームごとに Y(29)の平均(門が開いたフレームは錨)を出す。
 pub struct K3gModel {
     ms: Vec<Member>,
     anchor: Anchor,
     fix: Option<FixEnv>,
+    c0bg: Option<C0Bg>,
     team: Team,
 }
 
@@ -168,7 +217,8 @@ impl K3gModel {
     pub fn load(dir: &Path) -> Result<Self> {
         let (ts, man) = Tensors::load(dir).context("k3g の重み")?;
         let cfg = &man["cfg"];
-        ensure!(cfg["kind"].as_str() == Some("k3g") && cfg["fb"].as_str() == Some("anch"), "{}: cfg.kind が k3g(fb = anch)でない", dir.display());
+        let fb = cfg["fb"].as_str().unwrap_or("");
+        ensure!(cfg["kind"].as_str() == Some("k3g") && (fb == "anch" || fb == "c0bg+anch"), "{}: cfg.kind が k3g(fb = anch / c0bg+anch)でない", dir.display());
         let num = |c: &serde_json::Value, k: &str| c[k].as_f64().with_context(|| format!("cfg {k}"));
         let (ln_eps, tau) = (num(cfg, "ln_eps")?, num(cfg, "tau")?);
         let mut ms = Vec::new();
@@ -186,7 +236,8 @@ impl K3gModel {
         }
         ensure!(!ms.is_empty(), "組が無い");
         let fix = if ms.iter().any(|m| m.envc) { Some(FixEnv::new(&ts, &cfg["fixed_env"])?) } else { None };
-        Ok(Self { ms, anchor: Anchor::new(&ts, &cfg["anchor"])?, fix, team: Team::new(1) })
+        let c0bg = if fb == "c0bg+anch" { Some(C0Bg::new(&ts, &cfg["c0bg"])?) } else { None };
+        Ok(Self { ms, anchor: Anchor::new(&ts, &cfg["anchor"])?, fix, c0bg, team: Team::new(1) })
     }
 
     /// 組の数。
@@ -197,6 +248,10 @@ impl K3gModel {
     /// 固定の窓の包絡の流し(その組があるときだけ・流しの初めの状態の写し)。
     pub fn fixenv(&self) -> Option<FixEnv> {
         self.fix.as_ref().map(FixEnv::fresh)
+    }
+
+    pub fn fix20(&self) -> Option<FixEnv> {
+        self.c0bg.as_ref().map(|c| c.fix20.fresh())
     }
 
     /// 錨の伸縮 α(登録の定数・両方の登録の後)。
@@ -214,23 +269,29 @@ impl K3gModel {
     }
 
     /// 操作者の登録: y [D_Y][t]・固定の窓の包絡つきの yc [D_Y][t]・有声 [t](チャンネル優先)→ 組ごとの統計と錨の平均。
-    pub fn enroll_operator(&mut self, y: &[f32], yc: Option<&[f32]>, v: &[f32], t: usize) {
+    pub fn enroll_operator(&mut self, y: &[f32], yc: Option<&[f32]>, c0_20: Option<&[f32]>, v: &[f32], t: usize) {
         for mb in self.ms.iter_mut() {
             mb.m.enroll_operator(Self::code(mb.envc, y, yc), v, t);
         }
         self.anchor.set_op(y, v, t);
+        if let Some(cb) = self.c0bg.as_mut() {
+            cb.set_op(c0_20.unwrap_or(&y[..t]), v);
+        }
     }
 
     /// 目標の参照 → 組ごとの (z, 参照の演奏 a_ref [D_A][t])。鍵 = 符号の特徴(envc の組は yc)・z と値 = y。
     pub fn enroll_target(&mut self, y: &[f32], yc: Option<&[f32]>, v: &[f32], t: usize) -> Vec<(Vec<f32>, Vec<f32>)> {
         let out = self.ms.iter_mut().map(|mb| mb.m.enroll_target_keys(y, Self::code(mb.envc, y, yc), v, t)).collect();
         self.anchor.set_tgt(y, v, t);
+        if let Some(cb) = self.c0bg.as_mut() {
+            cb.set_tgt(y, v, t);
+        }
         out
     }
 
     /// 1 フレーム: 操作者の Y・yc・有声・C に渡す高さ lf・門が開いているか → 出力 Y [D_Y](a_out = 最初の組の演奏)。
     #[allow(clippy::too_many_arguments)]
-    pub fn step(&mut self, y: &[f32], yc: Option<&[f32]>, v: f32, lf: f32, open: bool, a_out: &mut [f32], y_out: &mut [f32]) {
+    pub fn step(&mut self, y: &[f32], yc: Option<&[f32]>, c0_20: Option<f32>, v: f32, lf: f32, open: bool, gate_p: f64, a_out: &mut [f32], y_out: &mut [f32]) {
         let (n, sz) = (self.ms.len(), self.team.size());
         let p = Ptr(self.ms.as_mut_ptr());
         self.team.run(&|r| {
@@ -243,10 +304,27 @@ impl K3gModel {
                 i += sz;
             }
         });
-        prof!(MIX, self.mix(y, open, a_out, y_out));
+        prof!(MIX, self.mix(y, c0_20, v, open, gate_p, a_out, y_out));
     }
 
-    fn mix(&self, y: &[f32], open: bool, a_out: &mut [f32], y_out: &mut [f32]) {
+    #[allow(clippy::too_many_arguments)]
+    fn mix(&mut self, y: &[f32], c0_20: Option<f32>, v: f32, open: bool, gate_p: f64, a_out: &mut [f32], y_out: &mut [f32]) {
+        let act_c0 = if let Some(cb) = self.c0bg.as_mut() {
+            cb.since_voiced = if v > 0.5 { 0 } else { cb.since_voiced.saturating_add(1) };
+            let src_c0 = c0_20.unwrap_or(y[0]);
+            let z_src = (src_c0 - cb.m0) / cb.s0;
+            if cb.soft {
+                let w_gp = (((cb.thr_hi - gate_p) / (cb.thr_hi - cb.thr_lo).max(1e-6)).clamp(0.0, 1.0)) as f32;
+                let w_act = if cb.since_voiced <= 6 { 1.0 } else { ((z_src + 1.4) / 0.4).clamp(0.0, 1.0) };
+                let w = cb.lam * w_gp * w_act;
+                (w > 0.0).then_some((w, cb.mt + cb.st * z_src))
+            } else {
+                let act = cb.since_voiced <= 6 || z_src > -1.2;
+                (gate_p < cb.thr && act).then_some((cb.lam, cb.mt + cb.st * z_src))
+            }
+        } else {
+            None
+        };
         a_out.copy_from_slice(&self.ms[0].a);
         if open {
             self.anchor.apply(y, y_out);
@@ -255,6 +333,9 @@ impl K3gModel {
         let inv = self.ms.len() as f32;
         for (k, o) in y_out.iter_mut().enumerate() {
             *o = self.ms.iter().map(|mb| mb.yo[k]).fold(0.0f32, |s, x| s + x) / inv;
+        }
+        if let Some((lam, d)) = act_c0 {
+            y_out[0] = (1.0 - lam) * y_out[0] + lam * d;
         }
     }
 }
@@ -329,6 +410,11 @@ mod tests {
         parity_dir(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../results/snv_k3g16kv_export"));
     }
 
+    #[test]
+    fn parity_with_python_model_p126() {
+        parity_dir(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../results/snv_p126_k3g16kv_export"));
+    }
+
     fn parity_dir(dir: &Path) {
         if !dir.join("manifest.json").exists() {
             eprintln!("skip: {} が無い(training/export_snv_k3g.py)", dir.display());
@@ -338,7 +424,9 @@ mod tests {
         let sh: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(fx.join("shapes.json")).unwrap()).unwrap();
         let (t, tro, trt) = (sh["T"].as_u64().unwrap() as usize, sh["Tr_op"].as_u64().unwrap() as usize, sh["Tr_t"].as_u64().unwrap() as usize);
         let f = |n: &str| rd(&fx.join(format!("{n}.f32")));
+        let opt_f = |n: &str| fx.join(format!("{n}.f32")).exists().then(|| rd(&fx.join(format!("{n}.f32"))));
         let (sy, syc, sv, slf, sg) = (f("src_y"), f("src_yc"), f("src_v"), f("src_lf_k"), f("src_gate"));
+        let (sc20, sgp, oc20) = (opt_f("src_c0_20"), opt_f("src_gate_p"), opt_f("op_c0_20"));
         let (pyo, pyw) = (f("yo"), f("yw"));
         let n_open = sg.iter().filter(|&&g| g > 0.5).count();
         let mut seq: Option<Vec<f32>> = None;
@@ -348,7 +436,7 @@ mod tests {
             assert_eq!(nm as u64, sh["members"].as_u64().unwrap());
             assert_eq!(m.ms.iter().map(|mb| serde_json::Value::Bool(mb.envc)).collect::<Vec<_>>(), *sh["envc"].as_array().unwrap());
             m.enable_parallel(par);
-            m.enroll_operator(&tpose(&f("op_y"), tro, D_Y), Some(&tpose(&f("op_yc"), tro, D_Y)), &f("op_v"), tro);
+            m.enroll_operator(&tpose(&f("op_y"), tro, D_Y), Some(&tpose(&f("op_yc"), tro, D_Y)), oc20.as_deref(), &f("op_v"), tro);
             let refs = m.enroll_target(&tpose(&f("ref_y"), trt, D_Y), Some(&tpose(&f("ref_yc"), trt, D_Y)), &f("ref_v"), trt);
             let tof = |v: &[f64]| v.iter().map(|&x| x as f32).collect::<Vec<f32>>();
             let (r_mo, r_mt) = (rel(&tof(m.anchor.mu_o.as_ref().unwrap()), &f("mu_o")), rel(&tof(m.anchor.mu_t.as_ref().unwrap()), &f("mu_t")));
@@ -372,7 +460,9 @@ mod tests {
             for tt in 0..t {
                 let r = tt * D_Y..(tt + 1) * D_Y;
                 let t0 = std::time::Instant::now();
-                m.step(&sy[r.clone()], Some(&syc[r.clone()]), sv[tt], slf[tt], sg[tt] > 0.5, &mut a, &mut yo);
+                let c20_t = sc20.as_ref().map(|v| v[tt]);
+                let gp_t = sgp.as_ref().map_or(if sg[tt] > 0.5 { 1.0 } else { 0.0 }, |v| v[tt] as f64);
+                m.step(&sy[r.clone()], Some(&syc[r.clone()]), c20_t, sv[tt], slf[tt], sg[tt] > 0.5, gp_t, &mut a, &mut yo);
                 ms.push(t0.elapsed().as_secs_f64() * 1e3);
                 for (i, mb) in m.ms.iter().enumerate() {
                     c_all[i][tt * CH..(tt + 1) * CH].copy_from_slice(&mb.m.ctx);

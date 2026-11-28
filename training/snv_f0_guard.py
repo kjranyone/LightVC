@@ -42,3 +42,12 @@ def clean(f0: np.ndarray, med: float) -> np.ndarray:
                 out[t], fg, gap, hi = f, f, 0, 0
         prev = f
     return out
+
+
+def unhold(f0: np.ndarray, ap: np.ndarray, n: int = 2) -> np.ndarray:
+    out, run = f0.astype(np.float32).copy(), 0
+    for t in range(len(out)):
+        run = run + 1 if (out[t] > 0 and ap[t] >= 0.999) else 0
+        if run > n:
+            out[t] = 0.0
+    return out

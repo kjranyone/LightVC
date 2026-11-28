@@ -54,9 +54,10 @@ class RB(nn.Module):
 
 
 class RVoc(nn.Module):
-    def __init__(self, ch: int = 256, kernels: tuple = (3, 7, 11), dils: tuple = (1, 3, 5), d_cond: int = D_COND):
+    def __init__(self, ch: int = 256, kernels: tuple = (3, 7, 11), dils: tuple = (1, 3, 5), d_cond: int = D_COND, d_exc: int = 2):
         super().__init__()
-        self.cfg = {"ch": ch, "kernels": list(kernels), "dils": list(dils), "ups": list(UPS), "d_cond": d_cond}
+        self.cfg = {"ch": ch, "kernels": list(kernels), "dils": list(dils), "ups": list(UPS), "d_cond": d_cond} | ({"d_exc": d_exc} if d_exc != 2 else {})
+        self.d_exc = d_exc
         self.pre = CConv(d_cond, ch, 3)
         self.up = nn.ModuleList()
         self.src = nn.ModuleList()
@@ -67,12 +68,12 @@ class RVoc(nn.Module):
             self.up.append(CConv(ci, co, 2 * r + 1))
             tot *= r
             s = N.HOP // tot
-            self.src.append(CConv(2, co, 2 * s, stride=s, lpad=s) if s > 1 else CConv(2, co, 3))
+            self.src.append(CConv(d_exc, co, 2 * s, stride=s, lpad=s) if s > 1 else CConv(d_exc, co, 3))
             self.res.append(nn.ModuleList(RB(co, k, dils) for k in kernels))
         self.post = CConv(ch >> len(UPS), 1, 7)
 
     def forward(self, cond: torch.Tensor, exc: torch.Tensor) -> torch.Tensor:
-        """cond [B, D_COND, T]・exc [B, 2, T·HOP](パルス列・雑音)→ y [B, T·HOP]。"""
+        """cond [B, D_COND, T]・exc [B, d_exc, T·HOP](パルス列・雑音・d_exc > 2 なら段 P98 の速い道の行)→ y [B, T·HOP]。"""
         x = self.pre(cond)
         for i, r in enumerate(UPS):
             x = self.up[i](interp_up(F.leaky_relu(x, 0.1), r))

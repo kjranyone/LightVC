@@ -6,6 +6,7 @@
 出力 = data/snv_p_feat_rec/{組}/{声}/{名}_k{k}.npz(f0・ap・env・per = snv_p_feat と同じ)・場の値 = data/snv_p_feat_rec/rooms.json。
 fam=real(paper_snv rev24 §5 M18・出力 data/snv_p_feat_rec2): 背景 = なし 0.1 / 本物の雑音 0.3(SN 比 U[0, 30] dB)/ 本物の音楽(歌なし)0.4(U[0, 20] dB)/ 合成の色つき雑音 0.1 / 合成の伴奏 0.1。
 本物の音源 = data/snv_p_feat_rec2/sources.json(MUSAN の歌と人の声の無い・CC0 / CC BY / パブリックドメインの wav・16 kHz)。場ごとに音源のファイル・発話ごとに切り出しの位置。音量と残響は M16 と同じ。
+fam=codec(paper_snv rev217 段 P99・出力 data/snv_p_feat_rec3): 残響 確率 0.6(M16 と同じ)→ マイクの特性 確率 0.6(高域通過 60〜150 Hz・低域の棚 ±8 dB・高域の棚 −10〜+6 dB・半分は低域通過 5〜12 kHz)→ 色つき雑音 確率 0.7(SN 比 15〜35 dB)→ 音量 → MP3 確率 0.6(24 / 32 / 48 / 64 kbps・32 か 48 kHz・ffmpeg の libmp3lame・相互相関で時刻を揃える)。音声も本物の音源も足さない。
 fam=op(paper_snv rev31 §5 M22・出力 data/snv_p_feat_rec_op): 操作者の音(オーナー 2026-11-09「例えば手をたたきながら笑うなど」)。場ごとに 確率 0.8 で手や物の音(MUSAN の操作者の音の学習の 97 本・data/snv_sep/operator_sources.json と合成の手拍子の列 clap_00〜23 を半々)を
 1 秒あたり U[0.3, 1.5] 個、長さ 0.08〜1 s(窓の中の最も大きい 10 ms を中心に)・発話の RMS に対して U[−15, +10] dB で、発話の中の一様な位置に重ねる。床 = 色つき雑音(β U[0, 2])を発話の RMS の U[−70, −35] dB・残響 確率 0.3・音量 U[−12, +4] dB。
     cd training && OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 uv run --no-sync python snv_rec_feat.py [K=2] [sets=e1,d,e1nv] [workers=18] [fam=synth|real|op] [selftest]
@@ -70,6 +71,75 @@ def room_op(voice: str, k: int) -> dict:
     return {"gain_db": float(g.uniform(-12, 4)), "rt60": float(g.uniform(0.15, 0.8)) if g.random() < 0.3 else 0.0, "drr_db": float(g.uniform(-3, 10)),
             "beta": float(g.uniform(0, 2)), "floor_db": float(g.uniform(-70, -35)), "ev": bool(g.random() < 0.8), "ev_rate": float(g.uniform(0.3, 1.5)),
             "p_clap": 0.5, "rir_seed": seed_of(f"rir_op|{voice}|{k}")}
+
+
+def room_codec(voice: str, k: int) -> dict:
+    g = np.random.default_rng(seed_of(f"room3|{voice}|{k}"))
+    r = {"gain_db": float(g.uniform(-12, 4)), "rt60": float(g.uniform(0.15, 0.8)) if g.random() < 0.6 else 0.0, "drr_db": float(g.uniform(-3, 10))}
+    r["bg"] = "noise" if g.random() < 0.7 else "none"
+    r["beta"] = float(g.uniform(0, 2))
+    r["snr_db"] = float(g.uniform(15, 35))
+    r["mp3"] = int(g.choice([24, 32, 48, 64])) if g.random() < 0.6 else 0
+    r["mp3_sr"] = int(g.choice([32000, 48000]))
+    r["eq"] = bool(g.random() < 0.6)
+    r["hp_hz"], r["ls_db"], r["ls_hz"], r["hs_db"], r["hs_hz"] = float(g.uniform(60, 150)), float(g.uniform(-8, 8)), float(g.uniform(100, 400)), float(g.uniform(-10, 6)), float(g.uniform(2000, 6000))
+    r["lp_hz"] = float(g.uniform(5000, 12000)) if g.random() < 0.5 else 0.0
+    r["rir_seed"] = seed_of(f"rir3|{voice}|{k}")
+    return r
+
+
+def shelf(x: np.ndarray, hz: float, db: float, high: bool) -> np.ndarray:
+    from scipy.signal import lfilter
+    A, w = 10 ** (db / 40), 2 * np.pi * hz / SR
+    al, c = np.sin(w) / 2 * np.sqrt(2.0), np.cos(w)
+    q = 2 * np.sqrt(A) * al
+    if high:
+        b = [A * ((A + 1) + (A - 1) * c + q), -2 * A * ((A - 1) + (A + 1) * c), A * ((A + 1) + (A - 1) * c - q)]
+        a = [(A + 1) - (A - 1) * c + q, 2 * ((A - 1) - (A + 1) * c), (A + 1) - (A - 1) * c - q]
+    else:
+        b = [A * ((A + 1) - (A - 1) * c + q), 2 * A * ((A - 1) - (A + 1) * c), A * ((A + 1) - (A - 1) * c - q)]
+        a = [(A + 1) + (A - 1) * c + q, -2 * ((A - 1) + (A + 1) * c), (A + 1) + (A - 1) * c - q]
+    return lfilter(np.array(b) / a[0], np.array(a) / a[0], x)
+
+
+def mp3(x: np.ndarray, kbps: int, sr2: int) -> np.ndarray:
+    import subprocess
+    import tempfile
+    import soundfile as sf
+    with tempfile.TemporaryDirectory() as td:
+        a, b, c = f"{td}/a.wav", f"{td}/b.mp3", f"{td}/c.wav"
+        sf.write(a, x.astype(np.float32), SR)
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", a, "-ar", str(sr2), "-ac", "1", "-c:a", "libmp3lame", "-b:a", f"{kbps}k", b], check=True)
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", b, "-ar", str(SR), c], check=True)
+        y = sf.read(c, dtype="float64")[0]
+    m = min(len(x), SR * 2)
+    X = np.fft.rfft(x[:m], 2 * m + 4800)
+    Y = np.fft.rfft(y[: m + 4800], 2 * m + 4800)
+    cc = np.fft.irfft(Y * np.conj(X))[:4800]
+    y = y[int(np.argmax(cc)):]
+    return np.pad(y, (0, max(0, len(x) - len(y))))[: len(x)]
+
+
+def perturb_codec(x: np.ndarray, r: dict, g: np.random.Generator) -> np.ndarray:
+    from scipy.signal import butter, sosfilt
+    y = x.astype(np.float64)
+    if r["rt60"] > 0:
+        h = rir(r)
+        n = len(y)
+        z = np.fft.irfft(np.fft.rfft(y, n + len(h)) * np.fft.rfft(h, n + len(h)), n + len(h))[:n]
+        y = z * (np.sqrt((y ** 2).mean()) / (np.sqrt((z ** 2).mean()) + 1e-12))
+    if r["eq"]:
+        y = sosfilt(butter(2, r["hp_hz"], "highpass", fs=SR, output="sos"), y)
+        y = shelf(shelf(y, r["ls_hz"], r["ls_db"], False), r["hs_hz"], r["hs_db"], True)
+        if r["lp_hz"] > 0:
+            y = sosfilt(butter(4, r["lp_hz"], "lowpass", fs=SR, output="sos"), y)
+    rms = np.sqrt((y ** 2).mean())
+    if r["bg"] == "noise":
+        y = y + colored(len(y), r["beta"], g) * rms * 10 ** (-r["snr_db"] / 20)
+    y = np.clip(y * 10 ** (r["gain_db"] / 20), -1.0, 1.0)
+    if r["mp3"]:
+        y = mp3(y, r["mp3"], r["mp3_sr"])
+    return np.clip(y, -1.0, 1.0).astype(np.float32)
 
 
 def read_any(path: str, n: int, g: np.random.Generator) -> np.ndarray:
@@ -202,8 +272,8 @@ def work(job: tuple) -> str:
         return key
     x = PF.load48(src)
     T = P.n_frames(len(x))
-    r = {"real": room_real, "op": room_op}.get(FAM, room)(key.split("/")[1], k)
-    xp = (perturb_op if FAM == "op" else perturb)(x[: T * P.H], r, np.random.default_rng(seed_of(f"utt|{key}|{k}")))
+    r = {"real": room_real, "op": room_op, "codec": room_codec}.get(FAM, room)(key.split("/")[1], k)
+    xp = {"op": perturb_op, "codec": perturb_codec}.get(FAM, perturb)(x[: T * P.H], r, np.random.default_rng(seed_of(f"utt|{key}|{k}")))
     f = P.analyze(xp)
     dst.parent.mkdir(parents=True, exist_ok=True)
     tmp = dst.with_name(dst.stem + ".tmp.npz")
@@ -213,6 +283,18 @@ def work(job: tuple) -> str:
 
 
 def selftest() -> None:
+    if FAM == "codec":
+        rs = [room_codec(f"e{i}", k) for i in range(400) for k in range(2)]
+        x = np.random.default_rng(0).standard_normal(SR * 3) * 0.05
+        x[SR:SR + 2400] *= 8.0
+        y = mp3(x, 48, 32000)
+        d = int(np.argmax(np.correlate(y[SR - 600:SR + 3000], x[SR:SR + 2400], "valid"))) - 600
+        assert abs(d) <= 2, d
+        sh = shelf(x, 3000.0, -6.0, True)
+        yy = perturb_codec(x.astype(np.float32), rs[0], np.random.default_rng(0))
+        assert len(yy) == len(x)
+        print("selftest ok codec", "reverb", sum(r["rt60"] > 0 for r in rs) / len(rs), "mp3", sum(r["mp3"] > 0 for r in rs) / len(rs), "eq", sum(r["eq"] for r in rs) / len(rs), "mp3 の揃えのずれ(標本)", d, "高域の棚 −6 dB の RMS 比", round(float(np.sqrt((sh ** 2).mean() / (x ** 2).mean())), 3), flush=True)
+        return
     x = np.random.default_rng(0).standard_normal(SR).astype(np.float32) * 0.1
     r0 = {"gain_db": 0.0, "rt60": 0.0, "drr_db": 0.0, "bg": "noise", "beta": 1.0, "snr_db": 200.0, "rir_seed": 0}
     assert np.allclose(perturb(x, r0, np.random.default_rng(0)), x, atol=1e-6), "恒等の乱しが恒等でない"
@@ -254,6 +336,8 @@ def init_fam(fam: str) -> None:
     if fam == "real":
         OUT = ROOT / "data/snv_p_feat_rec2"
         SOURCES = json.loads((OUT / "sources.json").read_text())["pools"]
+    if fam == "codec":
+        OUT = ROOT / "data/snv_p_feat_rec3"
     if fam == "op":
         OUT = ROOT / "data/snv_p_feat_rec_op"
         SOURCES = {"op": json.loads((ROOT / "data/snv_sep/operator_sources.json").read_text())["pools"]["train"],
@@ -272,7 +356,7 @@ def main() -> int:
     for name in sets:
         js = [(key, src, k) for key, src in PF.jobs_for(name) for k in range(K)]
         for key, _, k in js:
-            rooms.setdefault(key.split("/")[1], {})[k] = {"real": room_real, "op": room_op}.get(FAM, room)(key.split("/")[1], k)
+            rooms.setdefault(key.split("/")[1], {})[k] = {"real": room_real, "op": room_op, "codec": room_codec}.get(FAM, room)(key.split("/")[1], k)
         done = 0
         with ProcessPoolExecutor(workers, initializer=init_fam, initargs=(FAM,)) as ex:
             for _ in ex.map(work, js, chunksize=4):

@@ -1089,7 +1089,7 @@ impl LightVcUi {
             ))
             .child(row(
                 "出力部ボコーダ (models/rvoc3hi)",
-                "非公開の音声データセット (非同梱) および同音声を参照とした Irodori-TTS-600M-v3-VoiceDesign (Aratako / MIT)",
+                "Irodori-TTS-v4.1-Small (Aratako / MIT・上記架空 564 話者) による追い学習。基盤重みは非公開の音声データセット (非同梱) および同音声を参照とした Irodori-TTS-600M-v3-VoiceDesign (Aratako / MIT)",
             ))
             .child(row(
                 "同梱のボイスプリセット (voices/)",

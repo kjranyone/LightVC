@@ -1,0 +1,33 @@
+
+## 2026-11-27T02:18:17Z 段 P116 の smoke(当日中に削除)
+results/snv_p116sm_r
+results/snv_p116/smoke.log
+results/snv_p123_smoke
+results/snv_p122_n.colab.exit
+results/snv_p122_n.colab.launch.log
+results/snv_p122_n.colab.env.json
+results/snv_p122_n.train.log
+results/snv_p122_s.colab.exit
+results/snv_p122_s.colab.launch.log
+results/snv_p122_s
+results/snv_p123_sc/snap/ema_5k.pt
+results/snv_p123_sc/snap/ema_10k.pt
+results/snv_p123_sc/snap/ema_15k.pt
+results/snv_p113b_c/step20k.pt
+results/snv_p113c_c/step20k.pt
+results/snv_p113b_cpc/step10k.pt
+results/snv_p113b_cpc/step15k.pt
+results/snv_p113b_cpc/step20k.pt
+results/pfront_export_p124/fixture/uirou_enroll
+results/snv_p125b_smoke_cpc/codebook_k128.npz
+results/snv_p125b_smoke_cpc/last.pt
+results/snv_p125b_smoke_cpc/pca_c.npy
+results/snv_p125b_smoke_cpc/sig.npy
+results/snv_p125e_smoke_c/last.pt
+results/snv_p125e_smoke_cpc/codebook_k128.npz
+results/snv_p125e_smoke_cpc/last.pt
+results/snv_p125e_smoke_cpc/pca_c.npy
+results/snv_p125e_smoke_cpc/sig.npy
+results/snv_p125e_smoke_c/split.json
+results/snv_p125e_smoke_c/train_log.json
+results/snv_p125a_c/last.pt (preempted colab mirror step 26000, superseded by clean 40k run)

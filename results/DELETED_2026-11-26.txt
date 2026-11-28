@@ -1,0 +1,26 @@
+## 2026-11-26T08:20:04Z 前段 v3.1 の採用の作業の退避(重み weights.bin は新しい書き出しと 1 bit 同じと確かめた・fixture は前段 v3 の版で、export_snv_k3g.py を環境変数なしで走らせれば作り直せる)
+results/_bak_p100adopt/snv_k3g_export/
+results/_bak_p100adopt/snv_k3g16_export/
+results/_bak_p100adopt/snv_k3g16kv_export/
+(残す: results/snv_p45_gate_t80_export_v3 = 定数を替える前の製品の前段の書き出し)
+
+## 2026-11-26T15:29:39Z 段 P111 の smoke(当日中に削除)
+results/snv_p111sm_b_c
+results/snv_p111sm_q_c
+results/snv_p111sm_x_c
+results/snv_p111/smoke_x.log results/snv_p111/smoke_q.log results/snv_p111/smoke_b.log
+
+## 2026-11-26T18:54:07Z 段 P112 の smoke(当日中に削除)
+results/snv_p112sm_e_c
+results/snv_p112/smoke_e.log
+
+## 2026-11-26T20:37:11Z 段 P113 の smoke(当日中に削除)
+results/snv_p113sm_b_c
+results/snv_p113sm_b_cpc
+results/snv_p113sm_c_c
+results/snv_p113/smoke_b.log results/snv_p113/smoke_c.log
+
+## 2026-11-26T23:21:37Z 段 P114 の smoke(当日中に削除)
+results/snv_p114sm_m0
+results/snv_p114sm_m1
+results/snv_p114/smoke_m0.log results/snv_p114/smoke_m1.log

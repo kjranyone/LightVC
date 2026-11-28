@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import time
 from pathlib import Path
 
@@ -36,7 +37,7 @@ import train_snv_p3 as P3
 from ship_check import Lookahead, future_invariance, ledger, probes
 
 ROOT = Path(__file__).resolve().parent.parent
-CK_R = ROOT / "results/rvoc3hi/snap/ema_330k.pt"
+CK_R = ROOT / os.environ.get("SNV_RCK", "results/rvoc3hi/snap/ema_330k.pt")
 OUT = ROOT / "results/snv_p3"
 SEMI = 7
 DEV = "cpu"
@@ -143,7 +144,7 @@ def main() -> int:
             Pk.proj.load_state_dict(sk["proj"])
             envk = bool(sk.get("envc"))
         extra.append((Pk, Ck, envk))
-    assert not extra or (a.enc == "cpc" and all(k in ("c0s", "anch") or k.startswith(("c0j", "c0g")) for k in a.fb.split(",") if k)), "--ens は --enc cpc と --fb c0s / c0j<τ> / c0g<θ>,anch だけ"
+    assert not extra or (a.enc == "cpc" and all(k in ("c0s", "anch") or k.startswith(("c0j", "c0g", "c0bg")) for k in a.fb.split(",") if k)), "--ens は --enc cpc と --fb c0s / c0j<τ> / c0g<θ> / c0bg<λ>_<θ>,anch だけ"
     D = None
     if a.sep:
         import train_snv_sep as SEP
@@ -170,13 +171,15 @@ def main() -> int:
         else:
             u = SEP.features(D, x, DEV)
             y_, f0_ = u["y"], u["f0"]
-            last["gate"], last["gate_p"] = u.get("gate"), u.get("gate_p")
+            last["gate"], last["gate_p"], last["c0_20"] = u.get("gate"), u.get("gate_p"), u.get("c0_20")
         v_ = (f0_ > 0).astype(np.float32)
         lf_ = np.where(f0_ > 0, np.log(np.maximum(f0_, 1.0) / 200.0), 0.0).astype(np.float32)
         return torch.from_numpy(y_)[None], torch.from_numpy(v_)[None], torch.from_numpy(lf_)[None], f0_
 
     s_r = torch.load(CK_R, map_location="cpu", weights_only=False)
     cfg = s_r["cfg"]
+    r_delay = int(s_r.get("delay", N.DELAY))
+    r_esm = float(s_r.get("env_smooth", 0.0))
     gen = R.RVoc(ch=cfg["ch"], kernels=tuple(cfg["kernels"]), dils=tuple(cfg["dils"]), d_cond=cfg["d_cond"]).eval().to(DEV)
     gen.load_state_dict(s_r["ema"])
     pl = [p.float() for p in probes(2 * P.SR, sr=P.SR, male=2)]
@@ -217,12 +220,32 @@ def main() -> int:
         fb_alpha = AN.fit_alpha(e_o, e_t)
         c0st = lambda y_, v_: (float(y_[0, 0][v_[0] > 0.5].mean()), max(float(y_[0, 0][v_[0] > 0.5].std(unbiased=False)), 1e-3))
         c0_t, c0_o = c0st(ry, rv), c0st(oy_raw, ov)
+        if last.get("c0_20") is not None:
+            c20_o = last["c0_20"][ov[0].numpy() > 0.5]
+            c0_o20 = (float(c20_o.mean()), max(float(c20_o.std()), 1e-3))
+        else:
+            c0_o20 = c0_o
 
     def fallback(y: torch.Tensor, v: torch.Tensor, lf: torch.Tensor, pl_: torch.Tensor, yo: torch.Tensor) -> torch.Tensor:
         g = torch.from_numpy(last["gate"])[None, None] if last.get("gate") is not None else torch.zeros_like(v)[:, None]
         for kind in a.fb.split(","):
             if kind.startswith("swapall"):
                 yo = torch.cat([yo[:, :25] + float(kind[7:]) * (y[:, :25] - C(pl_, lf, v, S_op)[:, :25]), yo[:, 25:]], 1)
+            elif kind.startswith("c0bg"):
+                lam_s, _, th_s = kind[4:].partition("_")
+                lam, th = float(lam_s), float(th_s or "0.15")
+                src_c0 = torch.from_numpy(last["c0_20"])[None, None] if last.get("c0_20") is not None else y[:, :1]
+                z_src = (src_c0 - c0_o20[0]) / c0_o20[1]
+                d = c0_t[0] + c0_t[1] * z_src
+                gp = torch.from_numpy(last["gate_p"])[None, None] if last.get("gate_p") is not None else torch.zeros_like(v)[:, None]
+                vn = v[0].numpy() > 0.5
+                act = np.zeros(len(vn), dtype=bool)
+                since = 999
+                for ti, vv in enumerate(vn):
+                    since = 0 if vv else since + 1
+                    act[ti] = since <= 6
+                act_t = torch.from_numpy(act)[None, None] | (z_src > -1.2)
+                yo = torch.cat([torch.where((gp < th) & act_t, (1.0 - lam) * yo[:, :1] + lam * d, yo[:, :1]), yo[:, 1:]], 1)
             elif kind == "c0s" or kind.startswith(("c0j", "c0g")):
                 d = c0_t[0] + c0_t[1] * (y[:, :1] - c0_o[0]) / c0_o[1]
                 gp = torch.from_numpy(last["gate_p"])[None, None] if last.get("gate_p") is not None else torch.zeros_like(v)[:, None]
@@ -249,7 +272,11 @@ def main() -> int:
                 yk = Ck(Pk(yf if ek else yc, v, mk), lf + SEMI * T.LN2_12 * v, v, Sk)
                 yo = yo[:, :29] + (fallback(y, v, lf, pl_, yk) if a.fb else yk)[:, :29]
             yo = yo[:, :29] / (1 + len(ens))
-            cond = torch.cat([yo[:, :25], (lf + SEMI * T.LN2_12 * v)[:, None], v[:, None], yo[:, 25:29].clamp(0, 1.5) * v[:, None]], 1)
+            env25 = yo[:, :25]
+            if r_esm > 0.0:
+                q = torch.nn.functional.pad(env25, (2, 0), mode="replicate")
+                env25 = r_esm * q[..., :-2] + (1.0 - 2.0 * r_esm) * q[..., 1:-1] + r_esm * q[..., 2:]
+            cond = torch.cat([env25, (lf + SEMI * T.LN2_12 * v)[:, None], v[:, None], yo[:, 25:29].clamp(0, 1.5) * v[:, None]], 1)
             f0k = torch.from_numpy(f0 * 2 ** (SEMI / 12))[None]
             wav = gen(cond.to(DEV), TR.excitation(f0k.to(DEV), cond.shape[-1] * N.HOP, torch.Generator().manual_seed(0)))[0].cpu()
         Tn = cond.shape[-1]
@@ -258,8 +285,8 @@ def main() -> int:
     t0 = time.time()
     la = future_invariance(convert, P.H, sr=P.SR, probe_list=pl[1:], n_edit=4)
     t_fi = time.time() - t0
-    print("future_invariance (front" + (" D" if D is not None else "") + " → CPC → C → rvoc3hi):", la, flush=True)
-    rows = [("hop (block)", 1000.0 * P.H / P.SR), ("front" + (" D" if D is not None else "") + " → CPC → C → rvoc3hi lookahead", la), ("renderer DELAY", 1000.0 * N.DELAY / P.SR)]
+    print("future_invariance (front" + (" D" if D is not None else "") + " → CPC → C → rvoc):", la, flush=True)
+    rows = [("hop (block)", 1000.0 * P.H / P.SR), ("front" + (" D" if D is not None else "") + " → CPC → C → rvoc lookahead", la), ("renderer DELAY", 1000.0 * r_delay / P.SR)]
     ok_ledger = ledger(rows, budget_ms=30.0, reserve_ms=10.0)
     fps = P.SR / P.H
     tr_frames = int(ry.shape[-1])

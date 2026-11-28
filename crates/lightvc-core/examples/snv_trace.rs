@@ -1,5 +1,5 @@
 //! 製品の経路をブロックごとに追う診断: 入力と登録は生の f32(48 kHz・LE)。出力の波形と、源と模型の出力の Y(<trace.csv>.ysrc・.yout = [フレーム][29] の生の f32)と、ブロックごとの表(入力の RMS・門・有声・lf・源と出力の c0・出力の RMS・出力の番の値)を書く。
-//! LVC_COPY = 写しの描画・LVC_NO_GUARD = 出力の番を切る・LVC_ESM = 描画器の界面の包絡の平滑を入れる。
+//! LVC_COPY = 写しの描画・LVC_NO_GUARD = 出力の番を切る・LVC_ESM = 描画器の界面の包絡の平滑を入れる・LVC_EK = 平滑の重みの差し替え(t・t−1・t−2・t−3)・LVC_EK0 = 0 行目(音量)だけの重み・LVC_E1E = 0 行目だけ動きに応じる平滑(a0,θ)・LVC_C0X = 音量の速い成分を源から取る(時定数・フレーム)。
 //!     cargo run --release -p lightvc-core --example snv_trace -- <in.f32> <out.f32> <trace.csv> <半音> <操作者のフォルダ> <目標のフォルダ>
 
 use std::io::Write;
@@ -25,9 +25,9 @@ fn main() {
     let a: Vec<String> = std::env::args().skip(1).collect();
     let env = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
     let mut s = SnvStream::load(
-        Path::new(&env("LVC_FRONT", "results/snv_p45_gate_t80_export")),
-        Path::new(&env("LVC_K3G", "results/snv_k3g16kv_export")),
-        Path::new(&env("LVC_VOC", "results/rvoc3hi/export_330k")),
+        Path::new(&env("LVC_FRONT", "results/snv_p126_gate_export")),
+        Path::new(&env("LVC_K3G", "results/snv_p126_k3g16kv_export")),
+        Path::new(&env("LVC_VOC", "results/snv_p123_s/export_20k")),
     )
     .unwrap();
     s.enable_parallel(4);
@@ -35,6 +35,21 @@ fn main() {
     s.set_copy(std::env::var_os("LVC_COPY").is_some());
     s.set_guard(std::env::var_os("LVC_NO_GUARD").is_none());
     s.set_env_smooth(std::env::var_os("LVC_ESM").is_some());
+    if let Ok(k) = std::env::var("LVC_EK") {
+        let w: Vec<f32> = k.split(',').map(|v| v.parse().unwrap()).collect();
+        s.set_env_kernel(Some([w[0], w[1], w[2], w[3]]));
+    }
+    if let Ok(k) = std::env::var("LVC_EK0") {
+        let w: Vec<f32> = k.split(',').map(|v| v.parse().unwrap()).collect();
+        s.set_env_kernel0(Some([w[0], w[1], w[2], w[3]]));
+    }
+    if let Ok(k) = std::env::var("LVC_E1E") {
+        let w: Vec<f32> = k.split(',').map(|v| v.parse().unwrap()).collect();
+        s.set_env_adaptive0(Some((w[0], w[1])));
+    }
+    if let Ok(k) = std::env::var("LVC_C0X") {
+        s.set_c0_from_source(Some(k.parse().unwrap()));
+    }
     let (op, tg) = (dir(&a[4]), dir(&a[5]));
     s.enroll_operator(&op.iter().map(|x| x.as_slice()).collect::<Vec<_>>()).unwrap();
     s.enroll_target(&tg.iter().map(|x| x.as_slice()).collect::<Vec<_>>()).unwrap();

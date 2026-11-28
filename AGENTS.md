@@ -46,6 +46,7 @@
 - 権威を持たせたい条件と同じ情報を他入力が運ぶ場合、遮断は**分布レベル**（入力摂動・ペア構成・条件ドロップ・不変性正則化）で行う。配線レベルの遮断だけでは停滞する（NSF v2実測）。
 - 検査IのFAILに容量・幅・条件concat・loss重み調整を対処として使わない（s8/s9/f0h実測で無効）。
 - 摂動・シフト等の人工データをtarget側に置かない。教師は実音声を維持する（s12負例）。**例外(オーナー判断 2026-11-01)**: synth_nam_vc の教師は Irodori-TTS v4.1 の生成音声。その場合も target 側に摂動・シフト・時間伸縮を置かない（加工は入力側だけ）。
+  - **例外(オーナー判断 2026-11-26「速い前段を製品に入れ、合成音声を使ってよい。」・`current/paper_snv.md` §9 O44)**: 描画器(出力部)の学習に限り、合成の残響・雑音・符号化を当てた合成音声を、条件にも教師にも置いてよい(描画器は音を直さず、そのまま描く)。符号・回路の教師は元の音のまま。本物の音声・本物の部屋の応答の録音を使わないのは変わらない。
 - fork（PASS→次の行動/FAIL→次の行動）が同一になる腕は情報価値ゼロなので起動しない。
 - 本ゲートは Shipping Gate（未来不変性・遅延台帳・RTF）への**追加**であり代替ではない。
 
@@ -98,8 +99,9 @@ cargo run -p lightvc-xtask -- package   # bundle + CLI + 3 つの重みの書き
 ## Architecture Rules
 
 - **推論は全て Rust**（自作の実装・外部の推論ライブラリなし。Candle は 2026-11-10 に外した）— Pythonランタイム不要
-- **製品の経路 = paper_snv の段 P93 の K3G**(2026-11-19・数値の関門・耳の関門・Rust の一致と実時間を通った)。門と重みつきの前段（`p_gate.rs`・`p_front.rs`・`results/snv_p45_gate_t80_export`）→ 符号と回路の 3 組の平均と錨（`k3g_model.rs`・`p30_model.rs`・`p_fixenv.rs`・`results/snv_k3g16kv_export` = 重みと注意の鍵と値を f16 で持つ）→ 出力部 rvoc3hi（`rvoc.rs`）。実時間には 4 スレッドが要る。それまでの製品の経路 = 前段 v3 → E / C（`p_model.rs`・`results/snv_p11_r`）。
-  - **出力部の界面（段 P95・2026-11-22）**: rvoc3hi は包絡の行をフレーム方向に平滑した条件で学習している（書き出しの `manifest.json` の `const.env_smooth`）。出力部に渡す包絡の 25 行には、同じ重みの因果の 3 点の平滑を必ず掛ける（Rust = `SnvStream` の既定・PyTorch = `snv_p1_eval.smooth_env`）。出力部を呼ぶ新しい経路を書くときは、この平滑を通す。出力部の後には出力の番（`out_guard.rs` = `training/snv_out_guard.py`・尖頭値を 1.0 の内側に収める）を掛ける。
+- **製品の経路 = paper_snv の段 P126 の K3G-v4**(2026-11-28・全客観関門・耳の関門「うーん、ええんちゃう」・Rust の一致と実時間を通った)。門と瞬時重みつきの前段 `v4_dual`（`p_gate.rs`・`p_front.rs`・`results/snv_p126_gate_export`）→ 符号と回路の 3 組の平均と錨（`k3g_model.rs`・`p30_model.rs`・`p_fixenv.rs`・`results/snv_p126_k3g16kv_export` = `snv_p125{a,b,e}_c`・重みと注意の鍵と値を f16 で持つ・`target_v4 = true`）→ 出力部 `snv_p123_s`（`rvoc.rs`・`results/snv_p123_s/export_20k`・`delay = 480`・アルゴリズム遅延 720 サンプル = 15.0 ms）。実時間には 4 スレッドが要る。それまでの製品の経路 = 段 P93 の K3G（`results/snv_p45_gate_t80_export` → `results/snv_k3g16kv_export` → `results/rvoc3hi/export_330k`）、さらに前は 前段 v3 → E / C（`p_model.rs`・`results/snv_p11_r`）。
+  - **前段の定数は 2026-11-28 から前段 `v4_dual` + `inst_mask`**(段 P124・P126): 書き出しの `manifest.json` の `const` が `W_YIN` 600・`ENV_CAP_MS` 7.5・`TAU_UV_HZ` 500・`F0_MODE` `"v4_dual"`、`cfg.inst_mask` が `true`(`p_front.rs`・`p_gate.rs` が書き出しから読む)。学習の特徴 `data/snv_p_feat` と `training/snv_p0_front.py` の既定は前段 v3 のままなので、PyTorch で製品を測るときは `SNV_F0V4=1 SNV_WIN_CAP_MS=7.5 SNV_W_YIN=600 SNV_TAU_UV=500 SNV_FEAT=data/snv_p_feat_v4` を付け、書き出し(`export_snv_gate.py`・`export_snv_k3g.py`)も同じ環境変数で作る(旧 v3.1 は `SNV_F0V4` なし・`SNV_FEAT=data/snv_p_feat_p100`)。
+  - **出力部の界面（段 P95・P123）**: `snv_p123_s`(および `rvoc3hi`)は包絡の行をフレーム方向に平滑した条件で学習している（書き出しの `manifest.json` の `const.env_smooth` = 0.25・`const.DELAY` = 480）。出力部に渡す包絡の 25 行には、同じ重みの因果の 3 点の平滑を必ず掛ける（Rust = `SnvStream` の既定・PyTorch = `snv_p1_eval.smooth_env`・`snv_p123_s` は `f0[t-1]`・`per[t-1]` とも時刻同期済み）。出力部を呼ぶ新しい経路を書くときは、この平滑を通す。出力部の後には出力の番（`out_guard.rs` = `training/snv_out_guard.py`・尖頭値を 1.0 の内側に収める）を掛ける。
   - これを `lightvc_core::snv_stream::SnvStream` が 48 kHz・240 サンプル（5 ms）単位で流す。GUI・CLAP / VST3・CLI は全てこれを使う。
   - 研究の候補（RESEARCH.md・成績表 `results/LEADERBOARD.md`・段 I の型）は、K3G を除いて Rust に移していない。
 - **学習は全て PyTorch (uv環境)** — Rustコードに依存しない
@@ -145,9 +147,9 @@ cargo run -p lightvc-xtask -- package   # bundle + CLI + 3 つの重みの書き
 - **走行中の run が参照するパス（ckpt・キャッシュ・データ）を消さない**。整理前に `pgrep -f train` で走行中ジョブを確認する。
 - **例外**: RESEARCH.md・paper_snv.md が数値・パスで参照する証拠（耳軸測定・帰属 arm の wav/json）は削除しない。
 - **製品の書き出しを消さない**:
-  - `results/snv_p45_gate_t80_export`・`results/snv_k3g16kv_export`・`results/rvoc3hi/export_330k` は、配布物と GUI・CLI の既定が読む。`results/pfront_export`・`results/p_model_export`(それまでの製品)と `results/snv_k3g_export`・`results/snv_k3g16_export`(K3G の f32 と重みだけ f16・一致の試験)も消さない。
+  - `results/snv_p126_gate_export`・`results/snv_p126_k3g16kv_export`・`results/snv_p123_s/export_20k` は、配布物と GUI・CLI・プラグインの既定が読む(2026-11-28〜)。`results/snv_p45_gate_t80_export`・`results/snv_p45_gate_t80_export_v3`・`results/snv_k3g16kv_export`・`results/rvoc3hi/export_330k`(それまでの製品)および `results/pfront_export`・`results/pfront_export_p100`・`results/pfront_export_p124`・`results/p_model_export`・`results/snv_p30_export`・`results/snv_k3g_export`・`results/snv_k3g16_export`(一致の試験)も消さない。
   - `results/snv_stream_export` は Rust の端から端の一致の試験が読む。
-  - `results/snv_p11_r/last.pt` と `results/rvoc3hi/snap/ema_330k.pt` は書き出しの元。
+  - `results/snv_p126_gate_i80/last.pt`・`results/snv_p45_mask/last.pt`・`results/snv_p125{a,b,e}_c/last.pt`・`results/snv_p125{a,b,e}_cpc/{last.pt,pca_c.npy,codebook_k128.npz}`・`results/snv_p123_s/snap/ema_20k.pt`・`results/snv_p11_r/last.pt`・`results/rvoc3hi/snap/ema_330k.pt` は書き出しの元。
 
 ## Known Issues
 

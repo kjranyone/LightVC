@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import zlib
 from pathlib import Path
 
@@ -45,9 +46,16 @@ def front_consts() -> tuple[dict, dict]:
     ten = {"mel.fb": torch.from_numpy(fb).float(), "dct": torch.from_numpy(dct[:25]).float()}
     const = {k: getattr(P, k) for k in FRONT_KEYS}
     const |= {"butter_b": b.tolist(), "butter_a": aa.tolist(), "NFFT": PA.NFFT, "HB": [list(x) for x in PA.HB], "C0_SIL": PA.C0_SIL}
+    if P.WIN_CAP_MS < 1000.0:
+        const["ENV_CAP_MS"] = P.WIN_CAP_MS
+    if P.TAU_UV_HZ != 200.0:
+        const["TAU_UV_HZ"] = P.TAU_UV_HZ
+    if os.environ.get("SNV_F0V4") == "1":
+        const["F0_MODE"] = "v4_dual"
+    assert P.WIN_K == 3.0 and not P.CT_MODE, "窓の倍率と窓の形の診断のスイッチは移植に含めていない"
     assert const["ETA"] == 0.0, "倍音の検査(ETA > 0)は移植に含めていない"
     ref = ROOT / "results/pfront_export/manifest.json"
-    if ref.exists():
+    if ref.exists() and P.W_YIN == 1200 and "ENV_CAP_MS" not in const and "TAU_UV_HZ" not in const and "F0_MODE" not in const:
         man = json.loads(ref.read_text())
         assert json.loads(json.dumps(const)) == man["const"], "前段の定数が results/pfront_export と違う"
         wb = np.fromfile(ref.parent / "weights.bin", "<f4")
@@ -104,12 +112,13 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--gate", required=True)
     ap.add_argument("--p30", default="results/snv_p30_c/last.pt")
+    ap.add_argument("--voc-export", default="results/rvoc3hi/export_330k")
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
     tag = Path(a.gate).parent.name
     out = Path(a.out) if a.out else ROOT / "results" / f"{tag}_export"
-    keep = {ROOT / "results" / n for n in ("pfront_export", "p_model_export", "rvoc3hi/export_330k", "snv_stream_export", "snv_p30_export")}
-    assert out.resolve() not in {k.resolve() for k in keep}, f"{out} は製品か R1 の書き出し"
+    keep = {ROOT / "results" / n for n in ("pfront_export", "pfront_export_p100", "pfront_export_p124", "p_model_export", "rvoc3hi/export_330k", "snv_p123_s/export_20k", "snv_stream_export", "snv_p30_export", "snv_p45_gate_t80_export", "snv_p45_gate_t80_export_v3", "snv_p126_gate_export")}
+    assert out.resolve() not in {k.resolve() for k in keep}, f"{out} は製品か既存の書き出し"
     fx, fs = out / "fixture", out / "fixture_stream"
     fx.mkdir(parents=True, exist_ok=True)
     fs.mkdir(parents=True, exist_ok=True)
@@ -123,8 +132,11 @@ def main() -> int:
     ten |= {k: v.detach().float() for k, v in G.named_parameters()} | {k: v.detach().float() for k, v in G.named_buffers()}
     ms = torch.load(ROOT / st["cfg"]["mask"], map_location="cpu", weights_only=False)
     cfg = {"kind": "gate", "gate": a.gate, "mask": st["cfg"]["mask"], "step_gate": st.get("step"), "step_mask": ms.get("step"), "hyst": list(G.hyst), "thr": float(G.thr), "gamma": float(G.gamma),
+           "inst_mask": bool(getattr(G, "inst_mask", False)),
            "dec": G.dec, "ch": int(G.gate.inp.out_channels), "gate_dil": gd, "mask_dil": md, "nb_gate": int(G.gate.head.out_channels), "nb_mask": int(G.mask.head.out_channels),
            "nfft": SEP.NFFT, "nfft2": SEP.NFFT2, "d_in": SEP.D_IN, "ln_eps": float(G.gate.ln.eps), "log_eps": 1e-6}
+    if os.environ.get("SNV_F0V4") == "1":
+        cfg["f0_mode"] = "v4_dual"
     man = {"tensors": {}, "const": const, "cfg": cfg}
     off = 0
     with open(out / "weights.bin", "wb") as f:
@@ -141,24 +153,39 @@ def main() -> int:
     assert np.array_equal(s["op"].astype(np.float64).mean(), u["gate_open"]), "門の開閉の再計算が features と違う"
     sc = gate_states(G, clean)
     uc = MK.features(G, clean, "cpu")
-    _, rc = X30.feat(clean, pf / "real/uirou_0.npz")
+    if os.environ.get("SNV_F0V4") == "1":
+        import snv_f0v4 as V4
+        fn_c, fv_c, bn_c = V4.f0_dual_track(torch.from_numpy(clean))
+        rc = MK.features_with_mask(clean, torch.ones((P.n_frames(len(clean)), MK.NB), dtype=torch.float64), (fn_c, bn_c), f0_env=torch.where((fv_c <= 0) & (fn_c > 0), fn_c, fv_c))
+    else:
+        _, rc = X30.feat(clean, pf / "real/uirou_0.npz")
     clean_same = bool(np.array_equal(uc["y"], rc["y"]) and np.array_equal(uc["f0"], rc["f0"]))
     w = lambda d, name, v: np.ascontiguousarray(np.asarray(v, dtype="<f4")).tofile(d / f"{name}.f32")
     w(fx, "x", x), w(fx, "gate_logit", s["zg"]), w(fx, "state", s["op"]), w(fx, "mask_logit", s["zm"]), w(fx, "f0", u["f0"]), w(fx, "y", u["y"].T), w(fx, "lf", u["lf"]), w(fx, "v", u["v"])
     w(fx, "clean_x", clean), w(fx, "clean_gate_logit", sc["zg"]), w(fx, "clean_state", sc["op"]), w(fx, "clean_y", uc["y"].T)
+    mon_arr = (s["op"] > 0.5) | ((1.0 / (1.0 + np.exp(-s["zg"].astype(np.float64))) >= G.thr) if getattr(G, "inst_mask", False) else False)
+    fmask = int(np.nonzero(mon_arr)[0][0]) if mon_arr.any() else int(tr[0][0])
     (fx / "shapes.json").write_text(json.dumps({"T": int(len(u["v"])), "nb": int(s["zm"].shape[1]), "music": src, "mus_s": list(MUS), "snr_db": SNR, "fade_s": FADE, "transitions": tr,
-                                                "gate_open": float(u["gate_open"]), "clean_gate_open": float(uc["gate_open"]), "clean_same_as_v3": clean_same}, indent=1))
+                                                "first_mask": fmask, "gate_open": float(u["gate_open"]), "clean_gate_open": float(uc["gate_open"]), "clean_same_as_v3": clean_same}, indent=1))
     meta = json.loads((EV.A1 / "convert_meta.json").read_text())
     op_x, _ = X30.feat(F.load48(pf / "real/uirou_enroll.wav"), pf / "real/uirou_enroll.npz")
     alt_x, _ = X30.feat(F.load48(pf / "real/namikawa_0.wav"), pf / "real/namikawa_0.npz")
     rf = [X30.feat(F.load48(ROOT / f"results/snv_a0/wav/{meta['targets'][0]}_{j}.wav"), pf / f"a0/{meta['targets'][0]}_{j}.npz") for j in (0, 1, 2)]
     uo = MK.features(G, op_x, "cpu")
-    _, ro = X30.feat(op_x, pf / "real/uirou_enroll.npz")
+    if os.environ.get("SNV_F0V4") == "1":
+        import snv_f0v4 as V4
+        fn_o, fv_o, bn_o = V4.f0_dual_track(torch.from_numpy(op_x))
+        ro = MK.features_with_mask(op_x, torch.ones((P.n_frames(len(op_x)), MK.NB), dtype=torch.float64), (fn_o, bn_o), f0_env=torch.where((fv_o <= 0) & (fn_o > 0), fn_o, fv_o))
+    else:
+        _, ro = X30.feat(op_x, pf / "real/uirou_enroll.npz")
     op_same = bool(np.array_equal(uo["y"], ro["y"]))
     Pl, C, _ = X30.load_model(a.p30)
-    sr_ = torch.load(EV.CK_R, map_location="cpu", weights_only=False)
+    ck_r = ROOT / os.environ["SNV_RCK"] if os.environ.get("SNV_RCK") else EV.CK_R
+    sr_ = torch.load(ck_r, map_location="cpu", weights_only=False)
     gen = R.RVoc(ch=sr_["cfg"]["ch"], kernels=tuple(sr_["cfg"]["kernels"]), dils=tuple(sr_["cfg"]["dils"]), d_cond=sr_["cfg"]["d_cond"]).eval()
     gen.load_state_dict(sr_["ema"])
+    gen.env_smooth = float(sr_.get("env_smooth", 0.0))
+    esm_val = 0.0 if os.environ.get("SNV_ESM") == "0" else (gen.env_smooth if os.environ.get("SNV_ESM") else 0.0)
     t = lambda v: torch.from_numpy(v)[None]
     with torch.no_grad():
         so = Pl.mean_of(t(uo["y"]), t(uo["v"]), torch.ones((1, len(uo["v"])), dtype=torch.bool))
@@ -168,7 +195,8 @@ def main() -> int:
         y2, v2 = t(u["y"]), t(u["v"])
         lf2 = t(u["lf"]) + K_SEMI * T.LN2_12 * v2
         yo2 = C(Pl(y2, v2, so), lf2, v2, sC2)
-        cond = torch.cat([yo2[:, :25], lf2[:, None], v2[:, None], yo2[:, 25:29].clamp(0, 1.5) * v2[:, None]], 1)
+        env2 = EV.smooth_env(gen, yo2[:, :25]) if esm_val > 0 else yo2[:, :25]
+        cond = torch.cat([env2, lf2[:, None], v2[:, None], yo2[:, 25:29].clamp(0, 1.5) * v2[:, None]], 1)
         exc = TR.excitation(t(u["f0"] * 2 ** (K_SEMI / 12)), cond.shape[-1] * P.H, torch.Generator().manual_seed(0))
         wav = gen(cond, exc)[0]
     w(fs, "src_x", x), w(fs, "op_x", op_x), w(fs, "alt_x", alt_x)
@@ -176,7 +204,7 @@ def main() -> int:
         w(fs, f"ref{j}_x", rx)
     w(fs, "noise", exc[0, 1].numpy()), w(fs, "yo", yo2[0].T.numpy()), w(fs, "w", wav.reshape(-1).numpy())
     shapes = {"T": int(y2.shape[-1]), "k": K_SEMI, "refs": len(rf), "gate": a.gate, "ckpt": a.p30, "front": str(out.resolve().relative_to(ROOT.resolve())), "model": "results/snv_p30_export",
-              "voc": "results/rvoc3hi/export_330k", "op_gate_open": float(uo["gate_open"]), "op_same_as_v3": op_same}
+              "voc": a.voc_export, "env_smooth": esm_val, "op_gate_open": float(uo["gate_open"]), "op_same_as_v3": op_same}
     (fs / "shapes.json").write_text(json.dumps(shapes, indent=1))
     print("exported", len(ten), "tensors", off, "floats ->", out, flush=True)
     print("音楽の区間", MUS, "s・遷移(フレーム, 1 = 開く)", tr, "・開いた割合", round(float(u["gate_open"]), 4), "・myin の有声", round(float(u["v"].mean()), 4), flush=True)

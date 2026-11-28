@@ -262,6 +262,54 @@ class CircQ(nn.Module):
         return self.head(h)
 
 
+class CircB(nn.Module):
+    def __init__(self, ch: int = 256, zdim: int = 256, heads: int = 4, dk: int = 64, dv: int = 32, d: int = 8, d_raw: int = 2, hp: int = 200) -> None:
+        super().__init__()
+        self.heads, self.dk, self.dv, self.d, self.d_raw, self.hp = heads, dk, dv, d, d_raw, hp
+        self.inp = nn.Conv1d(D_A + 2, ch, 1)
+        self.qblocks = nn.ModuleList([GBlock(ch, dl, zdim) for dl in (1, 2, 4, 8)])
+        self.bn = nn.Conv1d(ch, d, 1)
+        self.dinp = nn.Conv1d(heads * dv + d + 2, ch, 1)
+        self.dblocks = nn.ModuleList([GBlock(ch, dl, zdim) for dl in (16, 32, 1, 2, 4, 8, 16, 32)])
+        self.head = nn.Conv1d(ch, D_Y, 1)
+        self.genc = nn.Sequential(nn.Conv1d(D_Y, ch, 5, padding=2), nn.ReLU(), nn.Conv1d(ch, ch, 5, padding=2), nn.ReLU(), nn.Conv1d(ch, ch, 5, padding=2))
+        self.gz = nn.Linear(ch, zdim)
+        self.q = nn.Linear(ch, heads * dk)
+        self.k = nn.Sequential(nn.Linear(D_A, ch), nn.ReLU(), nn.Linear(ch, heads * dk))
+        self.venc = nn.Sequential(nn.Conv1d(D_Y, ch, 3, padding=1), nn.ReLU(), nn.Conv1d(ch, heads * dv, 3, padding=1))
+        al = 1.0 / hp
+        self.register_buffer("ema", (al * (1.0 - al) ** torch.arange(3 * hp - 1, -1, -1.0))[None, None], persistent=False)
+
+    def structure(self, ry: torch.Tensor, ra: torch.Tensor, rmask: torch.Tensor) -> dict:
+        w = rmask[:, None].float()
+        z = self.gz((self.genc(ry) * w).sum(-1) / w.sum(-1).clamp(min=1.0))
+        B, Tr = rmask.shape
+        k = self.k(ra.transpose(1, 2)).view(B, Tr, self.heads, self.dk).transpose(1, 2)
+        v = self.venc(ry).transpose(1, 2).reshape(B, Tr, self.heads, self.dv).transpose(1, 2)
+        return {"z": z, "k": k, "v": v, "rmask": rmask}
+
+    def hpass(self, b: torch.Tensor) -> torch.Tensor:
+        B, D, T = b.shape
+        K = self.ema.shape[-1]
+        x = F.pad(b.reshape(B * D, 1, T), (K - 1, 0))
+        den = F.conv1d(F.pad(torch.ones(1, 1, T, device=b.device, dtype=b.dtype), (K - 1, 0)), self.ema)
+        return b - (F.conv1d(x, self.ema) / den).reshape(B, D, T)
+
+    def forward(self, a: torch.Tensor, lf: torch.Tensor, v: torch.Tensor, s: dict) -> torch.Tensor:
+        h = self.inp(torch.cat([a, lf[:, None], v[:, None]], 1))
+        for blk in self.qblocks:
+            h = blk(h, s["z"])
+        B, C, T = h.shape
+        q = self.q(h.transpose(1, 2)).view(B, T, self.heads, self.dk).transpose(1, 2)
+        ctx = ref_attention(q, s["k"], s["v"], s["rmask"]).transpose(1, 2).reshape(B, T, self.heads * self.dv).transpose(1, 2)
+        b = self.bn(h)
+        b = torch.cat([b[:, : self.d_raw], self.hpass(b[:, self.d_raw :])], 1)
+        h = self.dinp(torch.cat([ctx, b, lf[:, None], v[:, None]], 1))
+        for blk in self.dblocks:
+            h = blk(h, s["z"])
+        return self.head(h)
+
+
 ATTN_CHUNK = 1000
 
 
